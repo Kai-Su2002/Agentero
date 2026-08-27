@@ -47,6 +47,9 @@ src-tauri/target/
 # Brainstorming visual-companion scratch
 .superpowers/
 
+# Amp orb runtime portals
+.amp/portals/*
+
 .pnpm-store/
 src-tauri/binaries/*
 !src-tauri/binaries/.gitkeep

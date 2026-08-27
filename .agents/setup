@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$repo_root"
+
+run_step() {
+	local label="$1"
+	shift
+	local started=$SECONDS
+	printf '[setup] %s...\n' "$label"
+	"$@"
+	printf '[setup] %s completed in %ss\n' "$label" "$((SECONDS - started))"
+}
+
+install_apt_packages() {
+	if ((EUID == 0)); then
+		env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+	else
+		sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y "$@"
+	fi
+}
+
+update_apt_index() {
+	if ((EUID == 0)); then
+		apt-get update
+	else
+		sudo apt-get update
+	fi
+}
+
+system_packages=(
+	build-essential
+	cmake
+	curl
+	file
+	libayatana-appindicator3-dev
+	librsvg2-dev
+	libssl-dev
+	libwebkit2gtk-4.1-dev
+	patchelf
+	pkg-config
+	sqlite3
+	xdg-utils
+)
+missing_packages=()
+for package in "${system_packages[@]}"; do
+	if ! dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -Fqx 'install ok installed'; then
+		missing_packages+=("$package")
+	fi
+done
+if ((${#missing_packages[@]} > 0)); then
+	run_step "Refreshing apt metadata" update_apt_index
+	run_step "Installing system packages: ${missing_packages[*]}" install_apt_packages "${missing_packages[@]}"
+else
+	printf '[setup] System packages already installed\n'
+fi
+
+if ! command -v node >/dev/null 2>&1; then
+	printf '[setup] Node.js is missing from the orb base image\n' >&2
+	exit 1
+fi
+
+expected_pnpm="$(node -p "require('./package.json').packageManager.split('@').pop()")"
+installed_pnpm="$(pnpm --version 2>/dev/null || true)"
+if [[ "$installed_pnpm" != "$expected_pnpm" ]]; then
+	if command -v corepack >/dev/null 2>&1; then
+		run_step "Activating pnpm $expected_pnpm" corepack prepare "pnpm@$expected_pnpm" --activate
+	else
+		run_step "Installing pnpm $expected_pnpm" npm install --global "pnpm@$expected_pnpm"
+	fi
+fi
+if [[ "$(pnpm --version)" != "$expected_pnpm" ]]; then
+	printf '[setup] Expected pnpm %s, found %s\n' "$expected_pnpm" "$(pnpm --version)" >&2
+	exit 1
+fi
+
+install_rustup() {
+	curl --proto '=https' --tlsv1.2 --fail --silent --show-error https://sh.rustup.rs |
+		sh -s -- -y --profile minimal --default-toolchain stable
+}
+
+if [[ -f "$HOME/.cargo/env" ]]; then
+	# shellcheck disable=SC1091
+	source "$HOME/.cargo/env"
+fi
+if ! command -v rustup >/dev/null 2>&1; then
+	run_step "Installing rustup and stable Rust" install_rustup
+fi
+# shellcheck disable=SC1091
+source "$HOME/.cargo/env"
+
+if ! rustup toolchain list | grep -q '^stable'; then
+	run_step "Installing stable Rust" rustup toolchain install stable --profile minimal
+fi
+default_toolchain="$(rustup default 2>/dev/null || true)"
+if [[ "$default_toolchain" != stable && "$default_toolchain" != stable-* ]]; then
+	run_step "Selecting stable Rust" rustup default stable
+fi
+
+installed_components="$(rustup component list --toolchain stable --installed)"
+missing_components=()
+for component in clippy rustfmt; do
+	if ! grep -q "^${component}-" <<<"$installed_components"; then
+		missing_components+=("$component")
+	fi
+done
+if ((${#missing_components[@]} > 0)); then
+	run_step "Installing Rust components: ${missing_components[*]}" rustup component add --toolchain stable "${missing_components[@]}"
+else
+	printf '[setup] Rust components already installed\n'
+fi
+
+profile_marker="# Agentero Rust toolchain"
+if ! grep -Fqx "$profile_marker" "$HOME/.bash_profile" 2>/dev/null; then
+	cat >>"$HOME/.bash_profile" <<'EOF'
+
+# Agentero Rust toolchain
+if [ -f "$HOME/.cargo/env" ]; then
+	. "$HOME/.cargo/env"
+fi
+EOF
+fi
+
+run_step "Installing frontend dependencies" pnpm install --frozen-lockfile
+run_step "Fetching Rust dependencies" cargo fetch --locked
+run_step "Preparing the Tauri CLI stub" pnpm cli:bundle:stub
+run_step "Staging PDFium" pnpm pdfium:stage
+
+printf '[setup] Agentero orb setup complete\n'
