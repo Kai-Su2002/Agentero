@@ -124,7 +124,6 @@ fi
 
 run_step "Installing frontend dependencies" pnpm install --frozen-lockfile
 run_step "Fetching Rust dependencies" cargo fetch --locked
-run_step "Preparing the Tauri CLI stub" pnpm cli:bundle:stub
 run_step "Staging PDFium" pnpm pdfium:stage
 
 printf '[setup] Agentero orb setup complete\n'
