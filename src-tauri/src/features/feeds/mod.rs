@@ -15,7 +15,7 @@ use crate::core::error::AppError;
 use crate::core::http;
 use body::{
     ensure_heading, extract_article_html, extract_paper_doi, html_to_markdown,
-    is_fetchable_http_url, is_paper_landing_url, looks_truncated, strip_trailing_ellipsis,
+    is_fetchable_http_url, strip_trailing_ellipsis,
 };
 use chrono::Utc;
 use parse::{
@@ -115,6 +115,21 @@ fn http_client() -> Result<reqwest::Client, AppError> {
     http::client(Duration::from_secs(FETCH_TIMEOUT_SECS))
 }
 
+/// Browser-impersonating client for article pages that reject bot UAs (403).
+/// Keeps a cookie store so JS-challenge sites (403 + Set-Cookie + JS reload,
+/// e.g. the WAF in front of spaces.ac.cn) pass on the retried request.
+fn http_client_browser() -> Result<reqwest::Client, AppError> {
+    http::client_builder()
+        .timeout(Duration::from_secs(FETCH_TIMEOUT_SECS))
+        .user_agent(http::BROWSER_USER_AGENT)
+        .redirect(reqwest::redirect::Policy::limited(
+            http::DEFAULT_REDIRECT_LIMIT,
+        ))
+        .cookie_store(true)
+        .build()
+        .map_err(|e| AppError::message(format!("http client: {e}")))
+}
+
 struct RawFetch {
     url: String,
     status: u16,
@@ -138,7 +153,16 @@ async fn http_get_accept(
     last_modified: Option<&str>,
     accept: Option<&str>,
 ) -> Result<RawFetch, AppError> {
-    let client = http_client()?;
+    http_get_accept_with(&http_client()?, url, etag, last_modified, accept).await
+}
+
+async fn http_get_accept_with(
+    client: &reqwest::Client,
+    url: &str,
+    etag: Option<&str>,
+    last_modified: Option<&str>,
+    accept: Option<&str>,
+) -> Result<RawFetch, AppError> {
     let mut req = client.get(url);
     if let Some(tag) = etag.filter(|s| !s.is_empty()) {
         req = req.header(reqwest::header::IF_NONE_MATCH, tag);
@@ -640,20 +664,21 @@ struct FetchedArticle {
 }
 
 async fn fetch_article(url: &str, title: &str) -> Result<FetchedArticle, AppError> {
-    let raw = http_get_accept(
-        url,
-        None,
-        None,
-        Some("text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"),
-    )
-    .await?;
+    let accept = "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8";
+    let client = http_client_browser()?;
+    let mut raw = http_get_accept_with(&client, url, None, None, Some(accept)).await?;
+    // Some WAFs answer the first visit with 403 + Set-Cookie + a JS reload
+    // stub; a browser follows up with the cookie. Replay that exchange.
+    if raw.status == 403 && looks_like_js_challenge(&raw.body) {
+        raw = http_get_accept_with(&client, url, None, None, Some(accept)).await?;
+    }
     if !(200..300).contains(&raw.status) {
         return Err(AppError::message(format!("feeds.http:{}", raw.status)));
     }
     let body = String::from_utf8_lossy(&raw.body);
     if looks_like_html(&raw.content_type, &body) {
         let paper_url = extract_paper_doi(&body).map(|doi| format!("https://doi.org/{doi}"));
-        let article = extract_article_html(&body);
+        let article = extract_article_html(&body, Some(url));
         let md = html_to_markdown(&article);
         if md.trim().is_empty() {
             return Err(AppError::message("feeds.body"));
@@ -673,12 +698,25 @@ async fn fetch_article(url: &str, title: &str) -> Result<FetchedArticle, AppErro
     })
 }
 
-/// Resolve a full article body for the detail page. RSS often only ships an
-/// excerpt ending in `[...]`; opening the item fetches `item.url` and converts
-/// HTML → Markdown. Cached in `items.body_markdown`. While the page is open
-/// anyway, a DOI found in the publisher's `<meta>` tags backfills
-/// `items.paper_url` so feeds without explicit DOIs (e.g. nature.com subject
-/// feeds) still offer the paper import action.
+/// True when a 403 body is a tiny JS-reload challenge stub rather than a real
+/// error page (e.g. `<script>window.location.href="/"</script>` plus an empty
+/// shell, with the challenge cookie delivered via Set-Cookie).
+fn looks_like_js_challenge(body: &[u8]) -> bool {
+    if body.len() > 8 * 1024 {
+        return false;
+    }
+    String::from_utf8_lossy(body).contains("window.location")
+}
+
+/// Resolve a full article body for the detail page.
+///
+/// Always attempts to fetch the original article page when `item.url` is a
+/// fetchable HTTP URL, regardless of whether the RSS already ships a summary.
+/// The fetched HTML is run through Readability (dom_smoothie) and converted
+/// to Markdown.  While the page is open anyway, a DOI scraped from the
+/// publisher's `<meta>` tags backfills `items.paper_url` so feeds without
+/// explicit DOIs (e.g. nature.com subject feeds) still offer the paper import
+/// action.  Results are cached in `items.body_markdown`.
 pub async fn resolve_body(id: &str) -> Result<FeedItem, AppError> {
     let existing = {
         let conn = ensure_feeds()?;
@@ -694,17 +732,8 @@ pub async fn resolve_body(id: &str) -> Result<FeedItem, AppError> {
         return Ok(item_with_body(existing, md));
     }
     let rss = markdown_from_rss(&existing);
-    let missing_paper = existing
-        .paper_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .is_none();
-    let skip_fetch = is_paper_landing_url(existing.url.as_deref());
-    let need_fetch = !skip_fetch
-        && existing.url.as_deref().is_some_and(is_fetchable_http_url)
-        && (missing_paper || looks_truncated(&rss) || rss.chars().count() < 400);
-    if !need_fetch {
+    let can_fetch = existing.url.as_deref().is_some_and(is_fetchable_http_url);
+    if !can_fetch {
         let body = ensure_heading(&strip_trailing_ellipsis(&rss), &existing.title);
         let conn = ensure_feeds()?;
         return persist_resolved(&conn, id, &body, None);
@@ -725,13 +754,10 @@ pub async fn resolve_body(id: &str) -> Result<FeedItem, AppError> {
                 article.paper_url.as_deref(),
             )
         }
-        Err(_) => {
+        Err(e) => {
+            log::warn!(target: "agentero::feeds", "article body fetch failed for {url}: {e}");
             let fallback = ensure_heading(&strip_trailing_ellipsis(&rss), &existing.title);
-            if looks_truncated(&rss) {
-                return Ok(item_with_body(existing, fallback));
-            }
-            let conn = ensure_feeds()?;
-            persist_resolved(&conn, id, &fallback, None)
+            Ok(item_with_body(existing, fallback))
         }
     }
 }
@@ -1013,5 +1039,18 @@ mod tests {
             Some("https://arxiv.org/abs/1706.03762")
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn js_challenge_detection() {
+        let stub =
+            b"<html><meta charset=\"utf-8\" /><title></title><div></div></html>\n<script> window.location.href =\"/\"; </script>";
+        assert!(looks_like_js_challenge(stub));
+        assert!(!looks_like_js_challenge(
+            b"<html><body><h1>Forbidden</h1></body></html>"
+        ));
+        let mut big = vec![b'x'; 9 * 1024];
+        big.extend_from_slice(b"window.location.href=\"/\";");
+        assert!(!looks_like_js_challenge(&big));
     }
 }

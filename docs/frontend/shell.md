@@ -8,7 +8,7 @@
   - 参考文献与版面解析已移入 PDF 阅读器左侧浮层面板（见 [pdf.md](pdf.md)），不再占用右栏。
   - **移至新窗口**：标题栏右栏功能图标 **右键** →「移动至新窗口」→ 单例 `feature-{view}` Webview；主窗右栏收起。工具视图默认 **跟随主窗当前激活文档**（`workspace:active-changed`）。
 - 左右栏折叠：`⌥⌘S` / `⌘L`（不重叠）。折叠/展开带 200ms `flex-grow` 过渡（`data-rail-animating`，见 `index.css`）；过渡中拖动分隔条立即接管（可打断）；`prefers-reduced-motion` 下直接切换。
-- 标题栏右侧：右栏 tab 切换；有新版本可更新时显示更新指示器按钮（见 [settings.md](settings.md) 「应用更新」）。
+- 标题栏右侧：更新指示器、窗口布局菜单、Agent 切换；有新版本可更新时显示更新指示器按钮（见 [settings.md](settings.md) 「应用更新」）。布局菜单提供 **Agent**（PDF / Agent `1:1`）、**笔记**（PDF / Notes / Agent `1:1:1`）和 **阅读**（仅 PDF）三种预设。预设只调整 panel 宽度并开关当前论文的 Notes / Agent，不关闭其它 PDF tab。
 
 实现：`src/components/shell/`、`src/lib/shell/ui-store.ts`、`src/lib/shell/leaf.ts`、`src/lib/shell/feature-window.ts`、`hooks/use-shell-layout.ts`。
 
@@ -32,14 +32,16 @@
 - 左下角：下载、入库、导入导出、paper-reader、版面解析等。
 - **折叠 = 进度圆环**；**悬停约 400ms 或点击圆环 → 详情列表**；**指针离开即收回圆环**（不常驻详情 Toast）。
 - 圆环使用不透明 `bg-background` 圆盘 + `ring-1 ring-border`（不用 border，避免内容区缩小导致圆环与底盘错位）+ 轨道（`muted-foreground/30`）与进度弧（`primary` / 失败 destructive / 完成 emerald）；中心图标用 `foreground`。避免浅色模式下底层内容透出或轨道过浅。
+- **完成态**：全部任务结束后圆环合并为满环（100%），成功时播放短暂合并/勾选动画（`task-ring-success-*`）；失败为满环 + destructive。进行中无数值进度时短弧旋转（indeterminate），不把完成态画成未闭合短弧。
 - 新任务 / 打开页面不自动展开。任务失败时短暂展开详情，未悬停约 5s 后收回；进行中可取消，可清除已完成。
 - 论文资源下载的总体进度按顺序聚合 PDF 与 TeX：PDF 占前 50%，TeX 占后 50%，避免切换阶段时进度回退。
-- 版面解析 / 引用解析 / 正文解析 / 资源下载由 JobCenter 投影到任务条（`src/lib/core/job-center.ts`）。取消走 `job_cancel`；迟到的 `running` 事件不得把已取消/已完成的行复活。
+- 版面解析 / 引用解析 / 正文解析 / 资源下载 / 元数据识别由 JobCenter 投影到任务条（`src/lib/core/job-center.ts`）。取消走 `job_cancel`；迟到的 `running` 事件不得把已取消/已完成的行复活。
 - 实现：`src/lib/core/background-tasks.ts` + `background-tasks-panel.tsx`。
 
 ## 弹层栈
 
 - `overlay-stack`：`Esc` / `⌘W` 先关最顶层 sheet/Dialog，再关 active panel。
+- 弹层可标记为 `modal: false`（如 Agent 面板底部 ask-user 表单），保留 `Esc` 关闭能力，但不阻塞 `whenSettingsClosed` 类的全局快捷键（如 `⌘B` / `⌥⌘S` 切换侧边栏）。
 - 仅剩全库 Library 且无弹层时，`⌘W` 关窗。
 
 ## 快捷键（壳层）
@@ -77,6 +79,7 @@
 ## 设计约定
 
 - 工具栏优先图标 + `aria-label` + Tooltip；避免常驻解释文案。
+- 操作型 Chrome（按钮、导航、标题栏、工具栏、可点击卡片）默认禁用浏览器文字选择；正文、可复制 metadata、编辑器、PDF 文字层和输入控件必须保持可选。不要在应用根节点统一设置 `user-select: none`，避免误伤第三方内容层和移动端长按选择。
 - 基础组件 shadcn/ui；Chat/树 AI UI 用 AI Elements（[components.md](components.md)）。
 - **启动种子放 `boot()`**（`src/main.tsx`），不要在 render 期做副作用。`initSettingsStore` / `initVaultStore` / `initWorkspaceStore` 在 `createRoot` 前调用：既保证首帧前完成，又不依赖 `useState` 初始化器（StrictMode 下可能跑两次）。
 - **订阅 Host 事件一律用 `listenSafe()`（`src/lib/core/tauri-events.ts`）或 `useTauriEvent()`**；非 Tauri wire 的 promise 式订阅（bridge、workspace-broadcast）用 `toSafeDisposer()`。手写 `let off; void (async () => { off = await listen(...) })(); return () => off?.()` 会在 `listen` resolve 前 dispose 时泄漏监听器 —— StrictMode 每次开发挂载都会命中。

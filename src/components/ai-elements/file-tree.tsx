@@ -192,6 +192,35 @@ const FileTreeFolderContext = createContext<FileTreeFolderContextType>({
 	path: "",
 });
 
+/**
+ * Keep the disclosure affordance in the row icon slot. This mirrors the
+ * sidebar pattern used by Notion: the item identity is visible at rest, and
+ * the same-sized expand/collapse affordance appears in its place when
+ * targeted.
+ */
+export function FileTreeDisclosureIcon({
+	isExpanded,
+	icon,
+}: {
+	isExpanded: boolean;
+	icon: ReactNode;
+}) {
+	return (
+		<span className="relative flex size-4 shrink-0 items-center justify-center">
+			<span className="transition-opacity duration-100 group-hover:opacity-0 group-focus-visible:opacity-0">
+				{icon}
+			</span>
+			<ChevronRightIcon
+				className={cn(
+					"pointer-events-none absolute size-4 text-muted-foreground opacity-0 transition-[opacity,transform] duration-100 group-hover:opacity-100 group-focus-visible:opacity-100",
+					isExpanded && "rotate-90",
+				)}
+				aria-hidden
+			/>
+		</span>
+	);
+}
+
 export type FileTreeFolderProps = HTMLAttributes<HTMLDivElement> & {
 	path: string;
 	name: string;
@@ -239,7 +268,7 @@ export const FileTreeFolder = ({
 					data-path={path}
 					draggable
 					className={cn(
-						"flex h-7 min-h-7 w-full items-center gap-1 rounded px-2 text-left transition-colors hover:bg-muted/50 active:bg-muted/80",
+						"group flex h-7 min-h-7 w-full items-center gap-1 rounded px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted/80",
 						isSelected && "bg-muted",
 						dropTargetPath === path && DROP_RING,
 					)}
@@ -275,19 +304,16 @@ export const FileTreeFolder = ({
 					aria-expanded={isExpanded}
 					role="treeitem"
 				>
-					<ChevronRightIcon
-						className={cn(
-							"size-4 shrink-0 text-muted-foreground transition-transform",
-							isExpanded && "rotate-90",
-						)}
+					<FileTreeDisclosureIcon
+						isExpanded={isExpanded}
+						icon={
+							isExpanded ? (
+								<FolderOpenIcon className="size-4 text-blue-500" aria-hidden />
+							) : (
+								<FolderIcon className="size-4 text-blue-500" aria-hidden />
+							)
+						}
 					/>
-					<FileTreeIcon>
-						{isExpanded ? (
-							<FolderOpenIcon className="size-4 text-blue-500" />
-						) : (
-							<FolderIcon className="size-4 text-blue-500" />
-						)}
-					</FileTreeIcon>
 					<FileTreeName>{name}</FileTreeName>
 				</button>
 				{isExpanded ? (
@@ -336,7 +362,7 @@ export const FileTreeFolderRow = ({
 			data-path={path}
 			draggable
 			className={cn(
-				"flex h-7 min-h-7 w-full items-center gap-1 rounded px-2 text-left transition-colors hover:bg-muted/50 active:bg-muted/80",
+				"group flex h-7 min-h-7 w-full items-center gap-1 rounded px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted/80",
 				isSelected && "bg-muted",
 				dropTargetPath === path && DROP_RING,
 				className,
@@ -372,19 +398,16 @@ export const FileTreeFolderRow = ({
 			aria-expanded={isExpanded}
 			role="treeitem"
 		>
-			<ChevronRightIcon
-				className={cn(
-					"size-4 shrink-0 text-muted-foreground transition-transform",
-					isExpanded && "rotate-90",
-				)}
+			<FileTreeDisclosureIcon
+				isExpanded={isExpanded}
+				icon={
+					isExpanded ? (
+						<FolderOpenIcon className="size-4 text-blue-500" aria-hidden />
+					) : (
+						<FolderIcon className="size-4 text-blue-500" aria-hidden />
+					)
+				}
 			/>
-			<FileTreeIcon>
-				{isExpanded ? (
-					<FolderOpenIcon className="size-4 text-blue-500" />
-				) : (
-					<FolderIcon className="size-4 text-blue-500" />
-				)}
-			</FileTreeIcon>
 			<FileTreeName>{name}</FileTreeName>
 		</button>
 	);
@@ -480,7 +503,7 @@ export const FileTreeFile = ({
 				data-path={path}
 				draggable
 				className={cn(
-					"flex h-7 min-h-7 cursor-pointer items-center gap-1 rounded px-2 transition-colors hover:bg-muted/50 active:bg-muted/80",
+					"group flex h-7 min-h-7 cursor-pointer items-center gap-1 rounded px-4 transition-colors hover:bg-muted/50 active:bg-muted/80",
 					isSelected && "bg-muted",
 					dropTargetPath === path && DROP_RING,
 					className,
@@ -499,7 +522,6 @@ export const FileTreeFile = ({
 			>
 				{children ?? (
 					<>
-						<span className="size-4 shrink-0" />
 						<FileTreeIcon>
 							{icon ?? <FileIcon className="size-4 text-muted-foreground" />}
 						</FileTreeIcon>

@@ -62,15 +62,17 @@ export function ComposerModelSelector({
 			<ModelSelectorTrigger asChild>
 				<PromptInputButton
 					type="button"
-					className="h-7 max-w-[min(16rem,100%)] gap-1 px-1.5 text-xs font-medium text-foreground"
+					className="h-7 min-w-0 max-w-[min(16rem,100%)] shrink gap-1 px-1.5 text-xs font-medium text-foreground"
 					disabled={warming}
-					tooltip={
-						models.length > 0 || selectedModelName
-							? t("models.selectTooltip")
-							: t("models.customOrReportedTooltip")
-					}
+					tooltip={{
+						content:
+							models.length > 0 || selectedModelName
+								? t("models.selectTooltip")
+								: t("models.customOrReportedTooltip"),
+						side: "bottom",
+					}}
 				>
-					<span className="truncate text-xs">
+					<span className="min-w-0 flex-1 truncate text-xs">
 						{selectedModelName ??
 							(warming ? t("models.loading") : t("models.button"))}
 					</span>

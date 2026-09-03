@@ -139,7 +139,9 @@ Host 通过 Tauri event 向前端推送事件。文件系统、任务和菜单�
 
 #### `vault_ensure`（已实现）
 
-幂等脚手架 / 同步 bundled skills（Host `ensure_vault`，与 `vault_create` 同一实现）。**打开或恢复 Vault 时**前端调用，以便应用更新后补充新 Skill，并安全升级未定制的第一方 Skill。
+幂等脚手架 / 同步 bundled skills（Host `ensure_vault`）。**打开或恢复 Vault 时**前端调用，以便应用更新后补充新 Skill，并安全升级未定制的第一方 Skill。
+
+- **路径必须已存在**：目录不存在（被移动/删除）时直接报错 `vault path not found: …`，**不会**在旧路径静默重建空 Vault；新建目录只允许走 `vault_create`。前端 `seedVaultSkills` 在调用前会先检查路径存在性。
 
 - **参数**
 
@@ -271,10 +273,11 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 }
 ```
 
-- **`path_trash` 返回**（`ApiResult<{ batchId: string; count: number }>`）
-  - `batchId` 标识批次（浏览/恢复用）；`count` 为实际移入回收站的项数。
+- **`path_trash` 返回**（`ApiResult<{ batchId: string; count: number; rels: string[] }>`）
+  - `batchId` 标识批次（浏览/恢复用）；`count` 为实际移入回收站的项数；`rels` 为实际移入的相对路径（请求 `rels` 的子集）。
   - `papers/` 下的项：**先移文件**，再快照并删除 catalog 行（含嵌套 paper），避免幽灵 catalog。
   - 跳过空 / 含 `..` / `.agentero` / `papers` 根 / 不存在的路径。
+  - 本地 Vault：删除成功后立即取消被删路径（含嵌套论文）的所有排队/运行中 JobCenter 任务（`JobCenter::cancel_for_paper`），逐个发 `job:changed(cancelled)` 并 `drain_and_spawn` 释放槽位——已删论文不会继续下载 / 解析 / 版面分析，任务面板对应行随之置为已取消。
 
 #### `path_list_trash` / `path_restore_item` / `path_purge_item` / `path_purge_trash`
 
@@ -293,7 +296,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 - **返回**：`Result<(), String>`
 - **行为**
   - 创建 label 为 `agentero-<uuid>` 的 Webview 窗口，URL 带 `?fresh=1`（不自动恢复上次 Vault）。
-  - 窗口尺寸 / macOS overlay 标题栏与主窗口一致。
+  - 窗口尺寸 / macOS overlay 标题栏与主窗口一致；主应用窗口最小宽度为 `960px`。
   - 窗口初始隐藏，由全局 page-load hook 在页面加载完成后显示；首个 React commit 前显示静态启动壳。
   - Capability 覆盖 `main` 与 `agentero-*`（见 `src-tauri/capabilities/default.json`）。
   - 菜单点击由 Host 直接调用，不经过前端 event 往返（Host 内用 `tauri::async_runtime::spawn` 调用）。
@@ -921,7 +924,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
   `skills` 为魔棒直接安装的 Skill（当前仅当来源含 `--skill` 等明确过滤且候选唯一时可能非空）；`skillCandidates` 为需要前端弹窗确认的候选列表，见下方 `skill_install` / `skill_discard`。
   `searchCandidates` 为标题/关键词搜索结果（见 [`identifier-lookup.md` § 标题搜索回退](identifier-lookup.md)）；`PaperSearchCandidate` 含 `title`、`authors`、`year?`、`venue?`、`doi?`、`arxivId?`、`citationCount?`、`url?`、`identifier`、`source`（`'s2' | 'arxiv'`）。`identifier` 是用户选中后回填给本命令的文本，因此**不存在**没有 DOI/arXiv ID 的候选。
 - **单条行为**：Translator 优先；失败且输入为 arXiv 时回退 export.arxiv.org；**catalog upsert**（权威）+ 写 `NOTES.md` 壳（摘要块优先经免费 MT 译为中文，失败则保留原文；catalog 中 `abstract` 仍为原文）；`metadata.json` 为 catalog 投影同步；**始终下载 PDF**；**arXiv 另下载 e-print 并解压 LaTeX** 到 `source/`。导入命令本身**不**再内联生成 `PAPER.md`；前端会在导入完成后对无 TeX 且有 PDF 的 paper 独立入队 `paper_parse_body` 后台任务，生成 `PAPER.md` 并更新 `body_source` / `body_quality`。
-  当 `texts` 某条被识别为 `IdentifierKind::Skill`（GitHub URL、`npx skills add …`、`github:`、`skills.sh`）时，该条进入 Skill 解析管线，不写入 catalog/papers。
+  当 `texts` 某条被识别为 Skill 来源（`skill` kind：GitHub URL、`npx skills add …`、`github:`、`skills.sh`）时，该条进入 Skill 解析管线，不写入 catalog/papers。
 - **行为**：
   1. 逐条解析 `texts`；单 token 未识别、或多 token 中有任一 token 未识别 → 该条整体作为标题/关键词查询进入 `searchCandidates`（无结果或搜索失败才加入 `errors`）；Skill 来源进入 `skillCandidates`（或唯一命中时直接入 `skills`）。空格分隔且**每个** token 都是标识符时展开为多条。
   2. 按规范化 value 去重（arXiv 去 version、DOI 小写等）；batch 内重复 → `skipped.reason = 'duplicate_in_batch'`。
@@ -1618,7 +1621,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
   - `uninstall`：镜像安装矩阵做 best-effort 清理（先 `resolve_command("npm")` 预检，缺失即报错而非假成功）——npm 全局包逐个 `npm uninstall -g`（unix 上适配器带 `--prefix "$HOME/.local"`，与安装一致）；dsh 删除受管目录 `~/.agentero/dsh-acp`，kimi-code 在 npm 卸载后删除 `~/.kimi-code`（Windows 为 `%USERPROFILE%\.kimi-code`）；**不改 shell rc**（官方 installer 写入的 PATH 行保留）、不处理官方脚本/brew 安装的 CLI（无法可靠定位）。Hermes 无 npm 包/受管目录 → 仅移除注册项（不跑命令）。成功后同命令联动删除该模板的 catalog 注册项（`catalog-{templateId}`，或 command+args 匹配），避免二进制已删而注册项残留；phase 用 `agent-lifecycle-uninstall` 推送进度。
   - 本机 lifecycle 全局串行执行，避免多个 npm 全局安装/升级任务并发抢锁或互相覆盖临时脚本；设置页在对应 Agent 卡片内展示安装 / 扫描 / 探测阶段进度（#250）。
   - 安装子进程运行期间，Host 以 `agent-lifecycle:progress` 推送 `agent-lifecycle-*` phase tick，供设置页行内进度条消费，避免快捷下载脚本长时间停在无进度状态。
-  - 若传入 `taskId`，等待 lifecycle 锁和执行安装子进程时会检查 `background_task_cancel`；取消是尽力而为，不回滚已完成的包管理器写入。
+  - 若传入 `taskId`，等待 lifecycle 锁和执行安装子进程时会检查 `background_task_cancel`；取消是尽力而为，不回滚已完成的包管理器写入。设置页 Agent 目录行与引导页 Agent 卡片在行内进度条上提供取消（X）按钮，点击即以本次 lifecycle 的 `taskId` 调 `background_task_cancel`；取消为静默处理（不弹错误 toast、不显示错误条）。
   - macOS/Linux：注入 login shell 的 `PATH`（GUI 窄 PATH）。
   - Windows：写唯一临时 `.bat` + `CREATE_NO_WINDOW` + `call` 前缀；安装进程 PATH 合并 npm/pnpm/WinGet/Scoop shim；批处理切到 UTF-8，错误输出按 UTF-8 优先、GBK 回退解码。
   - 在 `spawn_blocking` 中执行，避免卡住 async runtime。
@@ -2186,9 +2189,9 @@ Windows：未设 `XDG_CONFIG_HOME` 时回退 `%APPDATA%/agentero/`。旧版 macO
     "backend": "local", // "local"（默认，ONNX）| "paddle"（AI Studio 异步任务）| "mineru"（MinerU 云 API）
     "parserBackend": "local", // PAPER.md 正文解析引擎："local"（默认）| "paddle" | "mineru" | "openaiCompatible"
     "providerConfigs": {
-      "paddle": { "apiKey": "***", "baseUrl": "", "model": "", "prompt": "" },
-      "mineru": { "apiKey": "***", "baseUrl": "", "model": "", "prompt": "" }, // baseUrl 空 → 官方 https://mineru.net
-      "openaiCompatible": { "apiKey": "***", "baseUrl": "", "model": "", "prompt": "" } // baseUrl 空 → https://api.siliconflow.cn/v1
+      "paddle": { "apiKey": "***", "baseUrl": "", "model": "", "prompt": "", "language": "", "isOcr": false },
+      "mineru": { "apiKey": "***", "baseUrl": "", "model": "", "prompt": "", "language": "ch", "isOcr": false }, // baseUrl 空 → 官方 https://mineru.net
+      "openaiCompatible": { "apiKey": "***", "baseUrl": "", "model": "", "prompt": "", "language": "", "isOcr": false } // baseUrl 空 → https://api.siliconflow.cn/v1
     }
   }
 }
@@ -2198,8 +2201,10 @@ Windows：未设 `XDG_CONFIG_HOME` 时回退 `%APPDATA%/agentero/`。旧版 macO
 - `baseUrl` 为可选端点覆盖：paddle 端点固定（不支持覆盖）；mineru 支持覆盖且强制 https（loopback `http://localhost` 等除外）；openaiCompatible 默认硅基流动。
 - `model` 供正文解析引擎使用：openaiCompatible 预设 `PaddlePaddle/PaddleOCR-VL-1.5` / `deepseek-ai/DeepSeek-OCR`（空 → 前者）；paddle 正文预设 `PaddleOCR-VL-1.6` / `PaddleOCR-VL-1.5`（空 → 前者；版面分析固定用 `PP-StructureV3`，不读该字段）。
 - `prompt` 仅 openaiCompatible 使用：OCR 提示词覆盖，空 → 按 model id 自动选择。注意 `PaddleOCR-VL` 只接受固定任务提示词，自定义提示词请配指令型 VLM（详见 [paper-import.md](paper-import.md) § 正文解析引擎）。
+- `language` 仅 mineru 使用：OCR 语言包（API `language` 参数，顶层字段）。白名单校验（`ch` / `en` / `japan` / `korean` 等 16 个语言包，含仅 Host 侧保留的 `ch_server`），未知值回落 `ch`；UI 只提供「中英文」（`ch`，默认，涵盖简体/繁体/混排）与「纯英文」（`en`）。
+- `isOcr` 仅 mineru 使用：强制对所有页面执行 OCR（API `files[].is_ocr`）。默认 `false`，由 MinerU 按文本层自动判断；扫描件文本层缺失/乱码时开启。
 - `parserBackend` 与版面 `backend` 独立选择，但共用 `providerConfigs` 凭据池；正文引擎详见 [paper-import.md](paper-import.md) § 正文解析引擎。
-- 设置 UI：Settings →「版面解析 / Layout」（版面后端由前端 `LAYOUT_PROVIDERS`、正文引擎由 `PARSER_PROVIDERS` 注册表驱动；所有远程 provider 平铺为配置卡，`mergeProviderCards` 按 provider 合并、按 `requiresApiKey` / `supportsBaseUrl` / `supportsModel` / `supportsPrompt` 显隐 API Key / Base URL / Model / Prompt 输入 + 连通性测试；Model / Base URL 空值时预填引擎默认值。两个 backend 下拉只提供本地 + 已配置（apiKey 非空）的 provider）。
+- 设置 UI：Settings →「版面解析 / Layout」（版面后端由前端 `LAYOUT_PROVIDERS`、正文引擎由 `PARSER_PROVIDERS` 注册表驱动；所有远程 provider 平铺为配置卡，`mergeProviderCards` 按 provider 合并、按 `requiresApiKey` / `supportsBaseUrl` / `supportsModel` / `supportsPrompt` / `supportsLanguage` / `supportsOcr` 显隐 API Key / Base URL / Model / Prompt / 语言 / 强制 OCR 输入 + 连通性测试；Model / Base URL 空值时预填引擎默认值，语言预填 `ch`（中英文）。两个 backend 选择只提供本地 + 已配置（apiKey 非空）的 provider；可选项 ≤1 时保留 Select 外观但 disabled（不弹出下拉，避免换成纯文本导致布局抖动）。清空 API Key 输入框会立即落盘清除密钥（无需点确认）；若当前 `backend` / `parserBackend` 指向该 provider 则回退 `local`，下拉随之移除该项）。
 
 #### `layout_remote_analyze_pdf`（已实现）
 
@@ -2351,7 +2356,7 @@ CLI 对照：`agentero usage which|timeline|summary|clear`（见 [cli.md](cli.md
 | CLI | Host service / command 锚点 |
 |---|---|
 | `open` / `<PATH>` | 深链唤起桌面 App（`agentero://open?path=…`） |
-| `vault create` | `services::vault::create_vault` / `vault_create`（与 GUI `vault_ensure` 同幂等实现） |
+| `vault create` | `services::vault::create_vault` / `vault_create`（幂等脚手架；缺失根目录仅 `create` 会新建，`vault_ensure` 对缺失路径报错） |
 | `vault which\|info\|check\|use` | CLI 自管解析 + catalog `ensure_catalog` / `schema_version` |
 | `tree` | 磁盘扫描（非 Library 虚拟节点） |
 | `paper list\|get\|paths\|delete\|set-read\|tag list\|set\|add\|rm` | `catalog::papers::*`（含 `set_tags` / `list_all_tags`）/ `paper_*` |

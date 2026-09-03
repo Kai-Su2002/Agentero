@@ -28,7 +28,7 @@ export function MobileNav({
 		<nav
 			aria-label={t("tabs.navigation")}
 			className={cn(
-				"relative flex gap-1",
+				"relative flex select-none gap-1",
 				sidebar ? "flex-col" : "mt-10 flex-col",
 			)}
 		>

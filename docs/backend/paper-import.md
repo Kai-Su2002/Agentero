@@ -18,7 +18,8 @@
 ## Skill 导入
 
 魔棒 `lookup_import_batch` 同时接受论文标识符和 Skill 来源。Host 在普通 URL
-识别之前检测 `IdentifierKind::Skill`，通过 `SkillSource` 解析 GitHub 仓库、
+识别之前通过 `parse::extract_skill_source` 检测 Skill 来源（`skill` kind，不入
+resolver 表），解析 GitHub 仓库、
 GitHub tree、`github:`、`skills.sh` 和 `npx skills add` 输入。
 
 Skill 安装管线位于 `features/import/skill_import.rs`：
@@ -61,6 +62,7 @@ Skill 不写入 catalog、不创建 `papers/` 条目、不执行 `scripts/`。�
   fallback；附件成功或失败的 finalizer 先将 paper 移到 latest target，再通过稳定路径的
   `connector:item-saved` 交给现有 open/reconcile 解析流程。
 - 错误：全局 Toast；重复不破坏用户 NOTES。
+- 标识符去重（#406）：批量预检之外，commit 阶段再按 `id` / `arxiv_id` / `doi` / `pmid` / `isbn` 查 catalog（`DedupePolicy::ByIdentifiers`），任一命中即 `Deduped`，不新建文件夹。
 - 新建壳会写论文全称 alias，并在元数据足够时写确定性短 alias；历史笔记由 [Doctor](doctor.md) 诊断和确认迁移。`created` 不属于入库壳或 Doctor 的职责。
 - 壳内容由设置 `paper_note_mode` 决定（`standard` / `title-only` / `blank` / `custom`，默认 `standard`，见 [settings.md](../frontend/settings.md)）；`custom` 模板位于 `{vault}/.agentero/templates/NOTES.md`，缺失或不可读时回退 standard 并 warn。任何模式的产物都会补齐 aliases frontmatter（模板 frontmatter 不可安全改写时留给 Doctor）。Connector 的后台摘要机翻仅对 standard 壳生效，避免改写 custom 模板渲染的原文摘要。
 
@@ -90,6 +92,7 @@ Skill 不写入 catalog、不创建 `papers/` 条目、不执行 `scripts/`。�
 - **凭据注入**：引擎配置以进程级快照持有（启动与 `settings_set` 时从 `AppSettingsStore` 刷新，模式同 `core::http::configure_proxy`），明文 key 不出 Host。
 - **提示词**：默认按 model id 自动选择（含 `deepseek-ocr` → grounding 提示词；含 `paddleocr` → `OCR:`；其余 → 通用指令）。设置里的 Prompt 输入框可覆盖，留空即走自动。
   - ⚠️ `PaddleOCR-VL` 是**任务提示词**模型，只认它自己那几个固定提示词；换成自由指令会退化成检测模式并吐出 `<|LOC_n|>` 坐标 token。自定义提示词请配指令型 VLM（如 DeepSeek-OCR 去掉 `<|grounding|>`、Qwen-VL 等）。
+- **MinerU 高级选项**：`language`（OCR 语言包，默认 `ch` 中英文，Host 白名单校验）与 `isOcr`（强制 OCR，默认关闭、按文本层自动判断）存在共用的 `layout.providerConfigs.mineru`，版面分析与正文解析复用同一套请求参数。
 - **输出清洗**：grounding 输出形如 `<|ref|>label<|/ref|><|det|>[[box]]<|/det|>\n正文`，`<|ref|>` 内是版面**类别名**（`text` / `title`）而非正文，两段都整体丢弃，否则正文里会混入 `text` / `sub_title` 噪声行；`<|LOC_n|>` 同样剥离。
 - **实现**：`src-tauri/src/features/import/pdf_parse/engines/`（`BodyParseEngine` trait + local / mineru / paddle / openai_vlm）；云端上传/轮询复用 `layout_remote` 的 `run_mineru_extract` / `run_paddle_ocr_job`。
 - **Live 验证**（`#[ignore]`，需自备 key，密钥只走环境变量）：
@@ -128,12 +131,13 @@ liteparse 在**运行时 `dlopen`** PDFium，而 `liteparse-pdfium-sys` 的 buil
 
 ## 本地 PDF
 
-- 魔棒多选或拖到 `papers/` 组织夹 → 直接后台导入（无确认对话框）：复制 PDF + catalog + 通常生成 `PAPER.md`，识别链路在导入任务内自动补全元数据，识别有误由用户在 Edit Metadata 中修正。
+- 魔棒多选或拖到 `papers/` 组织夹 → **即时导入**：复制 PDF + catalog + NOTES shell 立刻完成（秒级），论文马上出现在树/论文库；元数据识别在后台进行（见下），识别完成后自动改名/补全。
 - 窗口其它区域拖入不入库（防 WebView 导航）。
+- 标识符去重与合并（#406）：导入前按对话框给出的 `id` / DOI / arXiv / PMID / ISBN 查 catalog；命中已有条目时不新建文件夹——原条目缺主 PDF `{id}.pdf` 时，本 PDF 直接成为主 PDF（常见于 PMID 入库后手动补全文）；否则放入 `{paper}/attachments/`（同名自动 `-2` 后缀），并回填 catalog 缺失的标识符列；前端返回 `status: "deduped"` 并 Toast 提示。
 
 ### PDF 元数据识别（recognize 链路）
 
-文件名推导只是兜底；导入（拖入与魔棒直选）会在导入任务内跑一条识别链路补全 DOI/arXiv/标题/作者：
+文件名推导只是占位；本地 PDF 导入（拖入与魔棒直选）先以文件名 slug 建目录落库（`meta_source=local`），随后由 JobCenter 的 `RecognizeMetadata` job（并发 2，任务栏可见可取消）在后台跑识别链路补全 DOI/arXiv/标题/作者：
 
 ```
 本地 liteparse probe（隔离 worker，前 5 页投影行 + 词级字号/坐标，~秒级）
@@ -141,12 +145,22 @@ liteparse 在**运行时 `dlopen`** PDFium，而 `liteparse-pdfium-sys` 的 buil
   → 命中 DOI → Translator /search 解析；失败回退 Crossref works/{doi} 直连
   → 命中 arXiv → export.arxiv.org Atom 直连
   → 仅命中 title/authors（无标识符）→ 直接采用识别结果（Zotero 同款兜底）
-  → 任何一步失败静默降级为文件名元数据，绝不阻塞导入
+  → 任何一步失败静默降级为文件名元数据，绝不影响已完成的导入
 ```
 
-- 实现：`src-tauri/src/features/import/pdf_recognize.rs`（payload 组装 + HTTP client + `map_crossref_work`）；probe worker 变体在 `pdf_parse/mod.rs`（`--agentero-internal-pdf-recognize-worker`）。
+识别结果由 `src-tauri/src/features/import/recognize_apply.rs` 落地：
+
+- **命中标识符（`ok`）** → 目录经 wiki rename 事务改名为规范 id（`papers/<文件名slug>` → `papers/1706.03762`，含 `{id}.pdf` 改名、catalog path/id 重写、`[[...]]` 链接重写、失败回滚），`meta_source=recognize`，emit `paper:renamed`。
+- **规范 id 已在库中** → 占位条目并入已有条目（PDF 成为对方主 PDF 或进 `attachments/`），删除占位目录/行，emit `paper:renamed`（`outcome=merged`）。
+- **仅命中标题（`title`）** → 只 upsert catalog 元数据，不改目录名。
+- **未命中（`no-match`/`error`）** → `meta_source=local-unresolved`，用户可在 Edit Metadata 手填 DOI/arXiv 并刷新（`paper_resolve_identifier`）。
+- **用户抢先编辑**：识别完成时若 `meta_source` 已非 `local`（如 `manual`），识别结果整体放弃。
+
+时序约定：`paper_commit` 以 `defer_parse_jobs: true` 跳过 commit 期的 ParseBody/ParseRefs spawn，由 RecognizeMetadata runner 在目录名尘埃落定后统一编排 PAPER.md / refs / layout（`LookupImportResult.recognize_pending=true` 时前端也跳过自己的 layout enqueue）。
+
+- 实现：识别链路 `src-tauri/src/features/import/pdf_recognize.rs`（payload 组装 + HTTP client + `map_crossref_work`）；probe worker 变体在 `pdf_parse/mod.rs`（`--agentero-internal-pdf-recognize-worker`）；job 编排 `import/job_runners.rs::recognize_metadata_runner`。
 - payload 结构复刻 Zotero document-worker `getRecognizerData`：`word = [xMin,yMin,xMax,yMax,fontSize,spaceAfter,baseline,rotation,0,bold,italic,0,fontIndex,text]`，行来自 liteparse 投影行（竖排 arXiv stamp 落到独立行，服务端可重建）。
-- 拖入与魔棒直选统一在 `import_one_local_pdf` 内联跑同一链路，`meta_source=recognize`，识别出的 arXiv/DOI slug 作为文件夹 id（与标识符导入命名一致）；Host 侧 entries 仍支持 `title`/`doi`/`arxivId`/`extra` 覆盖（`meta_source=manual`），供 CLI 等调用方使用。导入后可在 Edit Metadata 中手填 DOI/arXiv 并刷新（`paper_resolve_identifier`）。
+- Host 侧 entries 仍支持 `title`/`doi`/`arxivId`/`extra` 覆盖（`meta_source=manual`，走原有同步路径不触发后台识别），供确认对话框/CLI 等调用方使用。
 - 隐私：上传的是前 5 页文本布局 JSON（~200KB），不是 PDF 文件；服务为 Zotero 托管的未公开 API，仅作尽力而为识别，失败无感知。
 - live 验证：`AGENTERO_RECOGNIZE_LIVE_PDF=<pdf> cargo test -p agentero --lib -- live_recognize --include-ignored --nocapture`。
 

@@ -83,6 +83,9 @@
 			"seedCreated": "Starter template created",
 			"seedExists": "Template already exists"
 		},
+		"autoOpenPaperNotes": {
+			"label": "Open paper notes by default"
+		},
 		"autoUpdateInternalLinks": {
 			"label": "Update internal links after external renames",
 			"ask": "Ask",
@@ -110,7 +113,26 @@
 			"portLabel": "MCP port",
 			"invalidPort": "Port must be between 1 and 65535.",
 			"copyUrl": "Copy MCP URL",
-			"copied": "Copied"
+			"copied": "Copied",
+			"tunnel": {
+				"tunnelIdLabel": "Tunnel ID",
+				"apiKeyLabel": "Runtime API key",
+				"invalidTunnelId": "Tunnel ID should look like `tunnel_` + 32 hex characters.",
+				"label": "ChatGPT tunnel",
+				"start": "Start",
+				"stop": "Stop",
+				"starting": "Starting…",
+				"ready": "Connected",
+				"error": "Not connected",
+				"stopped": "Stopped",
+				"binaryMissing": "tunnel-client not found",
+				"installHint": "Install it, then reopen Settings:",
+				"copyCommand": "Copy install command",
+				"copied": "Copied",
+				"openTunnels": "Open tunnels",
+				"openApiKeys": "Open API keys",
+				"mcpOff": "Turn on the MCP server first."
+			}
 		},
 		"export": {
 			"section": "Note export",
@@ -209,6 +231,15 @@
 			},
 			"model": {
 				"label": "Model"
+			},
+			"test": "Test connection",
+			"testing": "Testing…",
+			"probeStatus": {
+				"idle": "Not tested yet",
+				"probing": "Testing…",
+				"ok": "Reachable",
+				"failed": "Unreachable",
+				"unconfigured": "Not configured"
 			}
 		},
 		"desktopOnly": "Agent registry requires the desktop app.",
@@ -414,6 +445,7 @@
 			},
 			"confirm": "Confirm",
 			"openDocsLabel": "Get an API key",
+			"advanced": "Advanced",
 			"apiKey": {
 				"label": "API key",
 				"placeholder": {
@@ -431,6 +463,18 @@
 			"prompt": {
 				"label": "Prompt",
 				"placeholder": "Auto, based on the model"
+			},
+			"language": {
+				"label": "Language",
+				"help": "Specify the document language",
+				"options": {
+					"ch": "Chinese–English",
+					"en": "Pure English"
+				}
+			},
+			"forceOcr": {
+				"label": "Force OCR",
+				"help": "Enable OCR for all pages."
 			},
 			"probeIdle": "Not checked yet",
 			"probeOk": "Available",
@@ -568,6 +612,19 @@
 			"uninstallFailed": "Could not remove CLI command",
 			"statusFailed": "Could not read CLI status",
 			"openReleaseFailed": "Could not open the release page"
+		},
+		"finder": {
+			"label": "Finder integration",
+			"description": "Adds \"Open with Agentero\" to the right-click menu for folders in Finder",
+			"descriptionInstalled": "Right-click a folder in Finder to open it as a Vault",
+			"stale": "Agentero was moved — update to fix the menu entry",
+			"install": "Install",
+			"update": "Update",
+			"uninstall": "Remove",
+			"installSuccess": "Finder Quick Action installed",
+			"uninstallSuccess": "Finder Quick Action removed",
+			"installFailed": "Could not install the Finder Quick Action",
+			"uninstallFailed": "Could not remove the Finder Quick Action"
 		},
 		"onboarding": {
 			"label": "First-run setup",

@@ -1,4 +1,9 @@
 import { ArrowUpRight, BookCheck, Import, Loader2 } from "lucide-react";
+import {
+	type PointerEvent as ReactPointerEvent,
+	useEffect,
+	useRef,
+} from "react";
 import { useTranslation } from "react-i18next";
 import { CitationImportPopover } from "@/components/viewer/citation-import-menu";
 import type { ScreenPoint } from "@/components/viewer/pdf/types";
@@ -21,6 +26,12 @@ export type CitationPreviewImportMenu = {
 	onImport: (citation: Citation, folder: string) => void;
 	/** Lets the hover card stay open while the folder picker is up. */
 	onOpenChange: (open: boolean) => void;
+	/**
+	 * True for remote papers: every citation row shows an import button that
+	 * imports the current paper, because individual reference metadata is not
+	 * available until the paper is in the library.
+	 */
+	remotePaper?: boolean;
 };
 
 function citationMetaParts(citation: Citation): string[] {
@@ -49,7 +60,9 @@ function CitationPreviewRow({
 	const m = citation.metadata;
 	const metaParts = citationMetaParts(citation);
 	const inLibrary = Boolean(citation.localMatch);
-	const importable = !inLibrary && citationImportIdentifier(citation) != null;
+	const importable =
+		!inLibrary &&
+		(citationImportIdentifier(citation) != null || importMenu?.remotePaper);
 	const link = citationExternalUrl(citation);
 	const importing = importMenu?.importingId === citation.id;
 
@@ -90,8 +103,9 @@ function CitationPreviewRow({
 						>
 							<button
 								type="button"
-								className="rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground"
+								className="rounded p-0.5 text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
 								aria-label={t("references.import")}
+								disabled={importing}
 								onClick={(e) => e.stopPropagation()}
 							>
 								{importIcon}
@@ -149,6 +163,7 @@ export function PdfCitationPreview({
 	onPointerLeave: () => void;
 }) {
 	const { t } = useTranslation("viewer");
+	const rootRef = useRef<HTMLDivElement>(null);
 	const viewportWidth =
 		typeof window === "undefined" ? 1200 : window.innerWidth;
 	const viewportHeight =
@@ -166,14 +181,28 @@ export function PdfCitationPreview({
 		viewportHeight - estimatedHeight - 12,
 	);
 
+	// Mount under an existing pointer skips pointerenter — re-arm sticky hover.
+	useEffect(() => {
+		const el = rootRef.current;
+		if (!el) return;
+		if (el.matches(":hover")) onPointerEnter();
+	}, [onPointerEnter]);
+
+	const handlePointerLeave = (e: ReactPointerEvent<HTMLDivElement>) => {
+		const next = e.relatedTarget;
+		if (next instanceof Node && e.currentTarget.contains(next)) return;
+		onPointerLeave();
+	};
+
 	return (
 		<div
+			ref={rootRef}
 			role="dialog"
 			aria-label={t("references.previewLabel")}
 			className="fixed z-50 w-[300px] rounded-xl border border-border/80 bg-background/98 p-3 shadow-xl ring-1 ring-black/5 backdrop-blur-sm dark:ring-white/10"
 			style={{ left, top }}
 			onPointerEnter={onPointerEnter}
-			onPointerLeave={onPointerLeave}
+			onPointerLeave={handlePointerLeave}
 		>
 			<div
 				className={

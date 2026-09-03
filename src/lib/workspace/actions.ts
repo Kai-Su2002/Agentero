@@ -15,8 +15,12 @@ import { lifecycle } from "@/lib/lifecycle";
 import {
 	detectPaperDirectory,
 	isPaperDirectory,
+	isRemoteArxivPath,
 	isUnderPaperAttachments,
 	paperDirFromPath,
+	type RemotePaperItem,
+	remoteArxivPath,
+	stageRemoteArxivPaper,
 } from "@/lib/paper";
 import {
 	isLibraryVirtualPath,
@@ -33,11 +37,11 @@ import {
 import { removeTabAnnotations } from "@/lib/pdf/annotations-store";
 import {
 	isPlazaVirtualPath,
-	PLAZA_VIRTUAL_PATH,
 	type PlazaSource,
 	plazaSourceForPath,
 } from "@/lib/plaza";
 import { loadSettings } from "@/lib/settings";
+import { setLayoutMode } from "@/lib/shell/ui-store";
 import {
 	type FileNode,
 	isMarkdownPath,
@@ -166,7 +170,11 @@ export function handleActivePanelChange(panelId: string | null): void {
 	}
 	const tab = activeTab;
 	if (!tab) return;
-	if (!isLibraryVirtualPath(tab.path) && !isTrashVirtualPath(tab.path)) {
+	if (
+		!isLibraryVirtualPath(tab.path) &&
+		!isTrashVirtualPath(tab.path) &&
+		!isRemoteArxivPath(tab.path)
+	) {
 		notePaperFocus(tab.path);
 	}
 
@@ -219,6 +227,8 @@ export function openTab(
 		placement?: OpenPlacement;
 		/** Skip default paper→NOTES companion open. */
 		skipDefaultNotes?: boolean;
+		/** Open the NOTES companion even when autoOpenPaperNotes is off. */
+		forceNotes?: boolean;
 	},
 ): void {
 	const id = tabIdForPath(path);
@@ -298,7 +308,8 @@ export function openTab(
 			!opts?.placement &&
 			res.kind === "paper" &&
 			Boolean(res.notesPath) &&
-			(res.mode === "pdf" || res.mode === "html");
+			(res.mode === "pdf" || res.mode === "html") &&
+			(opts?.forceNotes || loadSettings().autoOpenPaperNotes);
 		if (wantDefaultNotes && res.notesPath) {
 			const notesId = tabIdForPath(res.notesPath);
 			const notesAlreadyOpen = getTabs().some((t) => t.id === notesId);
@@ -355,7 +366,7 @@ export function openTab(
  * Closing a paper body (PDF/HTML) also closes its NOTES companion;
  * closing NOTES leaves the body open.
  */
-export function closeTab(id: string): void {
+export function closeTab(id: string, opts: { remember?: boolean } = {}): void {
 	// Resolve pair before setState so Strict Mode double-invoke is stable.
 	const idsToClose = readingPairCloseIds(getTabs(), id);
 	const active = getActiveTabId();
@@ -363,7 +374,7 @@ export function closeTab(id: string): void {
 		notePaperFocus(null);
 	}
 
-	rememberClosedTabs(idsToClose);
+	if (opts.remember !== false) rememberClosedTabs(idsToClose);
 
 	setTabs((prev) => {
 		let next = prev;
@@ -536,10 +547,9 @@ export function closeTabOrWindow(): void {
 	closeWindow();
 }
 
-/** Toggle NOTES.md panel for the active paper (⌘\ / Layout menu). */
-export function toggleNotesSplit(): void {
+function activeNotesTarget(): DocTab | null {
 	const id = getActiveTabId();
-	if (!id) return;
+	if (!id) return null;
 	const tab = getTabs().find((t) => t.id === id);
 	// NOTES may be toggled from paper PDF/HTML, or when NOTES panel itself is active.
 	const paper =
@@ -552,11 +562,22 @@ export function toggleNotesSplit(): void {
 						tab?.path &&
 						normalizeTabPath(t.notesPath) === normalizeTabPath(tab.path),
 				);
-	const target = paper ?? tab;
+	return paper ?? tab ?? null;
+}
+
+/** Set the active paper's NOTES panel without touching other PDF tabs. */
+export function setNotesSplit(open: boolean): void {
+	setLayoutMode("custom");
+	const target = activeNotesTarget();
 	if (!target?.notesPath) return;
 	const notesId = tabIdForPath(target.notesPath);
-	if (tabHasNotesSplit(getTabs(), target)) {
-		closeTab(notesId);
+	const isOpen = tabHasNotesSplit(getTabs(), target);
+	if (isOpen === open) {
+		if (open) dockHandle()?.equalizeGridGroups();
+		return;
+	}
+	if (!open) {
+		closeTab(notesId, { remember: false });
 		return;
 	}
 	if (!tabNotesEligible(target) && target.kind !== "paper") return;
@@ -573,7 +594,15 @@ export function toggleNotesSplit(): void {
 		return [...prev, notesPane];
 	});
 	dockHandle()?.openPanel(notesPane, notesPlacement);
+	dockHandle()?.equalizeGridGroups();
 	setActiveTabId(notesPane.id);
+}
+
+/** Toggle NOTES.md panel for the active paper (⌘\ / Layout menu). */
+export function toggleNotesSplit(): void {
+	const target = activeNotesTarget();
+	if (!target) return;
+	setNotesSplit(!tabHasNotesSplit(getTabs(), target));
 }
 
 /** Open (or focus) the NOTES.md panel of a paper body tab (tab context menu). */
@@ -611,7 +640,8 @@ export function openPaperNotes(paperDir: string): void {
 		openTabNotes(existing.id);
 		return;
 	}
-	openPaper(abs);
+	setTreeSelectedPath(abs);
+	openTab(abs, { preferMode: "pdf", forceNotes: true });
 }
 
 /** Open a paper folder in a tab: center PDF, right Notes (resolved on load).
@@ -620,6 +650,12 @@ export function openPaper(paperDir: string): void {
 	const abs = paperDir.replace(/\\/g, "/").replace(/\/+$/, "");
 	setTreeSelectedPath(abs);
 	openTab(abs, { preferMode: "pdf" });
+}
+
+/** Open an arXiv Daily recommendation as a remote PDF preview (no local files). */
+export function openRemoteArxivPaper(item: RemotePaperItem): void {
+	stageRemoteArxivPaper(item);
+	openTab(remoteArxivPath(item.arxivId), { preferMode: "pdf" });
 }
 
 /** Open any path with the mode inferred from its extension. */
@@ -1042,14 +1078,7 @@ export function selectTrash(): void {
 	openTab(TRASH_VIRTUAL_PATH);
 }
 
-/** Plaza tree node: the discovery-source overview. */
-export function selectPlaza(): void {
-	if (!loadSettings().plazaEnabled) return;
-	setTreeSelectedPath(PLAZA_VIRTUAL_PATH);
-	openTab(PLAZA_VIRTUAL_PATH);
-}
-
-/** Open one Plaza source panel (from its tree child row or a home card). */
+/** Open one Plaza source panel (from its tree child row). */
 export function openPlazaSource(source: PlazaSource): void {
 	if (!loadSettings().plazaEnabled) return;
 	setTreeSelectedPath(source.path);
@@ -1088,9 +1117,9 @@ export function selectFileNode(node: FileNode): void {
 	}
 	if (isPlazaVirtualPath(node.path)) {
 		if (!loadSettings().plazaEnabled) return;
+		// The Plaza root is a plain folder; only source children open a tab.
 		const source = plazaSourceForPath(node.path);
 		if (source) openPlazaSource(source);
-		else selectPlaza();
 		return;
 	}
 	if (node.kind === "directory" && isPaperDirectory(node.path, node.children)) {

@@ -4,6 +4,7 @@ import {
 	collectMarkdownRelPaths,
 	collectTreeRefreshTargets,
 	collectWikiTargetRelPaths,
+	compareVaultTreeNodes,
 	type FileNode,
 	isEagerTreeRel,
 	isMarkdownPath,
@@ -183,6 +184,24 @@ describe("isPathMissingError", () => {
 		).toBe(true);
 		expect(isPathMissingError("directory does not exist")).toBe(true);
 		expect(isPathMissingError(new Error("permission denied"))).toBe(false);
+	});
+});
+
+describe("compareVaultTreeNodes", () => {
+	it("sorts directories first and numeric prefixes naturally", () => {
+		const nodes = [
+			file("/v/10-note.md"),
+			dir("/v/10-topic", []),
+			file("/v/9-note.md"),
+			dir("/v/9-topic", []),
+		];
+
+		expect([...nodes].sort(compareVaultTreeNodes).map((n) => n.name)).toEqual([
+			"9-topic",
+			"10-topic",
+			"9-note.md",
+			"10-note.md",
+		]);
 	});
 });
 

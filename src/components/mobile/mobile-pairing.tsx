@@ -123,7 +123,7 @@ export function MobilePairing({
 	}, [initialOffer]);
 
 	return (
-		<div className="mobile-shell flex h-dvh min-h-0 w-full flex-col overflow-hidden bg-background px-5 pt-[max(2rem,env(safe-area-inset-top))] pb-8 sm:px-8 md:mx-auto md:max-w-md">
+		<div className="mobile-shell flex h-dvh min-h-0 w-full select-none flex-col overflow-hidden bg-background px-5 pt-[max(2rem,env(safe-area-inset-top))] pb-8 sm:px-8 md:mx-auto md:max-w-md">
 			<div className="flex flex-1 flex-col items-center justify-center">
 				<img src={agenteroLogo} alt="Agentero" className="size-28" />
 				<h1 className="mt-6 font-semibold text-2xl">{t("connect.title")}</h1>
@@ -162,13 +162,13 @@ export function MobilePairing({
 				{pending ? (
 					<div className="mt-8 w-full border-l-2 border-foreground px-4 py-2">
 						<p className="text-sm">{t("connect.pending")}</p>
-						<p className="mt-1 font-mono text-2xl tabular-nums">
+						<p className="mt-1 select-all font-mono text-2xl tabular-nums">
 							{pending.verificationCode}
 						</p>
 					</div>
 				) : null}
 				{error || status.lastError ? (
-					<p className="mt-4 w-full text-destructive text-sm">
+					<p className="mt-4 w-full select-text text-destructive text-sm">
 						{error ??
 							describeBridgeError(
 								status.lastError,

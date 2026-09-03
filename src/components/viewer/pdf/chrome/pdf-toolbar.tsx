@@ -1,5 +1,12 @@
 import type { PdfEngine } from "@embedpdf/models";
-import { Languages, Loader2, Minus, Plus, ScanSearch } from "lucide-react";
+import {
+	Languages,
+	Library,
+	Loader2,
+	Minus,
+	Plus,
+	ScanSearch,
+} from "lucide-react";
 import type { RefObject } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -37,6 +44,14 @@ type PdfToolbarProps = {
 	layoutTranslateActive: boolean;
 	layoutTranslateLabel: string;
 	onToggleLayoutTranslate: () => void;
+	/** Auto show/hide driven by scroll + pointer proximity (issue #400). */
+	visible: boolean;
+	/** True when viewing a remote paper that has no local sidecar. */
+	isRemotePaper?: boolean;
+	/** Import the remote paper into the current vault. */
+	onImportToLibrary?: () => void;
+	/** True while the import is running. */
+	importBusy?: boolean;
 };
 
 /** Top-right toolbar: zoom, region select, bulk translate. */
@@ -57,13 +72,27 @@ export function PdfToolbar({
 	layoutTranslateActive,
 	layoutTranslateLabel,
 	onToggleLayoutTranslate,
+	visible,
+	isRemotePaper = false,
+	onImportToLibrary,
+	importBusy = false,
 }: PdfToolbarProps) {
 	const { t } = useTranslation("viewer");
 
 	return (
-		<div className="pointer-events-none absolute top-2 right-3 z-20 flex items-center gap-1">
+		<div
+			className={cn(
+				"pointer-events-none absolute top-2 right-3 z-20 flex items-center gap-1 transition-opacity duration-200",
+				visible ? "opacity-100" : "opacity-0",
+			)}
+		>
 			<TooltipProvider delayDuration={200}>
-				<div className="pointer-events-auto flex h-7 items-center gap-0.5 rounded-lg border border-border/80 bg-background/95 p-0.5 shadow-sm backdrop-blur-sm">
+				<div
+					className={cn(
+						"flex h-7 select-none items-center gap-0.5 rounded-lg border border-border/80 bg-background/95 p-0.5 shadow-sm backdrop-blur-sm",
+						visible ? "pointer-events-auto" : "pointer-events-none",
+					)}
+				>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<Button
@@ -139,59 +168,87 @@ export function PdfToolbar({
 						</TooltipTrigger>
 						<TooltipContent side="bottom">{t("pdf.zoomIn")}</TooltipContent>
 					</Tooltip>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								size="icon-xs"
-								variant={regionSelecting ? "secondary" : "ghost"}
-								className="shrink-0 self-center"
-								aria-label={t("pdfExplain.selectRegion")}
-								aria-pressed={regionSelecting}
-								disabled={visualCropPending || !engine}
-								onClick={onToggleRegionSelect}
-							>
-								<ScanSearch
-									className={cn(
-										"size-3.5",
-										visualCropPending && "animate-pulse",
+					{isRemotePaper ? (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									size="icon-xs"
+									variant="ghost"
+									className="shrink-0 self-center"
+									aria-label={t("pdf.importToLibrary")}
+									disabled={importBusy}
+									onClick={onImportToLibrary}
+								>
+									{importBusy ? (
+										<Loader2 className="size-3.5 animate-spin" aria-hidden />
+									) : (
+										<Library className="size-3.5" aria-hidden />
 									)}
-								/>
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="bottom">
-							{regionSelecting
-								? t("pdfExplain.cancelRegion")
-								: t("pdfExplain.selectRegion")}
-							{/* Inverted tooltip: mute via text-background, not muted-foreground. */}
-							<span className="ml-2 text-background/70">
-								{formatShortcutById("visualAnnotation")}
-							</span>
-						</TooltipContent>
-					</Tooltip>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								size="icon-xs"
-								variant={layoutTranslateActive ? "secondary" : "ghost"}
-								className="shrink-0 self-center"
-								aria-label={layoutTranslateLabel}
-								aria-pressed={layoutTranslateActive}
-								disabled={!engine}
-								onClick={onToggleLayoutTranslate}
-							>
-								{layoutTranslateRunning ? (
-									<Loader2 className="size-3.5 animate-spin" aria-hidden />
-								) : (
-									<Languages className="size-3.5" aria-hidden />
-								)}
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="bottom">
-							{layoutTranslateLabel}
-						</TooltipContent>
-					</Tooltip>
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">
+								{t("pdf.importToLibrary")}
+							</TooltipContent>
+						</Tooltip>
+					) : null}
+					{!isRemotePaper ? (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									size="icon-xs"
+									variant={regionSelecting ? "secondary" : "ghost"}
+									className="shrink-0 self-center"
+									aria-label={t("pdfExplain.selectRegion")}
+									aria-pressed={regionSelecting}
+									disabled={visualCropPending || !engine}
+									onClick={onToggleRegionSelect}
+								>
+									<ScanSearch
+										className={cn(
+											"size-3.5",
+											visualCropPending && "animate-pulse",
+										)}
+									/>
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">
+								{regionSelecting
+									? t("pdfExplain.cancelRegion")
+									: t("pdfExplain.selectRegion")}
+								{/* Inverted tooltip: mute via text-background, not muted-foreground. */}
+								<span className="ml-2 text-background/70">
+									{formatShortcutById("visualAnnotation")}
+								</span>
+							</TooltipContent>
+						</Tooltip>
+					) : null}
+					{!isRemotePaper ? (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									size="icon-xs"
+									variant={layoutTranslateActive ? "secondary" : "ghost"}
+									className="shrink-0 self-center"
+									aria-label={layoutTranslateLabel}
+									aria-pressed={layoutTranslateActive}
+									disabled={!engine}
+									onClick={onToggleLayoutTranslate}
+								>
+									{layoutTranslateRunning ? (
+										<Loader2 className="size-3.5 animate-spin" aria-hidden />
+									) : (
+										<Languages className="size-3.5" aria-hidden />
+									)}
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">
+								{layoutTranslateLabel}
+							</TooltipContent>
+						</Tooltip>
+					) : null}
 				</div>
 			</TooltipProvider>
 		</div>

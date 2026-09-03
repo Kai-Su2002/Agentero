@@ -35,12 +35,14 @@ export function AgentSwitcher({
 					type="button"
 					variant="ghost"
 					size="sm"
-					className="h-7 max-w-[9rem] gap-1 px-1.5 font-medium text-sm leading-none"
+					className="h-7 min-w-0 max-w-[9rem] shrink gap-1 px-1.5 font-medium text-sm leading-none"
 					aria-label={t("switchAgent")}
 					title={t("switchAgent")}
 				>
 					{selected ? <AgentLogo template={selected.template} /> : null}
-					<span className="truncate">{selected?.name ?? t("defaultName")}</span>
+					<span className="min-w-0 truncate">
+						{selected?.name ?? t("defaultName")}
+					</span>
 					<ChevronDown className="size-3 shrink-0 opacity-70" />
 				</Button>
 			</DropdownMenuTrigger>

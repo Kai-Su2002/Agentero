@@ -23,6 +23,7 @@ export type BackgroundTaskKind =
 	| "layout"
 	| "paperRead"
 	| "connector"
+	| "recognize"
 	| "other";
 
 export type BackgroundTaskStatus =
@@ -473,11 +474,13 @@ function getSemaphore(
  *
  * With `concurrency`, tasks of the same kind share a semaphore and are shown
  * immediately as queued/running. Without it, the task starts immediately.
+ * `onTaskId` fires synchronously with the new id before any queueing, so the
+ * caller can cancel the task later even while it is still queued.
  */
 export async function enqueueBackgroundTask<T>(
 	input: BackgroundTaskInput,
 	fn: BackgroundTaskFn<T>,
-	options?: { concurrency?: number },
+	options?: { concurrency?: number; onTaskId?: (id: string) => void },
 ): Promise<T> {
 	const concurrency = options?.concurrency;
 	const id = startBackgroundTask({
@@ -488,6 +491,7 @@ export async function enqueueBackgroundTask<T>(
 	});
 	const controller = new AbortController();
 	controllers.set(id, controller);
+	options?.onTaskId?.(id);
 	ensureGlobalProgressListener();
 	logger.info(
 		`op enqueue background_task kind=${input.kind} task_id=${id} title=${input.title} concurrency=${concurrency ?? "unlimited"}`,

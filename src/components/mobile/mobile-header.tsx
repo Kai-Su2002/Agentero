@@ -25,7 +25,7 @@ export function MobileHeader({
 	trailing?: ReactNode;
 }) {
 	return (
-		<header className="fixed inset-x-0 top-0 z-30 flex h-16 shrink-0 items-center gap-3 border-b bg-background px-4 md:static md:h-auto md:min-h-16 md:px-6">
+		<header className="fixed inset-x-0 top-0 z-30 flex h-16 shrink-0 select-none items-center gap-3 border-b bg-background px-4 md:static md:h-auto md:min-h-16 md:px-6">
 			{leading}
 			<div className="flex min-w-0 flex-1 items-center gap-2">
 				<div className={cn("md:hidden", !showBrand && "hidden")}>

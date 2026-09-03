@@ -2,13 +2,12 @@
  * 广场（Plaza）— external discovery sources.
  *
  * Virtual tree/tab paths only; nothing here ever touches disk. Adding a source
- * is a single {@link PLAZA_SOURCES} entry — the sidebar node, its child row, the
- * home page card and the center panel all derive from this registry.
+ * is a single {@link PLAZA_SOURCES} entry — the sidebar child row and the
+ * center panel both derive from this registry.
  *
  * @see docs/development/plaza.md
  */
 
-import type { ParseKeys } from "i18next";
 import i18n from "@/i18n";
 
 /** Virtual tree/tab path for the Plaza parent node. */
@@ -31,11 +30,6 @@ export type PlazaSource = {
 	/** `agentero:plaza/<id>` — virtual, never a filesystem path. */
 	path: string;
 	label: string;
-	/**
-	 * Sidebar-namespace i18n key for the one line shown on the Plaza home card.
-	 * Stored as a key (translated at render) so it follows language switches.
-	 */
-	description: ParseKeys<"sidebar">;
 	/**
 	 * Canonical public site: used for "open in browser", and embedded directly
 	 * when there is no proxy. `null` with no {@link panel} is a placeholder.
@@ -60,8 +54,10 @@ function sourcePath(id: string): string {
 
 /** Custom-scheme origin, spelled the way each platform's WebView expects. */
 function schemeOrigin(scheme: string): string {
+	// Windows WebView2 intercepts http(s)://<scheme>.localhost; the filter is
+	// registered as http:// unless useHttpsSchemeForCustomProtocol is set.
 	return navigator.userAgent.includes("Windows")
-		? `https://${scheme}.localhost`
+		? `http://${scheme}.localhost`
 		: `${scheme}://localhost`;
 }
 
@@ -70,7 +66,6 @@ export const PLAZA_SOURCES: readonly PlazaSource[] = [
 		id: "cool-papers",
 		path: sourcePath("cool-papers"),
 		label: "Cool Papers",
-		description: "plaza.arxivDescription",
 		url: "https://papers.cool/",
 		embedOrigin: () => schemeOrigin("agentero-coolpapers"),
 		icon: "coolPapers",
@@ -79,7 +74,6 @@ export const PLAZA_SOURCES: readonly PlazaSource[] = [
 		id: "modelscope",
 		path: sourcePath("modelscope"),
 		label: "ModelScope Papers",
-		description: "plaza.modelscopeDescription",
 		url: "https://modelscope.cn/papers",
 		embedOrigin: () => schemeOrigin("agentero-modelscope"),
 		icon: "modelScope",
@@ -88,7 +82,6 @@ export const PLAZA_SOURCES: readonly PlazaSource[] = [
 		id: "skills",
 		path: sourcePath("skills"),
 		label: "Skill picks",
-		description: "plaza.skillsDescription",
 		url: null,
 		embedOrigin: null,
 		panel: "skills",
@@ -98,7 +91,6 @@ export const PLAZA_SOURCES: readonly PlazaSource[] = [
 		id: "feeds",
 		path: sourcePath("feeds"),
 		label: "Feeds",
-		description: "plaza.feeds.description",
 		url: null,
 		embedOrigin: null,
 		panel: "feeds",
@@ -108,7 +100,6 @@ export const PLAZA_SOURCES: readonly PlazaSource[] = [
 		id: "arxiv-rec",
 		path: sourcePath("arxiv-rec"),
 		label: "arXiv Daily",
-		description: "plaza.arxivRec.description",
 		url: null,
 		embedOrigin: null,
 		panel: "arxivRec",

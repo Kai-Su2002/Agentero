@@ -98,10 +98,27 @@ export function usePdfTextSelection({
 				setSelectionMenu(null);
 				return;
 			}
-			const first = pages[0];
-			const pageEl = pageElByIndex(hostRef.current, first.pageIndex);
+
+			// Anchor the toolbar to the page where the cursor ended. For cross-page
+			// selections the first page may be scrolled out of view, which makes the
+			// toolbar appear off-screen and seem missing.
+			const state = selectionCap.getState(docId);
+			const endPage = state.selection?.end?.page ?? null;
+			const anchorPage =
+				(endPage != null
+					? pages.find((p) => p.pageIndex === endPage)
+					: undefined) ??
+				pages[pages.length - 1] ??
+				pages[0];
+			if (!anchorPage) return;
+
+			const pageEl = pageElByIndex(hostRef.current, anchorPage.pageIndex);
 			if (!pageEl) return;
-			const screen = rectTopCenterScreen(pageEl, first.rect, zoomRef.current);
+			const screen = rectTopCenterScreen(
+				pageEl,
+				anchorPage.rect,
+				zoomRef.current,
+			);
 			void (async () => {
 				let quote = "";
 				try {
@@ -115,6 +132,8 @@ export function usePdfTextSelection({
 					pages,
 					quote,
 					(pageIndex) => doc?.pages[pageIndex]?.size ?? null,
+					"selection",
+					anchorPage.pageIndex,
 				);
 				if (!anchor) return;
 				setSelectionMenu({ screen, anchor, pages });

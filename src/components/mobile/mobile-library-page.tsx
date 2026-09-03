@@ -29,7 +29,7 @@ export function MobileLibraryPage({
 		);
 	}, [papers, query]);
 	return (
-		<section className="flex h-full min-h-0 flex-col">
+		<section className="flex h-full min-h-0 select-none flex-col">
 			<div className="agentero-scroll flex-1">
 				{loading && papers.length === 0 ? (
 					<div className="grid h-full place-items-center px-6">

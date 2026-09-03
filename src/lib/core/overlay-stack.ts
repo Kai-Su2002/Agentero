@@ -10,6 +10,12 @@ export type OverlayHandle = {
 	id: string;
 	/** Dismiss this overlay (idempotent). */
 	close: () => void;
+	/**
+	 * When true, this overlay blocks global shortcuts that declare
+	 * `whenSettingsClosed: true`. Docked surfaces (e.g. Agent ask-user form)
+	 * should be non-modal so they do not steal shortcut focus.
+	 */
+	modal?: boolean;
 };
 
 type Listener = () => void;
@@ -37,17 +43,26 @@ export function isAnyOverlayOpen(): boolean {
 	return stack.length > 0;
 }
 
+/** True when at least one registered overlay is modal (blocks global shortcuts). */
+export function isAnyModalOverlayOpen(): boolean {
+	return stack.some((h) => h.modal !== false);
+}
+
 /**
  * Register an open overlay at the top of the stack.
  * Call the returned disposer when the overlay closes or the owner unmounts.
  */
 export function pushOverlay(handle: OverlayHandle): () => void {
-	const existing = stack.findIndex((h) => h.id === handle.id);
+	const normalized: OverlayHandle = {
+		...handle,
+		modal: handle.modal !== false,
+	};
+	const existing = stack.findIndex((h) => h.id === normalized.id);
 	if (existing >= 0) stack.splice(existing, 1);
-	stack.push(handle);
+	stack.push(normalized);
 	emit();
 	return () => {
-		const i = stack.findIndex((h) => h.id === handle.id);
+		const i = stack.findIndex((h) => h.id === normalized.id);
 		if (i < 0) return;
 		stack.splice(i, 1);
 		emit();

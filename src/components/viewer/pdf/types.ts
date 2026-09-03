@@ -5,6 +5,7 @@
 
 import type { FormattedSelection } from "@embedpdf/plugin-selection/react";
 import type { PromptImage } from "@/lib/agent/api";
+import type { PaperMetadata } from "@/lib/paper";
 import type { Citation } from "@/lib/paper/refs";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import type {
@@ -39,6 +40,8 @@ export type PdfViewerProps = {
 	paperRelPath?: string | null;
 	/** Current vault root for ACP cwd */
 	vaultPath?: string | null;
+	/** Paper metadata when already resolved by the workspace tab (remote papers). */
+	paperMeta?: PaperMetadata | null;
 	/** Open Translate settings from a translation error card. */
 	onOpenSettings?: () => void;
 	className?: string;
@@ -55,6 +58,17 @@ export type PdfViewerProps = {
 	 * only the active viewer should refresh marks/ (expensive base64 JSON list).
 	 */
 	isActive?: boolean;
+	/**
+	 * True for remote papers (e.g. arXiv Daily preview) that have no local
+	 * sidecar. Hides mark-persisting UI (highlight / note / translate); Ask /
+	 * Add-to-chat stay available as ephemeral session actions. Offers import.
+	 */
+	isRemotePaper?: boolean;
+	/**
+	 * Identifier used by the "Import to library" action for remote papers.
+	 * Usually the arXiv abs/source URL.
+	 */
+	importIdentifier?: string;
 };
 
 export type PdfViewerInnerProps = PdfViewerProps & { docId: string };
@@ -113,6 +127,13 @@ export type VisualDraftEditorState = {
 /** Discriminator for a right-rail comment card. */
 export type CommentRailKind = "highlight" | "visual";
 
+/** One turn from a visual mark's inline Agent conversation preview. */
+export type PageAnnotationCommentMessage = {
+	id: string;
+	role: "user" | "assistant";
+	content: string;
+};
+
 /** Persistent comment-rail card for one annotated highlight or visual note. */
 export type PageAnnotationComment = {
 	id: string;
@@ -128,6 +149,8 @@ export type PageAnnotationComment = {
 	kind: CommentRailKind;
 	/** Pre-computed `[[alias|target]]` or null if no wiki target. */
 	linkAlias: string | null;
+	/** Visual marks with an Agent conversation show a truncated inline preview. */
+	messages?: PageAnnotationCommentMessage[];
 };
 
 /**

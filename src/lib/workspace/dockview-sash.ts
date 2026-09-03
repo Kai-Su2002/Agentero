@@ -120,6 +120,7 @@ export function installDockviewSashFrameLoop(root: HTMLElement): () => void {
 	const PointerEventCtor = ownerWindow?.PointerEvent ?? PointerEvent;
 	const syntheticEvents = new WeakSet<Event>();
 	let activePointerId: number | null = null;
+	let activeSash: Element | null = null;
 
 	const dispatcher = createLatestFrameDispatcher<PointerMoveSnapshot>({
 		dispatch(snapshot) {
@@ -142,6 +143,8 @@ export function installDockviewSashFrameLoop(root: HTMLElement): () => void {
 		if (flush) dispatcher.flush();
 		else dispatcher.cancel();
 		activePointerId = null;
+		activeSash?.classList.remove("agentero-dock-sash-dragging");
+		activeSash = null;
 		root.classList.remove("agentero-dock-sash-active");
 	};
 
@@ -150,6 +153,12 @@ export function installDockviewSashFrameLoop(root: HTMLElement): () => void {
 			return;
 		}
 		activePointerId = event.pointerId;
+		// `preventDefault` below suppresses `:active` and dockview does not set
+		// pointer capture, so paint the dragged sash from an explicit class.
+		activeSash = supportsClosest(event.target)
+			? event.target.closest(".dv-sash")
+			: null;
+		activeSash?.classList.add("agentero-dock-sash-dragging");
 		root.classList.add("agentero-dock-sash-active");
 		event.preventDefault();
 	};

@@ -42,6 +42,7 @@ export {
 export {
 	collectTreeRefreshTargets,
 	collectWikiTargetRelPaths,
+	compareVaultTreeNodes,
 	isEagerTreeRel,
 	isPathMissingError,
 	listVaultDirChildren,

@@ -162,7 +162,7 @@ export function PlazaWebFrame({
 				className,
 			)}
 		>
-			<div className="flex h-8 shrink-0 items-center gap-0.5 border-b px-1.5">
+			<div className="flex h-8 shrink-0 select-none items-center gap-0.5 border-b px-1.5">
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<Button

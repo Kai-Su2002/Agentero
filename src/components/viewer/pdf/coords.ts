@@ -59,19 +59,26 @@ export function rectRightScreen(
  * EmbedPDF reports rects in PDF page coordinates (points); dividing by the page
  * size yields the 0–1 rects the Ask/Translate marks + pins use.
  *
- * Ask/Translate anchor to a single page — the first page of the selection.
+ * Ask/Translate anchor to a single page. Use `preferredPageIndex` (e.g. the
+ * page where the cursor ended) when available; otherwise fall back to the first
+ * page of the selection.
  */
 export function anchorFromEmbedSelection(
 	pages: FormattedSelection[],
 	quote: string,
 	pageSizePoints: (pageIndex: number) => Size | null,
 	trigger: PdfAskTrigger = "selection",
+	preferredPageIndex?: number,
 ): PdfAskAnchor | null {
 	const first = pages[0];
 	if (!first) return null;
-	const size = pageSizePoints(first.pageIndex);
+	const page =
+		preferredPageIndex != null
+			? (pages.find((p) => p.pageIndex === preferredPageIndex) ?? first)
+			: first;
+	const size = pageSizePoints(page.pageIndex);
 	if (!size || size.width <= 0 || size.height <= 0) return null;
-	const rects: PdfAskNormalizedRect[] = first.segmentRects
+	const rects: PdfAskNormalizedRect[] = page.segmentRects
 		.filter((r) => r.size.width > 0 && r.size.height > 0)
 		.map((r) => ({
 			x: clamp01(r.origin.x / size.width),
@@ -81,7 +88,7 @@ export function anchorFromEmbedSelection(
 		}));
 	if (!rects.length) return null;
 	return {
-		page: first.pageIndex + 1,
+		page: page.pageIndex + 1,
 		rects,
 		quote: quote.trim() || undefined,
 		trigger,

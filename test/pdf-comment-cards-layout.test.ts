@@ -122,4 +122,25 @@ describe("layoutCommentCards", () => {
 		expect(laid[0].topPx).toBeCloseTo(320);
 		expect(laid[0].heightPx).toBeGreaterThan(0);
 	});
+
+	it("grows visual notes that carry an inline conversation preview", () => {
+		const withoutMessages = layoutCommentCards(
+			[comment("v", 0.4, "note", "visual")],
+			800,
+		);
+		const withMessages = layoutCommentCards(
+			[
+				{
+					...comment("v", 0.4, "note", "visual"),
+					messages: [
+						{ id: "m1", role: "user" as const, content: "explain this" },
+					],
+				},
+			],
+			800,
+		);
+		expect(withMessages[0]?.heightPx).toBeGreaterThan(
+			withoutMessages[0]?.heightPx ?? 0,
+		);
+	});
 });

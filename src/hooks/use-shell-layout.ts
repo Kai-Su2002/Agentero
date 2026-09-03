@@ -8,11 +8,16 @@ import { type RefObject, useEffect, useMemo, useRef } from "react";
 import { usePanelRef } from "react-resizable-panels";
 import { prefersReducedMotion } from "@/lib/core/motion";
 import {
+	type LayoutPresetMode,
+	layoutModeRightRatio,
+} from "@/lib/shell/layout-presets";
+import {
 	registerLayoutController,
+	setLayoutMode,
 	setRightSidebarOpenState,
 	setSidebarCollapsedState,
 } from "@/lib/shell/ui-store";
-import { toggleNotesSplit } from "@/lib/workspace/actions";
+import { setNotesSplit, toggleNotesSplit } from "@/lib/workspace/actions";
 import { getActiveTabId, getTabs } from "@/lib/workspace/store";
 import { tabHasNotesSplit, tabNotesEligible } from "@/lib/workspace/tabs";
 
@@ -158,6 +163,39 @@ export function useShellLayout(): ShellLayout {
 			setRightSidebarOpenState(!collapsed);
 		};
 
+		/** Resize the Agent rail as a fraction of the source + Agent area. */
+		const setRightRatio = (ratio: number) => {
+			const panel = rightSidebarPanelRef.current;
+			const source = sourcePanelRef.current;
+			if (!panel || !source) return;
+			const total = source.getSize().inPixels + panel.getSize().inPixels;
+			if (total <= 0) return;
+			const targetPx = Math.round(total * ratio);
+			const el = document.getElementById("right-sidebar");
+			withRailAnimation("right", el, () => {
+				try {
+					panel.expand();
+					panel.resize(targetPx);
+				} catch {
+					// ignore
+				}
+			});
+			rightWidthPxRef.current = targetPx;
+			setRightSidebarOpenState(true);
+		};
+
+		const applyLayoutMode = (mode: LayoutPresetMode) => {
+			if (mode === "notes") setNotesSplit(true);
+			else setNotesSplit(false);
+
+			if (mode === "reading") {
+				setRightCollapsed(true);
+			} else {
+				setRightRatio(layoutModeRightRatio(mode));
+			}
+			setLayoutMode(mode);
+		};
+
 		const focusSidebar = () => {
 			setLeftCollapsed(false);
 			requestAnimationFrame(() => {
@@ -193,12 +231,13 @@ export function useShellLayout(): ShellLayout {
 		return {
 			setLeftCollapsed,
 			setRightCollapsed,
+			applyLayoutMode,
 			focusSidebar,
 			focusEditorPane,
 			focusNotesEditor,
 			cancelRailAnimation,
 		};
-	}, [sidebarPanelRef, rightSidebarPanelRef]);
+	}, [sidebarPanelRef, rightSidebarPanelRef, sourcePanelRef]);
 
 	useEffect(() => {
 		registerLayoutController(controller);

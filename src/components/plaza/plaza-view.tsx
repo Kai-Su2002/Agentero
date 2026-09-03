@@ -1,82 +1,29 @@
 /**
- * 广场（Plaza）center panel: the source overview, or one embedded source.
+ * 广场（Plaza）center panel: one embedded source per tab.
  *
- * Everything is derived from the {@link PLAZA_SOURCES} registry, so a new source
- * needs no changes here.
+ * The tree root node is a plain virtual folder (expand/collapse only) with no
+ * page of its own; each child row opens its source's tab. Everything is
+ * derived from the {@link PLAZA_SOURCES} registry, so a new source needs no
+ * changes here.
  */
 
-import { ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { PlazaArxivRecView } from "@/components/plaza/plaza-arxiv-rec-view";
 import { PlazaFeedsView } from "@/components/plaza/plaza-feeds-view";
 import { PlazaSkillsView } from "@/components/plaza/plaza-skills-view";
 import { PlazaWebFrame } from "@/components/plaza/plaza-web-frame";
-import { PLAZA_SOURCE_ICONS } from "@/components/plaza/source-icons";
-import { useSettings } from "@/hooks/use-app-stores";
 import { cn } from "@/lib/core/utils";
-import {
-	type PlazaSource,
-	plazaSourceForPath,
-	plazaSourceLabel,
-	visiblePlazaSources,
-} from "@/lib/plaza";
-
-function SourceCard({
-	source,
-	onOpen,
-}: {
-	source: PlazaSource;
-	onOpen: (source: PlazaSource) => void;
-}) {
-	const { t } = useTranslation("sidebar");
-	const Icon = PLAZA_SOURCE_ICONS[source.icon];
-	const available = Boolean(source.url || source.panel);
-	const label = plazaSourceLabel(source);
-	return (
-		<button
-			type="button"
-			disabled={!available}
-			onClick={() => onOpen(source)}
-			className={cn(
-				"group flex w-full items-start gap-3 rounded-lg border bg-background p-3 text-left transition-colors",
-				available
-					? "hover:border-foreground/20 hover:bg-muted/50"
-					: "cursor-default opacity-60",
-				"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-			)}
-		>
-			<Icon className="mt-0.5 size-5 shrink-0" />
-			<span className="min-w-0 flex-1">
-				<span className="flex items-center gap-1 font-medium text-sm">
-					<span className="truncate">{label}</span>
-					{available ? (
-						<ChevronRight
-							className="size-3.5 shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100"
-							aria-hidden
-						/>
-					) : null}
-				</span>
-				<span className="mt-0.5 block text-muted-foreground text-xs leading-snug">
-					{available ? t(source.description) : t("plaza.comingSoon")}
-				</span>
-			</span>
-		</button>
-	);
-}
+import { plazaSourceForPath, plazaSourceLabel } from "@/lib/plaza";
 
 export function PlazaView({
 	path,
-	onOpenSource,
 	className,
 }: {
 	path: string;
-	onOpenSource: (source: PlazaSource) => void;
 	className?: string;
 }) {
 	const { t } = useTranslation("sidebar");
-	const plazaHiddenSources = useSettings((s) => s.plazaHiddenSources);
 	const source = plazaSourceForPath(path);
-	const sourceLabel = source ? plazaSourceLabel(source) : "";
 
 	if (source?.panel === "skills") {
 		return <PlazaSkillsView className={className} />;
@@ -95,7 +42,7 @@ export function PlazaView({
 			<PlazaWebFrame
 				homeUrl={source.url}
 				embedOrigin={source.embedOrigin?.() ?? null}
-				title={sourceLabel}
+				title={plazaSourceLabel(source)}
 				className={className}
 			/>
 		);
@@ -109,24 +56,11 @@ export function PlazaView({
 					className,
 				)}
 			>
-				{t("plaza.comingSoonFor", { label: sourceLabel })}
+				{t("plaza.comingSoonFor", { label: plazaSourceLabel(source) })}
 			</div>
 		);
 	}
 
-	return (
-		<div
-			className={cn("agentero-scroll h-full overflow-y-auto p-4", className)}
-		>
-			<h1 className="font-medium text-sm">{t("plaza.plaza")}</h1>
-			<p className="mt-1 text-muted-foreground text-xs">
-				{t("plaza.plazaDescription")}
-			</p>
-			<div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-				{visiblePlazaSources(plazaHiddenSources).map((item) => (
-					<SourceCard key={item.id} source={item} onOpen={onOpenSource} />
-				))}
-			</div>
-		</div>
-	);
+	// The Plaza root has no page of its own — it is a tree folder only.
+	return null;
 }

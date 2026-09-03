@@ -51,7 +51,7 @@ import { nextLineId, nextPartId } from "@/lib/pdf-visual/ids";
 import { clearAgentSessionOpenRequest } from "@/lib/shell/ui-store";
 
 /** Strip Host/Codex machine envelopes so Chat never shows system preamble. */
-const sanitizeChatLines = (raw: ChatLine[]): ChatLine[] =>
+export const sanitizeChatLines = (raw: ChatLine[]): ChatLine[] =>
 	raw
 		.map((line) => {
 			if (line.kind !== "user") return line;
@@ -404,6 +404,10 @@ export function useAgentHistory({
 								id: line.id,
 								kind: "user" as const,
 								text: line.text,
+								...(line.visualAnnotations?.length
+									? { visualAnnotations: line.visualAnnotations }
+									: {}),
+								...(line.images?.length ? { images: line.images } : {}),
 							};
 						}
 						const parts: AgentPart[] = [];

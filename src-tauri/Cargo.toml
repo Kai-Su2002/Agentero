@@ -1,6 +1,6 @@
 [package]
 name = "agentero"
-version = "0.9.0"
+version = "0.9.4"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
@@ -79,12 +79,13 @@ thiserror = "2"
 which = "7"
 rusqlite = { version = "0.32", features = ["bundled"] }
 feed-rs = "2.3"
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "multipart"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "socks", "multipart", "cookies"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std", "serde"] }
 flate2 = "1.1.9"
 tar = "0.4.46"
 zip = { version = "2.4", default-features = false, features = ["deflate"] }
 htmd = "0.5.4"
+dom_smoothie = "0.18"
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 notify-debouncer-full = "0.3"
 log = "0.4"

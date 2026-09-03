@@ -254,6 +254,8 @@ UI 阅读：优先 catalog 远程 URL；`source/` 为 arXiv TeX 归档；`PAPER.
 4. ADS Bibcode
 5. PMID（1–9 位数字，最后匹配）
 
+> 实现上，优先级由 `src-tauri/src/features/import/resolver.rs` 的静态 resolver 表驱动：Url / Doi / Arxiv / Isbn / Pmid / Ads 各实现 `PaperResolver`（`priority` 探测顺序、`catalog_column` 查重列、`translator_target` 构造 Translator 请求、`fetch_fallback` Translator 失败后的直连回退——arXiv→Atom、DOI→Crossref）。Skill 不入表，由 `parse::extract_skill_source` 前置分流。新增导入源只需实现一个 resolver 并登记进表（表按 `priority` 排序，有测试守护）。
+
 解析失败：返回 `lookup.failure_to_id`，不调用网络。
 
 ### 3.3 输出：`ParsedIdentifier`
@@ -270,19 +272,20 @@ interface ParsedIdentifier {
 }
 ```
 
-### 3.4 标题搜索回退
+### 3.4 标题搜索（S2 ∥ arXiv 并行竞速）
 
 **Zotero translator 无法承担这一步。** translation-server 的 `POST /search`（§4.2）是标识符入口，Zotero Search Translators 只做「标识符 → 元数据」，没有自由文本检索能力；Agentero 本地也没有 JS runtime 来跑 translator。因此标题搜索必须直连检索 API。
 
 兼容性通过分工保留：**搜索只负责「文本 → 候选标识符」**，用户选中后把 `identifier`（arXiv ID 优先，其次 DOI）重新提交 `lookup_import_batch`，Translator 仍是元数据的唯一事实来源，入库管道不分叉。
 
 - 实现：`src-tauri/src/features/import/title_search.rs`
-- 数据源：Semantic Scholar Graph API `/paper/search` 为主；报错或 0 结果时回退 **arXiv** `search_query=ti:"…"&sortBy=relevance`。两者均免 key，复用 `core::http::client_builder()` 与信号量限流（并发 2）。
-  > **S2 无 key 的搜索接口限流极严（实测连续 3 次均 429）**，所以 arXiv 才是线上的常走路径。不选 Crossref 兜底：NeurIPS proceedings 之类没有 Crossref DOI，搜 "Attention is all you need" 时正确论文**根本不在** Crossref 结果集里，只会返回一堆同名论文。
+- 数据源：Semantic Scholar Graph API `/paper/search` 与 **arXiv** `search_query=ti:"…"&sortBy=relevance` **并行**发起；S2 在 5s 预算（`S2_SEARCH_BUDGET`）内返回非空则优先（跨域、带被引数），否则取已在途的 arXiv 结果。最坏耗时 ≈ max(预算, 单请求 20s 超时)，不再是串行 S2→arXiv 之和（~40s）。两者均免 key，复用 `core::http::client_builder()` 与信号量限流（并发 2）。
+  > **S2 无 key 的搜索接口限流极严（实测连续 3 次均 429）**，所以 arXiv 才是线上的常走路径；并行发起后 429 快速失败时 arXiv 已在途，省掉一次串行往返。不选 Crossref 兜底：NeurIPS proceedings 之类没有 Crossref DOI，搜 "Attention is all you need" 时正确论文**根本不在** Crossref 结果集里，只会返回一堆同名论文。
   > arXiv 的 Atom 需要按 `<entry>` 切块解析 —— `map::map_arxiv_atom` 只处理单条响应，不能复用。
 - 排序：保留 provider 的相关度顺序，但把**标题与 query 归一化后完全相等**的条目提到最前（归一化 = 小写、去非字母数字、压空格）。同名论文很多，这一步防止真正那篇被埋掉。
 - **过滤掉既无 DOI 也无 arXiv ID 的条目** —— 没有标识符就无法入库，不能出现在候选里。
 - Top 3 返回给前端（`SEARCH_CANDIDATE_LIMIT`）；无结果或搜索失败写入 `errors`，不静默。单源失败走 `log::warn!`，否则 S2 的 429 完全不可见。
+- 取消：`resolve_search_queries` 带前端 `task_id`，每条 query 前检查协作取消 —— 关闭搜索卡片即取消任务，剩余查询直接跳过。
 - 副作用：拼错的标识符（如 `1706.0376`）现在会走搜索并得到「无结果」，比原来的 `unrecognized identifier` 更可读。
 
 ---
@@ -547,7 +550,7 @@ await ensure_paper_assets(paperDir, metadata); // PDF + arXiv LaTeX → source/
   1. 对 `texts` 逐条调 `extract_primary_identifier`；未识别则计入 `errors`。
   2. 按规范化 value（arXiv 去 version、DOI 小写等）去重：同一 batch 内重复 → `skipped`（`duplicate_in_batch`）。
   3. 对每条唯一标识符查 catalog：已存在同 `arxiv_id` / `doi` / `isbn` / `pmid` / `id` 的 paper → `skipped`（`already_in_library`）。
-  4. 剩余条目以 `concurrency`（默认 5，范围 1–10）为上限**并发**调 `import_by_identifier_with_progress`。单条失败继续下一条，错误文本加入 `errors`。并发上限可在 **Settings → General → Batch import concurrency** 调整。
+  4. 剩余条目以 `concurrency`（默认 5，范围 1–10）为上限**并发**调 `import_by_identifier_with_progress`。单条失败继续下一条，错误文本加入 `errors`。并发上限可在 **Settings → General → Batch import concurrency** 调整。commit 阶段仍按 `id` / `arxiv_id` / `doi` / `pmid` / `isbn` 做跨标识符去重（`DedupePolicy::ByIdentifiers`，#406），预检后出现的重复不会新建文件夹。
   5. 返回全部 `imported` 条目；前端刷新树 / Library / wiki 后，对 `imported` 中仍缺资源的 paper 逐个加入下载队列，每篇对应一个独立的 `download` 后台任务，并按并发上限排队执行。
 
 魔棒界面使用通用的 `enqueueBackgroundTask` 为每个输入创建一个独立的前端任务。任务面板只展示每个标识符的状态和资源进度，不展示 Host 批处理的内部阶段或聚合计数；并发限制由同类任务共享的信号量执行。
@@ -812,6 +815,7 @@ arXiv URL 推导：
   1. **无 Vault 欢迎页**：与 Create / Open vault 同一行的 **Migrate from Zotero**（先创建 Vault，再打开对话框）；
   2. **论文库工具栏**（已打开 Vault 时）：图标按钮。
   共用 `ZoteroMigrateDialog`。打开时自动探测默认 `~/Zotero` 目录（否则手动选含 `zotero.sqlite` + `storage/` 的目录）；扫描预览以 chips 显示文献 / PDF / 笔记数，迁移后展示结果小结（导入 / 补笔记 / 拷 PDF / 清理）。
+- 选错目录兜底：扫描报 `zotero.sqlite not found` 时，若所选目录的**父目录**含 `zotero.sqlite`（如误选 `storage/`），对话框提示一键改用父目录；否则显示本地化错误（不再透出后端原始英文串）。
 - Host：`zotero_scan`（只读预览：文献数 / 有本地 PDF 数）、`zotero_migrate`（执行）；实现在 `features/zotero/db.rs`。
 - 读库：把 `zotero.sqlite`（含 `-wal`/`-shm`）**拷到临时目录**再只读打开（容忍 Zotero 正在运行）；查 `items`/`itemData`/`creators`/`itemTags`/`itemAttachments`，跳过 `deletedItems` 与 attachment/note/annotation 类型，并排除插件产生的 `computerProgram` 垃圾条目（如标题为 "Addon Item" 的项）。
 - 映射：每条**拼装成 Zotero-API-JSON item** → 复用 `map_zotero_item` + `enrich_remote_urls` + `write_paper_shell` + `paper_record_from_meta` + catalog upsert，落到 `{parent_dir}/{id}/`（id/citekey 与魔棒 / 文件导入一致）。

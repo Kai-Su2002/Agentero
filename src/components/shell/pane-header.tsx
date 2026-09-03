@@ -4,7 +4,7 @@ import { cn } from "@/lib/core/utils";
 
 /** Shared pane title bar height — keep all three columns aligned. */
 export const PANE_HEADER_CLASS =
-	"flex h-10 shrink-0 items-center gap-2 border-b px-3 leading-none";
+	"flex h-10 shrink-0 select-none items-center gap-2 border-b px-3 leading-none";
 
 type PaneHeaderProps = {
 	children: ReactNode;

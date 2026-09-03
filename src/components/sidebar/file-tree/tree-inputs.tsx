@@ -75,11 +75,10 @@ export function TreeCreateInput({
 		<div className="relative">
 			<div
 				className={cn(
-					"flex h-7 items-center gap-1 rounded px-2",
+					"flex h-7 items-center gap-1 rounded px-4",
 					error ? "bg-destructive/10" : "bg-muted/60",
 				)}
 			>
-				<span className="size-4 shrink-0" aria-hidden />
 				<Icon className="size-4 shrink-0 text-muted-foreground" />
 				<input
 					ref={inputRef}
@@ -182,11 +181,10 @@ export function TreeRenameInput({
 		<div className="relative">
 			<div
 				className={cn(
-					"flex h-7 items-center gap-1 rounded px-2",
+					"flex h-7 items-center gap-1 rounded px-4",
 					error ? "bg-destructive/10" : "bg-muted/60",
 				)}
 			>
-				<span className="size-4 shrink-0" aria-hidden />
 				{icon}
 				<input
 					ref={inputRef}

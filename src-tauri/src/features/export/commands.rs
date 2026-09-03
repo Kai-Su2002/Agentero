@@ -3,7 +3,7 @@ use crate::core::error::{map_err, ApiResult};
 
 use super::{load_system_cjk_font, ExportFontPayload};
 
-/// Read a system font suitable for embedding selectable CJK text in PDF export.
+/// Read a system font suitable for PDF export and PDFium's local CJK fallback.
 ///
 /// Async + `run_blocking`: reading a multi-megabyte font file must not run on
 /// the main thread (Windows UI message pump).

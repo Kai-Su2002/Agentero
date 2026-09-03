@@ -35,7 +35,7 @@ import { useFeatureTour } from "@/hooks/use-feature-tour";
 import { useLayoutModelPrefetch } from "@/hooks/use-layout-model-prefetch";
 import { useMcpSync } from "@/hooks/use-mcp-sync";
 import { useNativeMenuEvents } from "@/hooks/use-native-menu-events";
-import { useAnyOverlayOpen } from "@/hooks/use-overlay-registration";
+import { useAnyModalOverlayOpen } from "@/hooks/use-overlay-registration";
 import { SIDEBAR_DEFAULT_PX, useShellLayout } from "@/hooks/use-shell-layout";
 import { useVaultFileEvents } from "@/hooks/use-vault-file-events";
 import {
@@ -64,12 +64,12 @@ import {
 import {
 	layout,
 	openPalette,
-	openRightTab,
+	setLayoutMode,
 	setRightSidebarOpenState,
 	setSidebarCollapsedState,
-	toggleChat,
 	toggleSidebar,
 } from "@/lib/shell/ui-store";
+import { openRightTab, toggleChat } from "@/lib/shell/ui-window-actions";
 import {
 	createNewVault,
 	deleteSelectedPath,
@@ -134,6 +134,7 @@ function zoomReset(): void {
 function AppTitleBar() {
 	const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
 	const rightSidebarOpen = useUiStore((s) => s.rightSidebarOpen);
+	const layoutMode = useUiStore((s) => s.layoutMode);
 
 	return (
 		<TitleBar
@@ -141,8 +142,10 @@ function AppTitleBar() {
 			showSettingsGear={showSettingsGear}
 			sidebarCollapsed={sidebarCollapsed}
 			rightSidebarOpen={rightSidebarOpen}
+			layoutMode={layoutMode}
 			onToggleSidebar={toggleSidebar}
 			onToggleAgent={toggleChat}
+			onApplyLayoutMode={(mode) => layout()?.applyLayoutMode(mode)}
 			onOpenSettings={openSettingsWindow}
 		/>
 	);
@@ -155,13 +158,15 @@ function WelcomeCenter() {
 	const recentVaults = useVaultStore((s) => s.recentVaults);
 	if (!isTauri()) {
 		return (
-			<div className="agentero-scroll flex min-h-0 flex-1 flex-col items-center justify-center gap-4 bg-muted/30 p-6 text-center">
+			<div className="agentero-scroll flex min-h-0 flex-1 select-none flex-col items-center justify-center gap-4 bg-muted/30 p-6 text-center">
 				<FolderOpen className="size-10 text-muted-foreground" />
 				<div className="max-w-xs space-y-2">
 					<p className="font-medium text-sm">{t("vault.noVaultOpenTitle")}</p>
 					<p className="text-muted-foreground text-xs">
 						{t("vault.runTauriPrefix")}{" "}
-						<code className="rounded bg-muted px-1 py-0.5">pnpm tauri dev</code>{" "}
+						<code className="select-text rounded bg-muted px-1 py-0.5">
+							pnpm tauri dev
+						</code>{" "}
 						{t("vault.runTauriSuffix")}
 					</p>
 				</div>
@@ -299,8 +304,8 @@ export default function App() {
 		},
 	});
 
-	const anyOverlayOpen = useAnyOverlayOpen();
-	useAppShortcuts(anyOverlayOpen, {
+	const anyModalOverlayOpen = useAnyModalOverlayOpen();
+	useAppShortcuts(anyModalOverlayOpen, {
 		settings: toggleSettingsWindow,
 		// Esc → dismiss top overlay (settings, palette, dialogs…)
 		closeSheet: () => {
@@ -394,6 +399,7 @@ export default function App() {
 									onResize={(size) => {
 										// Programmatic collapse/expand transition in flight.
 										if (animatingRailRef.current === "left") return;
+										setLayoutMode("custom");
 										// Only mark collapsed after a real collapse, never mid-drag.
 										if (size.inPixels <= 1) setSidebarCollapsedState(true);
 										else if (size.inPixels >= 80) {
@@ -457,6 +463,7 @@ export default function App() {
 							onResize={(size) => {
 								// Programmatic collapse/expand transition in flight.
 								if (animatingRailRef.current === "right") return;
+								setLayoutMode("custom");
 								if (size.inPixels <= 1) setRightSidebarOpenState(false);
 								else if (size.inPixels >= 80) {
 									setRightSidebarOpenState(true);

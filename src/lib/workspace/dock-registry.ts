@@ -19,6 +19,8 @@ export type DockHandle = {
 	cycleActive: (delta: number) => void;
 	/** Activate an existing panel by id. */
 	activatePanel: (panelId: string) => void;
+	/** Make all visible Dockview grid groups equal width. */
+	equalizeGridGroups: () => void;
 };
 
 let handle: DockHandle | null = null;

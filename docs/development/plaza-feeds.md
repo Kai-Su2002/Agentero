@@ -47,7 +47,6 @@
 | 注册 | `PLAZA_SOURCES` 一条：`id: "feeds"`，`panel: "feeds"`，`url: null` |
 | 侧栏 | 与 Skill 推荐相同：单击打开 panel；无删除 / 拖拽 / Finder |
 | 图标 | Lucide `Rss`；en **Feeds**；zh-CN **订阅** |
-| 首页卡 | 广场根上多一张来源卡：「订阅 RSS / Atom，论文条目可入库」 |
 
 订阅列表**只活在面板左侧**，不膨胀文件树。
 
@@ -97,13 +96,15 @@ MVP **不做**：`@handle` 展开、OPML、登录态、RSSHub 拼接。
 | 卡片 | 判定 | 展示 | 主操作 |
 |---|---|---|---|
 | **列表卡** | 全部条目 | 标题；「全部」下显示来源+日期，单源下日期与标题同行。摘要去掉 arXiv 编号 / Announce Type | 点卡片进详情 |
-| **详情** | 同上 | 打开时解析全文（RSS 摘要不够则抓 `item.url` → HTML→Markdown）。整篇是一份 Markdown：`# 标题` + 正文，走 `MessageResponse`。文末 `[...]` 会剥掉。入库 / 打开原文在顶栏 | 返回列表 |
+| **详情** | 同上 | 打开时解析全文（RSS 摘要不够则抓 `item.url` → HTML→Markdown）。整篇是一份 Markdown：`# 标题` + 正文，走 `MessageResponse`。文末 `[...]` 会剥掉。入库 / 打开原文在顶栏。正文可划词：**提问**（浮层 Ask 卡，会话内 ephemeral，不写 `marks/`）/ **加入对话**（pin 到 Agent composer）/ 复制 | 返回列表 |
 
+- **划词与 Agent（#421）**：详情正文 DOM 选区后浮出 Copy / Ask / Add to chat（`PlazaSelectionMenu`）。Ask 复用 PDF `AskPopover` + 内存 `PdfAskThread`（空 rects），`runOnce({ hideFromChatHistory: true })`，Agent 取自设置里的划词提问席位；关闭即丢，不落盘。Add to chat：`publishSelection({ origin: "markdown" })` → pin → 打开右侧 Agent。实现：`plaza-feeds-item.tsx`、`use-plaza-feed-selection.ts`、`plaza-selection-menu.tsx`、`lib/plaza/ask-prompt.ts`。
 - 入库复用 `importPlazaPaper` / `lookupSubmit`：arXiv 喂 `https://arxiv.org/abs/{id}`；DOI 喂 `https://doi.org/{doi}`。入库不自动打开论文。
 - 入库中按钮 busy；成功 Toast + 该行变为「已入库」（本机缓存记 `importedAt`，刷新不丢）。
 - 失败 `notifyError`，不在侧栏挂错误条。
-- 列表卡摘要只示纯文本 3 行。详情打开时走 `feeds_resolve_body`：已缓存 `bodyMarkdown` 则直接用；否则若 RSS 已是全文（或 arXiv / DOI 落地页）转 Markdown；博客摘要带 `[...]` 或 `paper_url` 为空（可能从落地页 metadata 确认论文身份）则抓原文 HTML，抽 `<article>` / 常见正文容器后 `htmd` 成 Markdown，并顺手解析 `citation_doi` 等回填 `paper_url`。渲染复用 `MessageResponse`（Streamdown + `$…$`）。
+- 列表卡摘要只示纯文本 3 行。详情打开时走 `feeds_resolve_body`：已缓存 `bodyMarkdown` 则直接用；否则若 RSS 已是全文（或 arXiv / DOI 落地页）转 Markdown；博客摘要带 `[...]` 或 `paper_url` 为空（可能从落地页 metadata 确认论文身份）则抓原文 HTML，抽 `<article>` / 常见正文容器后 `htmd` 成 Markdown，并顺手解析 `citation_doi` 等回填 `paper_url`。渲染复用 `MessageResponse`（Streamdown + `$…$`）。`\begin{equation}` 等块环境归一成 `$$…$$` 显示公式：抓取侧（`body.rs`）与渲染侧（`math-normalize.ts`）都剥掉 KaTeX 不支持的 `equation` / `multline` / `flalign` 外壳，`align` / `gather` 等保留；环境内的 HTML 残留（`<br />` 换行、实体）在抽取时清理。占位符定宽编号，防 `LATEXBLOCK1` 前缀误替换 `LATEXBLOCK10`。
 - 点标题 = 主操作。另给一个外链图标，论文卡也可打开原文。
+- 抓原文页用浏览器 UA + cookie store 的 client：部分站点（如 spaces.ac.cn 的 WAF）首访回 403 + Set-Cookie + `window.location` 重定向壳页，`fetch_article` 检测到这类挑战页会带 Cookie 自动重发一次。抓取失败记 `agentero::feeds` warn 日志，回退 RSS 摘要。
 
 不做第三种「提醒卡」、图墙、视频墙、全文阅读栏（经典三栏的第三栏）。
 
@@ -160,6 +161,7 @@ CREATE INDEX items_timeline ON items (published_at DESC, first_seen_at DESC);
 - 无 `kind` 列：论文 / 其它由 `paper_url IS NOT NULL` 过滤。
 - 每源只保留最近 **200** 条（刷新后按 `published_at` 裁）。够用，避免库膨胀。
 - `etag` / `last_modified`：有则带条件请求；304 不当错误。
+- schema v4：正文转换（公式清理）变更后迁移清空 `body_markdown` 缓存，下次打开重解析；`paper_url` 保留。
 
 ### 4.2 拉取
 
@@ -272,7 +274,7 @@ M1–M3 可一次 PR；M4 可同 PR 或紧随。
 
 ## 9. 验收清单（实现后）
 
-- [x] 侧栏与广场首页能进「订阅」；path 不落盘。
+- [x] 侧栏广场子节点能进「订阅」；path 不落盘。
 - [x] 粘 `https://rss.arxiv.org/rss/cs.LG` 后时间线出现当日论文。
 - [x] 论文卡入库走魔棒；成功不打开论文；刷新后仍为已入库。
 - [x] 无 arXiv/DOI 的博客条目只有「打开原文」。

@@ -6,6 +6,7 @@
 import i18n from "@/i18n";
 import { track } from "@/lib/activity";
 import {
+	cancelBackgroundTask,
 	enqueueBackgroundTask,
 	isBackgroundTaskCancelledError,
 } from "@/lib/core/background-tasks";
@@ -26,6 +27,7 @@ import {
 	installDiscoveredSkills,
 	type LocalPdfImportEntry,
 	type LookupBatchAddResult,
+	looksLikeTitleSearchQuery,
 	type PaperSearchCandidate,
 } from "@/lib/paper/lookup";
 import { enqueuePaperLayoutAnalysis } from "@/lib/pdf/layout";
@@ -40,6 +42,7 @@ import {
 	clearPaperSearchDraft,
 	layout,
 	setSkillImportDraft,
+	settlePaperSearchDraft,
 	shiftPaperSearchDraft,
 	uiStore,
 } from "@/lib/shell/ui-store";
@@ -66,6 +69,9 @@ export type LookupSubmitOptions = {
 	onComplete?: (result: LookupBatchAddResult) => void | Promise<void>;
 };
 
+/** In-flight title-search tasks; closing the picker card cancels them. */
+const pendingSearchTaskIds = new Set<string>();
+
 export async function lookupSubmit(
 	texts: string[],
 	opts: LookupSubmitOptions = {},
@@ -78,148 +84,188 @@ export async function lookupSubmit(
 	const settings = getSettings();
 	const parentDir = opts.parentDir ?? currentLookupParentDir();
 
+	const promises: Promise<void>[] = [];
 	for (const text of texts) {
 		const input = text.trim();
 		if (!input) continue;
-		void enqueueBackgroundTask(
-			{
-				kind: "lookup",
-				title: i18n.t("app:tasks.lookupImport"),
-				detail: input.slice(0, 80),
-			},
-			async ({ id, setDetail }) => {
-				setDetail(i18n.t("app:tasks.lookupFetching", { id: input }));
-				const result = await addPapersByIdentifiers({
-					vaultRoot: vaultPath,
-					parentDir,
-					texts: [input],
-					settings,
-					progressTaskId: id,
-				});
+		// Open the picker immediately with shimmer when input looks like a title
+		// (#438). settlePaperSearchDraft no-ops if the user already cancelled.
+		const expectTitleSearch = looksLikeTitleSearchQuery(input);
+		if (expectTitleSearch) {
+			addPaperSearchDraft([
+				{ query: input, candidates: [], parentDir, pending: true },
+			]);
+		}
+		let searchTaskId: string | null = null;
+		promises.push(
+			enqueueBackgroundTask(
+				{
+					kind: "lookup",
+					title: i18n.t("app:tasks.lookupImport"),
+					detail: input.slice(0, 80),
+				},
+				async ({ id, setDetail }) => {
+					setDetail(i18n.t("app:tasks.lookupFetching", { id: input }));
+					const result = await addPapersByIdentifiers({
+						vaultRoot: vaultPath,
+						parentDir,
+						texts: [input],
+						settings,
+						progressTaskId: id,
+					});
 
-				// Tree / wiki / library refresh runs via the paper:imported handler.
-				if (result.skillCandidates.length > 0) {
-					setSkillImportDraft(result.skillCandidates);
-					setDetail(
-						i18n.t("sidebar:lookup.skillCandidatesFound", {
-							count: result.skillCandidates.reduce(
-								(total: number, discovery) =>
-									total + discovery.candidates.length,
-								0,
-							),
-						}),
-					);
-				}
-
-				if (result.searchCandidates.length > 0) {
-					addPaperSearchDraft(
-						result.searchCandidates.map((group) => ({ ...group, parentDir })),
-					);
-					setDetail(
-						i18n.t("sidebar:lookup.searchCandidatesFound", {
-							count: result.searchCandidates.reduce(
-								(total: number, group) => total + group.candidates.length,
-								0,
-							),
-						}),
-					);
-				}
-
-				for (const paper of result.imported) {
-					const rel = (paper.path || "")
-						.replace(/\\/g, "/")
-						.replace(/^\/+|\/+$/g, "");
-					if (rel) {
-						track("paper.import", {
-							path: rel,
-							extra: { source: inferLookupSource(input) },
-						});
-					}
-				}
-				// Papers that already have a PDF after import: start layout now.
-				// Those still downloading enqueue layout after download completes.
-				for (const paper of result.imported) {
-					const abs = paper.paperDir
-						? paper.paperDir.replace(/[\\/]+$/, "")
-						: joinVaultPath(
-								vaultPath,
-								(paper.path || "")
-									.replace(/\\/g, "/")
-									.replace(/^\/+|\/+$/g, ""),
-							);
-					if (abs) {
-						const rel = toVaultRelative(vaultPath, abs)
-							.replace(/\\/g, "/")
-							.replace(/^\/+|\/+$/g, "");
-						void invokeApi(
-							"job_layout_analyze_enqueue",
-							{
-								args: {
-									vaultPath,
-									path: rel,
-									force: false,
-								},
-							},
-							{ fallback: "layout analysis enqueue failed" },
-						);
-					}
-				}
-
-				if (result.errors.length > 0) {
-					notifyError(result.errors.join("; "));
-				}
-				await opts.onComplete?.(result);
-
-				// Enqueue a DownloadAssets job for each newly imported paper that
-				// still lacks assets. Uses the CapsCache-backed query (§8.4) instead
-				// of the frontend tree walk; the runner is idempotent and backfills
-				// PAPER.md + layout.
-				const newPaths = result.imported
-					.map((r) =>
-						(r.path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""),
-					)
-					.filter(Boolean);
-				if (newPaths.length > 0) {
-					let needingAssets: string[] = [];
-					try {
-						needingAssets = await invokeApi<string[]>(
-							"job_papers_needing_assets",
-							{ args: { vaultPath } },
-							{ fallback: "collect papers needing assets failed" },
-						);
-					} catch (e) {
-						logger.warn("post-import asset check failed", {
-							error: errorText(e),
-						});
-					}
-					const needingSet = new Set(
-						needingAssets.map((p) =>
-							p.replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""),
-						),
-					);
-					for (const rel of newPaths) {
-						if (!needingSet.has(rel)) continue;
-						void invokeApi(
-							"job_download_assets_enqueue",
-							{
-								args: { vaultPath, path: rel, lane: "normal", force: false },
-							},
-							{ fallback: "download enqueue failed" },
-						).catch((e) =>
-							logger.warn("post-import download enqueue failed", {
-								rel,
-								error: errorText(e),
+					// Tree / wiki / library refresh runs via the paper:imported handler.
+					if (result.skillCandidates.length > 0) {
+						setSkillImportDraft(result.skillCandidates);
+						setDetail(
+							i18n.t("sidebar:lookup.skillCandidatesFound", {
+								count: result.skillCandidates.reduce(
+									(total: number, discovery) =>
+										total + discovery.candidates.length,
+									0,
+								),
 							}),
 						);
 					}
-				}
-			},
-			{ concurrency: settings.batchImportConcurrency },
-		).catch((e) => {
-			if (isBackgroundTaskCancelledError(e)) return;
-			notifyError(`${input}: ${errorText(e)}`);
-		});
+
+					if (expectTitleSearch) {
+						const matched =
+							result.searchCandidates.find((group) => group.query === input) ??
+							result.searchCandidates[0] ??
+							null;
+						settlePaperSearchDraft(
+							input,
+							matched ? { ...matched, parentDir, pending: false } : null,
+						);
+						if (matched) {
+							setDetail(
+								i18n.t("sidebar:lookup.searchCandidatesFound", {
+									count: matched.candidates.length,
+								}),
+							);
+						}
+					} else if (result.searchCandidates.length > 0) {
+						addPaperSearchDraft(
+							result.searchCandidates.map((group) => ({ ...group, parentDir })),
+						);
+						setDetail(
+							i18n.t("sidebar:lookup.searchCandidatesFound", {
+								count: result.searchCandidates.reduce(
+									(total: number, group) => total + group.candidates.length,
+									0,
+								),
+							}),
+						);
+					}
+
+					for (const paper of result.imported) {
+						const rel = (paper.path || "")
+							.replace(/\\/g, "/")
+							.replace(/^\/+|\/+$/g, "");
+						if (rel) {
+							track("paper.import", {
+								path: rel,
+								extra: { source: inferLookupSource(input) },
+							});
+						}
+					}
+					// Papers that already have a PDF after import: start layout now.
+					// Those still downloading enqueue layout after download completes.
+					for (const paper of result.imported) {
+						const abs = paper.paperDir
+							? paper.paperDir.replace(/[\\/]+$/, "")
+							: joinVaultPath(
+									vaultPath,
+									(paper.path || "")
+										.replace(/\\/g, "/")
+										.replace(/^\/+|\/+$/g, ""),
+								);
+						if (abs) {
+							const rel = toVaultRelative(vaultPath, abs)
+								.replace(/\\/g, "/")
+								.replace(/^\/+|\/+$/g, "");
+							void invokeApi(
+								"job_layout_analyze_enqueue",
+								{
+									args: {
+										vaultPath,
+										path: rel,
+										force: false,
+									},
+								},
+								{ fallback: "layout analysis enqueue failed" },
+							);
+						}
+					}
+
+					if (result.errors.length > 0) {
+						notifyError(result.errors.join("; "));
+					}
+					await opts.onComplete?.(result);
+
+					// Enqueue a DownloadAssets job for each newly imported paper that
+					// still lacks assets. Uses the CapsCache-backed query (§8.4) instead
+					// of the frontend tree walk; the runner is idempotent and backfills
+					// PAPER.md + layout.
+					const newPaths = result.imported
+						.map((r) =>
+							(r.path || "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""),
+						)
+						.filter(Boolean);
+					if (newPaths.length > 0) {
+						let needingAssets: string[] = [];
+						try {
+							needingAssets = await invokeApi<string[]>(
+								"job_papers_needing_assets",
+								{ args: { vaultPath } },
+								{ fallback: "collect papers needing assets failed" },
+							);
+						} catch (e) {
+							logger.warn("post-import asset check failed", {
+								error: errorText(e),
+							});
+						}
+						const needingSet = new Set(
+							needingAssets.map((p) =>
+								p.replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""),
+							),
+						);
+						for (const rel of newPaths) {
+							if (!needingSet.has(rel)) continue;
+							void invokeApi(
+								"job_download_assets_enqueue",
+								{
+									args: { vaultPath, path: rel, lane: "normal", force: false },
+								},
+								{ fallback: "download enqueue failed" },
+							).catch((e) =>
+								logger.warn("post-import download enqueue failed", {
+									rel,
+									error: errorText(e),
+								}),
+							);
+						}
+					}
+				},
+				{
+					concurrency: settings.batchImportConcurrency,
+					onTaskId: (taskId) => {
+						if (!expectTitleSearch) return;
+						searchTaskId = taskId;
+						pendingSearchTaskIds.add(taskId);
+					},
+				},
+			)
+				.catch((e) => {
+					if (isBackgroundTaskCancelledError(e)) return;
+					notifyError(`${input}: ${errorText(e)}`);
+				})
+				.finally(() => {
+					if (searchTaskId !== null) pendingSearchTaskIds.delete(searchTaskId);
+				}),
+		);
 	}
+	await Promise.all(promises);
 }
 
 /** Picked a title-search candidate → import it as a normal identifier. */
@@ -232,6 +278,10 @@ export async function confirmPaperSearchImport(
 }
 
 export function cancelPaperSearchImport(): void {
+	// Closing the picker also ends the searches behind it: cancel each task so
+	// its card stops immediately and the host skips the remaining queries.
+	for (const taskId of pendingSearchTaskIds) cancelBackgroundTask(taskId);
+	pendingSearchTaskIds.clear();
 	clearPaperSearchDraft();
 }
 
@@ -346,10 +396,18 @@ export async function importLocalPdf(opts?: {
 					settings: getSettings(),
 				});
 				if (!r) return null;
+				const merged = r.papers.filter((p) => p.status === "deduped");
+				const created = r.papers.length - merged.length;
 				setDetail(
-					i18n.t("sidebar:papersLibrary.importPdfDone", {
-						count: r.papers.length,
-					}),
+					created > 0
+						? i18n.t("sidebar:papersLibrary.importPdfDone", { count: created })
+						: merged.length === 1
+							? i18n.t("sidebar:papersLibrary.importPdfMerged", {
+									title: merged[0].title,
+								})
+							: i18n.t("sidebar:papersLibrary.importPdfMergedMany", {
+									count: merged.length,
+								}),
 				);
 				// Tree / wiki / library refresh runs via the paper:imported handler.
 				return r;
@@ -357,6 +415,11 @@ export async function importLocalPdf(opts?: {
 		);
 		if (result) {
 			for (const paper of result.papers) {
+				if (paper.recognizePending) {
+					// The RecognizeMetadata runner owns the follow-ups so they
+					// run against the paper's final (post-rename) path.
+					continue;
+				}
 				if (paper.paperDir) {
 					enqueuePaperLayoutAnalysis({
 						paperAbsPath: paper.paperDir.replace(/[\\/]+$/, ""),
@@ -364,10 +427,27 @@ export async function importLocalPdf(opts?: {
 					});
 				}
 			}
-			if (result.errors.length) {
-				notifyWarning(
-					`${i18n.t("sidebar:papersLibrary.importPdfDone", { count: result.papers.length })}; ${result.errors.slice(0, 2).join("; ")}`,
+			const merged = result.papers.filter((p) => p.status === "deduped");
+			if (merged.length === 1) {
+				notifySuccess(
+					i18n.t("sidebar:papersLibrary.importPdfMerged", {
+						title: merged[0].title,
+					}),
 				);
+			} else if (merged.length > 1) {
+				notifySuccess(
+					i18n.t("sidebar:papersLibrary.importPdfMergedMany", {
+						count: merged.length,
+					}),
+				);
+			}
+			if (result.errors.length) {
+				const created = result.papers.length - merged.length;
+				const doneText =
+					created > 0
+						? `${i18n.t("sidebar:papersLibrary.importPdfDone", { count: created })}; `
+						: "";
+				notifyWarning(`${doneText}${result.errors.slice(0, 2).join("; ")}`);
 			}
 		}
 	} catch (e) {
@@ -380,9 +460,10 @@ export async function importLocalPdf(opts?: {
 }
 
 /**
- * OS PDF drop onto a papers/ folder or the Library → background import.
- * Metadata (title/authors/identifiers) is recognized by the Host during the
- * import task; the user edits via Edit Metadata if recognition is off.
+ * OS PDF drop onto a papers/ folder or the Library → instant import with
+ * placeholder (filename-derived) metadata; a RecognizeMetadata job then
+ * resolves identifiers in the background and renames the folder. The user
+ * can always correct via Edit Metadata.
  */
 export function dropLocalPdfs(
 	items: Array<{ path: string; sourceName: string }>,

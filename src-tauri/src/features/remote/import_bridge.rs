@@ -70,6 +70,8 @@ pub async fn import_by_identifier_remote(
         tex: commit.tex,
         paper_md: commit.paper_md,
         asset_messages: commit.asset_messages,
+        status: None,
+        recognize_pending: false,
     })
 }
 
@@ -88,8 +90,12 @@ pub async fn import_by_identifier_batch_remote(
     );
     let skipped = preflight.skipped;
     let mut errors = preflight.errors;
-    let search_candidates =
-        crate::features::import::resolve_search_queries(&preflight.queries, &mut errors).await;
+    let search_candidates = crate::features::import::resolve_search_queries(
+        &preflight.queries,
+        &mut errors,
+        args.task_id.as_deref(),
+    )
+    .await;
 
     for pending in preflight.papers {
         let single = LookupImportArgs {
@@ -306,6 +312,8 @@ async fn import_one_local_pdf_remote(
         tex: commit.tex,
         paper_md: commit.paper_md,
         asset_messages: commit.asset_messages,
+        status: None,
+        recognize_pending: false,
     })
 }
 

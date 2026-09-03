@@ -25,30 +25,37 @@ import {
 	type RefObject,
 	useCallback,
 	useEffect,
+	useMemo,
 	useRef,
 	useState,
 } from "react";
 import { pageElByIndex, rectRightScreen } from "@/components/viewer/pdf/coords";
+import {
+	EPHEMERAL_PREVIEW_HIDE_MS,
+	isFloatingDialogActive,
+} from "@/components/viewer/pdf/floating-hover";
 import { getLinkDestination } from "@/components/viewer/pdf/layers/citation-links";
 import type { CitationPreviewState } from "@/components/viewer/pdf/types";
+import { useVaultStore } from "@/hooks/use-app-stores";
 import { useCitationImport } from "@/hooks/use-citation-import";
 import { usePaperRefsSidecar } from "@/hooks/use-paper-refs-sidecar";
+import { usePapersOrgFolders } from "@/hooks/use-papers-org-folders";
 import { errorText } from "@/lib/core/error";
 import { logger } from "@/lib/core/logger";
+import { notifyError } from "@/lib/core/notify";
 import { openExternalUrl } from "@/lib/core/open-external";
+import { lookupSubmit } from "@/lib/paper/import-actions";
 import type { Citation } from "@/lib/paper/refs";
 import {
 	type CitationDestKeyMap,
 	type CitationLinkKeyList,
 	citationDestKey,
+	citationRefNumber,
 	citationSidecarKeysForDest,
 	expandCitationLinkCluster,
 	matchCitationLinkKey,
 } from "@/lib/pdf/citation-dest-keys";
 import { loadPdfDestMaps } from "@/lib/pdf/citation-dest-map";
-
-/** Grace period so the pointer can travel from the link into the card. */
-const CITATION_HIDE_MS = 250;
 
 /** Upper bound before the deferred dest-key map build runs anyway. */
 const DEST_MAP_IDLE_TIMEOUT_MS = 2000;
@@ -91,12 +98,31 @@ export type UsePdfCitationsOptions = {
 	 * the cite-key map build so opening a paper never reads the PDF twice.
 	 */
 	sourceBytes?: ArrayBuffer | null;
+	/**
+	 * True for remote arXiv papers with no local sidecar. Enables citation-link
+	 * previews from the PDF alone and shows an import-to-library surface.
+	 */
+	isRemotePaper?: boolean;
+	/**
+	 * Identifier used by the remote-paper import surface. Usually the arXiv
+	 * abs/source URL.
+	 */
+	importIdentifier?: string;
+	/**
+	 * Fired when a citation card is about to show. Used by the viewer to clear
+	 * sibling ephemeral overlays (crossref preview).
+	 */
+	onPreviewShow?: () => void;
 };
 
 export type PdfCitations = {
 	citationPreview: CitationPreviewState | null;
 	cancelCitationHide: () => void;
 	scheduleCitationHide: () => void;
+	/** Keep the card open while the pointer is over it (or the import menu). */
+	markCitationHoverEnter: () => void;
+	/** Drop the preview immediately (overlay exclusivity / suppress). */
+	clearCitationPreview: () => void;
 	handleCitationLinkActivate: (link: PdfLinkAnnoObject) => void;
 	handleCitationLinkHover: (link: PdfLinkAnnoObject | null) => void;
 	/** Library-import surface for the hover card; null when not a vault paper. */
@@ -175,6 +201,44 @@ function resolveCitations(
 	return out;
 }
 
+/** Build a minimal read-only Citation from a PDF destination key. */
+function remoteCitationFromDestKey(key: string, index: number): Citation {
+	const refNum = citationRefNumber(key);
+	return {
+		id: `remote-${key}`,
+		rawKey: key,
+		display: refNum != null ? `[${refNum}]` : `[${index + 1}]`,
+		metadata: {},
+		source: "pdf",
+		status: "unresolved",
+	};
+}
+
+/**
+ * Fill in read-only citations for a remote paper when there is no parsed
+ * sidecar. Uses the in-text link order when available, falling back to the
+ * unique dest-key map entries.
+ */
+function buildRemoteCitations(
+	destKeys: CitationDestKeyMap | null,
+	citationLinks: CitationLinkKeyList | null,
+): Citation[] {
+	const seen = new Set<string>();
+	const keys: string[] = [];
+	const pushKey = (key: string) => {
+		if (!key || seen.has(key)) return;
+		seen.add(key);
+		keys.push(key);
+	};
+	for (const link of citationLinks ?? []) {
+		pushKey(link.key);
+	}
+	for (const key of destKeys?.values() ?? []) {
+		pushKey(key);
+	}
+	return keys.map((key, index) => remoteCitationFromDestKey(key, index));
+}
+
 export function usePdfCitations({
 	docId,
 	annotationCap,
@@ -184,25 +248,77 @@ export function usePdfCitations({
 	paperPath,
 	paperAbsPath,
 	sourceBytes = null,
+	isRemotePaper = false,
+	importIdentifier,
+	onPreviewShow,
 }: UsePdfCitationsOptions): PdfCitations {
+	const onPreviewShowRef = useRef(onPreviewShow);
+	onPreviewShowRef.current = onPreviewShow;
 	const [citationPreview, setCitationPreview] =
 		useState<CitationPreviewState | null>(null);
 	const citationHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
+	/** True while pointer is over the preview card or the import folder menu. */
+	const citationHoverSurfaceRef = useRef(false);
 	const { sidecar, setSidecar } = usePaperRefsSidecar(vaultPath, paperPath);
 	/** Mirrored so the hover callback identity does not change per sidecar load. */
 	const citationsRef = useRef(sidecar?.citations ?? []);
 	citationsRef.current = sidecar?.citations ?? [];
 
 	// ---- Library import (shared with the References panel) ----
-	const { folders, lastImportParentDir, importingId, importCitation } =
-		useCitationImport(vaultPath, paperPath, setSidecar);
+	const localImport = useCitationImport(vaultPath, paperPath, setSidecar);
 
-	const citationImport =
-		vaultPath && paperPath
-			? { folders, lastImportParentDir, importingId, importCitation }
-			: null;
+	// Remote papers have no sidecar, so the import surface imports the current
+	// paper rather than an individual citation.
+	const tree = useVaultStore((s) => s.tree);
+	const remoteFolders = usePapersOrgFolders(vaultPath, tree);
+	const [remoteImportingId, setRemoteImportingId] = useState<string | null>(
+		null,
+	);
+	const remoteImportCitation = useCallback(
+		async (_citation: Citation, parentDir: string) => {
+			if (!importIdentifier || remoteImportingId) return;
+			setRemoteImportingId(_citation.id);
+			try {
+				await lookupSubmit([importIdentifier], { parentDir });
+			} catch (error) {
+				notifyError(errorText(error));
+			} finally {
+				setRemoteImportingId(null);
+			}
+		},
+		[importIdentifier, remoteImportingId],
+	);
+
+	const citationImport = useMemo(() => {
+		if (vaultPath && paperPath) {
+			return {
+				folders: localImport.folders,
+				lastImportParentDir: localImport.lastImportParentDir,
+				importingId: localImport.importingId,
+				importCitation: localImport.importCitation,
+			};
+		}
+		if (isRemotePaper && vaultPath && importIdentifier) {
+			return {
+				folders: remoteFolders,
+				lastImportParentDir: "papers",
+				importingId: remoteImportingId,
+				importCitation: remoteImportCitation,
+			};
+		}
+		return null;
+	}, [
+		vaultPath,
+		paperPath,
+		isRemotePaper,
+		importIdentifier,
+		localImport,
+		remoteFolders,
+		remoteImportingId,
+		remoteImportCitation,
+	]);
 
 	/** hyperref `cite.<key>` destinations of the open PDF, by destination coords. */
 	const destKeyMapRef = useRef<CitationDestKeyMap | null>(null);
@@ -217,7 +333,9 @@ export function usePdfCitations({
 	useEffect(() => {
 		destKeyMapRef.current = null;
 		citationLinksRef.current = null;
-		if (!paperAbsPath) return;
+		const canBuildLocal = Boolean(paperAbsPath);
+		const canBuildRemote = isRemotePaper && sourceBytesRef.current;
+		if (!canBuildLocal && !canBuildRemote) return;
 		let cancelled = false;
 		// Deferred to idle, parsed in a worker, memoized per PDF — the build
 		// never blocks the open-PDF critical path (hover previews simply do not
@@ -226,11 +344,17 @@ export function usePdfCitations({
 			void loadPdfDestMaps({
 				paperAbsPath,
 				viewerBytes: sourceBytesRef.current,
+				documentId: docId,
 			})
 				.then((maps) => {
-					if (!cancelled && maps) {
-						destKeyMapRef.current = maps.cites;
-						citationLinksRef.current = maps.citationLinks;
+					if (cancelled || !maps) return;
+					destKeyMapRef.current = maps.cites;
+					citationLinksRef.current = maps.citationLinks;
+					if (isRemotePaper) {
+						citationsRef.current = buildRemoteCitations(
+							maps.cites,
+							maps.citationLinks,
+						);
 					}
 				})
 				.catch((error: unknown) => {
@@ -244,11 +368,12 @@ export function usePdfCitations({
 			cancelled = true;
 			cancelIdle();
 		};
-	}, [paperAbsPath]);
+	}, [paperAbsPath, isRemotePaper, docId]);
 
 	// Reset the hover preview when the active PDF document changes.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: docId is the effect trigger, not a value read inside the effect.
 	useEffect(() => {
+		citationHoverSurfaceRef.current = false;
 		setCitationPreview(null);
 	}, [docId]);
 
@@ -258,12 +383,33 @@ export function usePdfCitations({
 		citationHideTimerRef.current = null;
 	}, []);
 
+	const clearCitationPreview = useCallback(() => {
+		cancelCitationHide();
+		citationHoverSurfaceRef.current = false;
+		setCitationPreview(null);
+	}, [cancelCitationHide]);
+
+	const markCitationHoverEnter = useCallback(() => {
+		citationHoverSurfaceRef.current = true;
+		cancelCitationHide();
+	}, [cancelCitationHide]);
+
+	/**
+	 * Leave link / card. Delay so the pointer can bridge into the card; never
+	 * dismiss while the card (or its import menu) is still hovered / focused.
+	 */
 	const scheduleCitationHide = useCallback(() => {
+		citationHoverSurfaceRef.current = false;
 		cancelCitationHide();
 		citationHideTimerRef.current = setTimeout(() => {
 			citationHideTimerRef.current = null;
+			if (citationHoverSurfaceRef.current) return;
+			if (isFloatingDialogActive()) {
+				citationHoverSurfaceRef.current = true;
+				return;
+			}
 			setCitationPreview(null);
-		}, CITATION_HIDE_MS);
+		}, EPHEMERAL_PREVIEW_HIDE_MS);
 	}, [cancelCitationHide]);
 
 	/** GoTo/destination → smooth scroll (annotation plugin); URI → browser. */
@@ -299,8 +445,12 @@ export function usePdfCitations({
 				return;
 			}
 			cancelCitationHide();
+			// Treat show as an active hover surface so a mount-under-cursor
+			// (which skips pointerenter) does not auto-close.
+			citationHoverSurfaceRef.current = true;
 			const pageEl = pageElByIndex(hostRef.current, link.pageIndex);
 			if (!pageEl) return;
+			onPreviewShowRef.current?.();
 			setCitationPreview({
 				screen: rectRightScreen(pageEl, link.rect, zoomRef.current),
 				matched,
@@ -324,6 +474,8 @@ export function usePdfCitations({
 		citationPreview,
 		cancelCitationHide,
 		scheduleCitationHide,
+		markCitationHoverEnter,
+		clearCitationPreview,
 		handleCitationLinkActivate,
 		handleCitationLinkHover,
 		citationImport,

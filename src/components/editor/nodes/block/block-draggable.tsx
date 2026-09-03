@@ -12,7 +12,9 @@ import {
 	type PlateEditor,
 	type PlateElementProps,
 	type RenderNodeWrapper,
+	useEditorRef,
 	usePluginOption,
+	usePluginOptions,
 } from "platejs/react";
 import * as React from "react";
 
@@ -20,6 +22,39 @@ import { setBlockDragAnchor } from "@/components/editor/nodes/block/block-drag-p
 import { BlockHandleMenu } from "@/components/editor/nodes/block/block-handle-menu";
 import { cn } from "@/lib/core/utils";
 import { isBlankParagraph } from "@/lib/markdown/block-selection";
+
+/**
+ * Mirrors the two global drag/marquee flags onto the editable root as data
+ * attributes so per-block styling can read them through CSS.
+ *
+ * Every block used to subscribe to these itself, which meant drag start/end and
+ * marquee start/end re-rendered all N block wrappers. One subscriber plus a
+ * descendant selector costs nothing per block.
+ *
+ * `useLayoutEffect`, not `useEffect`: `isSelectionAreaVisible` flips once the
+ * marquee passes its 4px start threshold, and a frame-late attribute would flash
+ * a drag handle under the pointer right as the marquee begins.
+ */
+export function BlockDragStateBridge() {
+	const editor = useEditorRef();
+	const isDragging = usePluginOption(DndPlugin, "isDragging");
+	const isSelectionAreaVisible = usePluginOption(
+		BlockSelectionPlugin,
+		"isSelectionAreaVisible",
+	);
+
+	React.useLayoutEffect(() => {
+		const root = editor.api.toDOMNode(editor);
+		if (!root) return;
+		root.toggleAttribute("data-dnd-dragging", Boolean(isDragging));
+		root.toggleAttribute(
+			"data-dnd-selection-area",
+			Boolean(isSelectionAreaVisible),
+		);
+	}, [editor, isDragging, isSelectionAreaVisible]);
+
+	return null;
+}
 
 export const BlockDraggable: RenderNodeWrapper = (props) => {
 	const { editor, path } = props;
@@ -48,12 +83,20 @@ function Draggable(props: PlateElementProps) {
 	const isContainer = Boolean(
 		getPluginByType(editor, element.type)?.node.isContainer,
 	);
-	const isEditorDragging = usePluginOption(DndPlugin, "isDragging");
-	const draggingId = usePluginOption(DndPlugin, "draggingId");
-	// useDraggable().isDragging is only true on the handle's node. Dim every
-	// id in draggingId so a multi-block drag fades the whole set.
-	const isNodeDragging =
-		Boolean(isEditorDragging) && isIdInDraggingSet(element.id, draggingId);
+	// useDraggable().isDragging is only true on the handle's node. Dim every id in
+	// draggingId so a multi-block drag fades the whole set. The selector must
+	// return a boolean: usePluginOptions bails out on Object.is, so non-dragged
+	// blocks do not re-render when the option changes.
+	const isNodeDragging = usePluginOptions(
+		DndPlugin,
+		(state) =>
+			Boolean(state.isDragging) &&
+			isIdInDraggingSet(element.id, state.draggingId),
+	);
+	// Headings reset their top margin at the document start (heading-node.tsx),
+	// so the handle offset differs there for the same element type.
+	const isDocumentStart =
+		Array.isArray(props.path) && props.path.length === 1 && props.path[0] === 0;
 
 	const prepareDrag = React.useCallback(
 		(event: React.MouseEvent) => {
@@ -117,7 +160,7 @@ function Draggable(props: PlateElementProps) {
 			)}
 			onMouseEnter={() => {
 				if (isDragging) return;
-				setDragButtonTop(calcDragButtonTop(editor, element));
+				setDragButtonTop(calcDragButtonTop(editor, element, isDocumentStart));
 			}}
 		>
 			{isBlank ? null : (
@@ -166,11 +209,6 @@ function Gutter({
 	forceVisible: boolean;
 	isContainer: boolean;
 }) {
-	const isSelectionAreaVisible = usePluginOption(
-		BlockSelectionPlugin,
-		"isSelectionAreaVisible",
-	);
-
 	return (
 		<div
 			className={cn(
@@ -180,7 +218,9 @@ function Gutter({
 					? "group-hover/container:opacity-100"
 					: "group-hover:opacity-100",
 				forceVisible && "opacity-100",
-				isSelectionAreaVisible && !forceVisible && "hidden",
+				// Marquee in progress: hide the handle so it never appears under the
+				// pointer. Attribute comes from BlockDragStateBridge.
+				!forceVisible && "[[data-dnd-selection-area]_&]:hidden",
 			)}
 			contentEditable={false}
 		>
@@ -214,8 +254,30 @@ function isIdInDraggingSet(
 		: draggingId === id;
 }
 
-const calcDragButtonTop = (editor: PlateEditor, element: TElement): number => {
+/**
+ * Block top margins are fixed rem keyed by element type, plus the document-start
+ * heading reset — so one measurement serves every block of the same shape.
+ *
+ * This matters because the caller is the block's `mouseenter`, which also fires
+ * for every block that scrolls past a resting pointer (and when typing reflows
+ * the document under one). Measuring there forced a style recalc per block.
+ */
+const dragButtonTopCache = new Map<string, number>();
+
+const calcDragButtonTop = (
+	editor: PlateEditor,
+	element: TElement,
+	isDocumentStart: boolean,
+): number => {
+	// uiScale is applied as an inline root font-size, so reading it back is a
+	// CSSOM lookup rather than a layout read.
+	const key = `${document.documentElement.style.fontSize}|${element.type}|${isDocumentStart}`;
+	const cached = dragButtonTopCache.get(key);
+	if (cached !== undefined) return cached;
 	const child = editor.api.toDOMNode(element);
 	if (!child) return 0;
-	return Number.parseFloat(window.getComputedStyle(child).marginTop);
+	const marginTop = Number.parseFloat(window.getComputedStyle(child).marginTop);
+	const top = Number.isFinite(marginTop) ? marginTop : 0;
+	dragButtonTopCache.set(key, top);
+	return top;
 };

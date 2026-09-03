@@ -21,11 +21,12 @@ Plate WYSIWYG；用于普通笔记与论文 `NOTES.md`。磁盘上始终是标�
 - **文档目录**：至少存在三个标题时，才在编辑器右侧四分之一高度显示层级标记，一级标题标记最长，后续层级依次缩短；收起时保持紧凑，悬停或键盘聚焦后以动效展开标题；展开后标题在目录块内左对齐，depth marker 仍靠右；滚动时以中性色高亮视口对应的标题，点击标题会在当前 Dockview 文档面板内平滑滚动并高亮目标。面板宽度小于 18rem 时隐藏目录条，正文同时收回为目录预留的右侧留白。
 - **状态栏**：编辑器底部单行显示反向链接（悬停查看列表）、词数、字符数；按面板宽度逐级降级（小于 18rem 隐藏反向链接，小于 11rem 再隐藏词数，字符数始终保留），避免窄面板下换行溢出。
 - **窄面板标题**：一至三级标题字号随面板宽度分两档递减（小于 24rem、小于 18rem），避免窄面板下单个标题占满整屏并逐字换行。
-- **标题上边距**：一级标题段前间距为 `1em`（小于二级的 `1.4em` 相对字号，避免 `text-4xl` 把绝对空隙撑得过大）；文档第一个块不再叠加段前间距，笔记以 `# 标题` 开头时只保留编辑器 `pt-4`。
+- **标题上边距**：GitHub 风格固定阶梯，H1–H3 为 `mt-6`、H4–H6 为 `mt-4`，不随标题字号放大；文档第一个块不再叠加段前间距，笔记以 `# 标题` 开头时只保留编辑器 `pt-4`。
+- **分隔线**：`---` / `___` 渲染为紧凑分隔条；void 块放不进光标，默认 Enter 无效果，现光标停在分隔线上或块选分隔线时按 Enter 会在其下方插入新段落并落入光标。
 - **外部链接**：手写或粘贴标准 Markdown `[文字](https://…)` 会成为链接节点；普通单击打开编辑气泡（改显示文字与 URL），`⌘/Ctrl+单击`、中键或右键用系统浏览器打开；气泡内也有「打开」。`/` 菜单「外部链接」或右键「新增外部链接」直接插入链接节点（默认占位文字）并打开同一编辑气泡，而不是插入字面量 `[]()`。Vault 内相对 `.md` 链接与 `wiki:` 双链仍走站内导航。
 - **Markdown 粘贴**：普通文本粘贴默认按 Markdown 反序列化，粘贴后光标保持在插入内容之后。
 - **整理 Markdown 格式**：编辑器右键显式整理当前整篇文档；只读编辑器禁用。
-- **块选与拖拽**：编辑态悬停顶层块时左侧出现六点手柄（Notion 同款）。**悬停或点击手柄**打开操作列表（复制 / 剪切 / 创建副本 / 删除）；**按住拖动手柄**在块之间换位（拖拽中禁止划词）。左 gutter 拖出虚线框可框选相邻块；多选后每个选中块保持显示手柄，任一手柄对整组复制 / 剪切 / 移动。空段落（Markdown 空行、文末 TrailingBlock）不是内容块：不显示手柄、也不画选中底色，但仍可随相邻块一起被框选移动以保留间距。在文字上拖仍是划词。`⌘A` / `Ctrl+A` 第一次选中当前块，再按一次选中全部块。复制块写入 Markdown 纯文本。只读、导出面和 `![[…]]` 嵌入不显示手柄。内部 Plate 块 id 不写回磁盘。块拖拽用指针后端（非 HTML5）：macOS 上 wry 会吞掉 DOM `drop`，和文件树一样。
+- **块选与拖拽**：编辑态悬停顶层块时左侧出现六点手柄（Notion 同款）。**悬停或点击手柄**打开操作列表（复制 / 剪切 / 创建副本 / 删除）；**按住拖动手柄**在块之间换位（拖拽中禁止划词）。左 gutter 拖出虚线框可框选相邻块；多选后每个选中块保持显示手柄，任一手柄对整组复制 / 剪切 / 移动。空段落（Markdown 空行、文末 TrailingBlock）不是内容块：不显示手柄、也不画选中底色，但仍可随相邻块一起被框选移动以保留间距。在文字上拖仍是划词。`⌘A` / `Ctrl+A` 第一次选中当前块，再按一次选中全部块。复制块写入 Markdown 纯文本。只读、导出面和 `![[…]]` 嵌入不显示手柄。内部 Plate 块 id 不写回磁盘。块拖拽用指针后端（非 HTML5）：macOS 上 wry 会吞掉 DOM `drop`，和文件树一样。长笔记下拖拽/框选的两个全局标志由单一订阅镜像成编辑器根节点上的 `data-dnd-dragging` / `data-dnd-selection-area`，块级样式走 CSS 后代选择器而非每块订阅；手柄的操作菜单 Popover 直到指针进入手柄才挂载。放置目标与 drop line 必须常驻——指针后端在拖拽途中不会触发「被拖过的那个块」去注册自己。
 - **Slash 格式命令**：在可编辑正文中输入 `/` 打开轻量命令列表；使用上下方向键选择、Enter 执行、Escape 关闭。Slash 与双链候选会在可视窗口边缘自动翻转并限制高度；滚动编辑器时关闭候选，避免脱离光标。
 - **美元符号**：`\$a\$` 是普通文本，`$a$` 是行内公式；行内公式两侧可直接接普通文字（如 `第一段$x_0$第三段`），编辑时继续输入不会吞掉公式；两者经编辑、粘贴、整理和保存后保持不同语义。
 - **公式错误恢复**：未闭合的独立 `$$` 不会吞掉其后的 Markdown；围栏内的错误内容按普通文本保留，后续段落和标题继续正常解析。
@@ -133,9 +134,7 @@ Markdown 已能表达的语法不做 HTML 语义化转换，只处理 Markdown �
 
 渲染前经 `DOMPurify` 净化：剥离 `script` / `style` / 表单与内联事件，`iframe` 强制 `sandbox` + `referrerpolicy="no-referrer"` 且仅允许 http(s) `src`，链接强制 `target="_blank" rel="noopener noreferrer"`。应用未启用 CSP，因此净化是唯一防线——Markdown 文件始终保存作者原文，只收窄进入 DOM 的部分。
 
-`@platejs/markdown` 解析前会把 `class` / `for` 改写成 JSX 拼写，取回源码切片时会还原；void 元素会被补成自闭合（`<img …>` → `<img … />`），这是一次性归一化，之后保持稳定。
-
-已知上游缺陷：该改写作用于整份源码字符串，代码围栏内的 HTML 示例里 `class=` 也会被改成 `className=`，与本节无关，需另行修复。
+`@platejs/markdown` 解析前会把 `class` / `for` 改写成 JSX 拼写；编辑器会在取回源码切片和 HTML 代码围栏时还原。void 元素会被补成自闭合（`<img …>` → `<img … />`），这是一次性归一化，之后保持稳定。
 
 ## 代码
 
@@ -159,8 +158,8 @@ Markdown 已能表达的语法不做 HTML 语义化转换，只处理 Markdown �
 | `src/components/editor/overlays/slash-command-menu.tsx` | 图标列表、键盘选择与浮层交互 |
 | `src/components/editor/plugins/block-selection-kit.tsx` | 仅 live editor：块选插件与选中叠层 |
 | `src/components/editor/plugins/dnd-kit.tsx` | 仅 live editor：块拖拽换位（指针后端；不接手 OS 文件 drop） |
-| `src/components/editor/nodes/block/block-draggable.tsx` | 左侧拖动手柄与 drop line |
-| `src/lib/markdown/block-selection.ts` | 块选查询与 Markdown 序列化 |
+| `src/components/editor/nodes/block/block-draggable.tsx` | 左侧拖动手柄、drop line 与拖拽/框选状态桥 |
+| `src/lib/markdown/block-selection.ts` | 块选查询与 Markdown 序列化；void 块（分隔线 / 图）Enter 向下换行 |
 | `src/components/editor/plugins/markdown-kit.tsx` | Markdown 解析、序列化、粘贴与 Callout portable rules |
 | `src/lib/markdown/format.ts` | 按需加载的 Prettier Markdown 纯函数 |
 | `src/lib/markdown/editor-format.ts` | stale guard、frontmatter 保留、selection bookmark 与单次 Undo 事务 |

@@ -13,7 +13,7 @@ pub const JOB_OFFER_EVENT: &str = "job:offer";
 
 const LAYOUT_ANALYZE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct JobOfferPayload {
     pub job_id: String,
@@ -27,7 +27,7 @@ pub struct JobOfferPayload {
 #[serde(transparent)]
 pub struct JobId(pub String);
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum JobKind {
     ParseRefs,
@@ -37,6 +37,7 @@ pub enum JobKind {
     DownloadAssets,
     PageCount,
     WikiReindex,
+    RecognizeMetadata,
 }
 
 impl JobKind {
@@ -51,6 +52,7 @@ impl JobKind {
             JobKind::DownloadAssets => "downloadAssets",
             JobKind::PageCount => "pageCount",
             JobKind::WikiReindex => "wikiReindex",
+            JobKind::RecognizeMetadata => "recognizeMetadata",
         };
         // ParseRefs always runs with online lookup enabled; the segment is
         // kept for fingerprint compatibility with pre-refactor jobs.
@@ -63,7 +65,9 @@ impl JobKind {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, Default, specta::Type,
+)]
 #[serde(rename_all = "camelCase")]
 pub enum JobLane {
     Focus,
@@ -72,7 +76,7 @@ pub enum JobLane {
     Idle,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum JobState {
     Queued,
@@ -83,14 +87,14 @@ pub enum JobState {
     Skipped,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub enum DepPolicy {
     AllSettled,
     AllSucceeded,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct JobSnapshot {
     pub id: String,
@@ -108,7 +112,7 @@ pub struct JobSnapshot {
     pub force: bool,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct JobChangedPayload {
     pub job: JobSnapshot,
@@ -324,6 +328,10 @@ fn kind_concurrency(inner: &JobCenterInner, kind: JobKind) -> usize {
         JobKind::ParseRefs => 2,
         JobKind::DownloadAssets => 3,
         JobKind::LayoutTranslate => 2,
+        // The liteparse probe subprocess is additionally globally capped at 2
+        // (pdf_parse::MAX_CONCURRENT_PDF_PARSE); the kind cap keeps queue
+        // order fair when many PDFs are imported at once.
+        JobKind::RecognizeMetadata => 2,
         JobKind::PageCount | JobKind::WikiReindex => usize::MAX,
     }
 }
@@ -561,6 +569,17 @@ impl JobCenter {
             .await
     }
 
+    pub async fn enqueue_recognize_metadata(
+        &self,
+        vault: impl Into<PathBuf>,
+        path: impl Into<String>,
+        lane: JobLane,
+        force: bool,
+    ) -> JobSnapshot {
+        self.enqueue_core(JobKind::RecognizeMetadata, vault, path, lane, force, None)
+            .await
+    }
+
     /// Shared enqueue path for every kind: normalize, dedupe on
     /// (kind, vault, paper, fingerprint), then register on the lane.
     /// Adding a new kind only needs a `JobKind` variant (with fingerprint +
@@ -672,6 +691,39 @@ impl JobCenter {
             }
             _ => false,
         }
+    }
+
+    /// Cancel every queued/running job for one paper (or for papers nested
+    /// under `rel`), e.g. when the paper folder moves to the recycle bin.
+    /// Returns the snapshots of the cancelled jobs so callers can emit
+    /// `job:changed` and drain freed slots.
+    pub async fn cancel_for_paper(&self, vault: &Path, rel: &str) -> Vec<JobSnapshot> {
+        let vault = normalize_vault_path(vault.to_path_buf());
+        let prefix = format!("{rel}/");
+        let ids: Vec<JobId> = {
+            let inner = self.inner.lock().await;
+            inner
+                .jobs
+                .iter()
+                .filter(|(_, job)| {
+                    job.vault_path == vault
+                        && job
+                            .paper_path
+                            .as_deref()
+                            .is_some_and(|p| p == rel || p.starts_with(prefix.as_str()))
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        let mut cancelled = Vec::new();
+        for id in ids {
+            if self.cancel(&id.0).await {
+                if let Some(snapshot) = self.snapshot(&id.0).await {
+                    cancelled.push(snapshot);
+                }
+            }
+        }
+        cancelled
     }
 
     /// Current snapshot for a job id, if it exists.
@@ -1161,6 +1213,31 @@ pub fn spawn_parse_body_after_assets(
     });
 }
 
+/// Enqueue + try-start one deferred-recognition job for a freshly committed
+/// local PDF import (see `import_one_local_pdf`).
+pub fn spawn_recognize_metadata(app: Option<&tauri::AppHandle>, vault: &Path, path_rel: &str) {
+    let Some(app) = app else {
+        return;
+    };
+    let app = app.clone();
+    let vault = vault.to_path_buf();
+    let path_rel = path_rel.to_string();
+    tauri::async_runtime::spawn(async move {
+        let center = app.state::<JobCenter>().handle();
+        let snapshot = center
+            .enqueue_recognize_metadata(&vault, &path_rel, JobLane::Normal, false)
+            .await;
+        emit_job_changed(&app, snapshot.clone());
+        match center.try_start(&snapshot.id).await {
+            StartOutcome::Started(started) => {
+                center.run_started(&app, started).await;
+            }
+            StartOutcome::Skipped(skipped) => emit_job_changed(&app, skipped),
+            StartOutcome::Waiting => {}
+        }
+    });
+}
+
 fn release_active_key(inner: &mut JobCenterInner, job_id: &JobId) {
     inner.active_keys.retain(|_, id| id != job_id);
 }
@@ -1287,6 +1364,42 @@ mod tests {
         assert!(center.cancel(&job.id).await);
         let jobs = center.list(None, Some("papers/a")).await;
         assert_eq!(jobs[0].state, JobState::Cancelled);
+    }
+
+    #[tokio::test]
+    async fn cancel_for_paper_cancels_matching_and_nested_jobs() {
+        let center = JobCenter::new();
+        let vault = vault("cancel-paper");
+        center
+            .enqueue_parse_refs(vault.clone(), "papers/a", JobLane::Normal, false)
+            .await;
+        center
+            .enqueue_parse_body(vault.clone(), "papers/a", JobLane::Normal, false, None)
+            .await;
+        center
+            .enqueue_parse_refs(vault.clone(), "papers/a/sub", JobLane::Normal, false)
+            .await;
+        let sibling = center
+            .enqueue_parse_refs(vault.clone(), "papers/ab", JobLane::Normal, false)
+            .await;
+        let other = center
+            .enqueue_parse_refs(vault.clone(), "papers/b", JobLane::Normal, false)
+            .await;
+
+        let cancelled = center.cancel_for_paper(&vault, "papers/a").await;
+        assert_eq!(cancelled.len(), 3);
+        assert!(cancelled.iter().all(|job| job.state == JobState::Cancelled));
+
+        assert_eq!(
+            center.snapshot(&sibling.id).await.unwrap().state,
+            JobState::Queued
+        );
+        assert_eq!(
+            center.snapshot(&other.id).await.unwrap().state,
+            JobState::Queued
+        );
+        // Idempotent: nothing left to cancel for that paper.
+        assert!(center.cancel_for_paper(&vault, "papers/a").await.is_empty());
     }
 
     #[test]

@@ -7,8 +7,10 @@ import {
 } from "@/lib/paper/tree-modes";
 import {
 	DEFAULT_LAYOUT_SETTINGS,
+	DEFAULT_MINERU_LANGUAGE,
 	isLayoutBackend,
 	isLayoutProviderId,
+	isMineruLanguage,
 	isParserBackend,
 	type LayoutSettings,
 } from "@/lib/pdf/layout/settings";
@@ -320,6 +322,9 @@ function normalizePartial(
 	if (!isPaperNoteMode(merged.paperNoteMode)) {
 		merged.paperNoteMode = DEFAULT_SETTINGS.paperNoteMode;
 	}
+	if (typeof parsed.autoOpenPaperNotes !== "boolean") {
+		merged.autoOpenPaperNotes = DEFAULT_SETTINGS.autoOpenPaperNotes;
+	}
 	if (
 		merged.autoUpdateInternalLinks !== "ask" &&
 		merged.autoUpdateInternalLinks !== "always"
@@ -348,6 +353,12 @@ function normalizePartial(
 		merged.mcpPort > 65535
 	) {
 		merged.mcpPort = DEFAULT_SETTINGS.mcpPort;
+	}
+	if (typeof merged.mcpTunnelId !== "string") {
+		merged.mcpTunnelId = DEFAULT_SETTINGS.mcpTunnelId;
+	}
+	if (typeof merged.mcpTunnelApiKey !== "string") {
+		merged.mcpTunnelApiKey = DEFAULT_SETTINGS.mcpTunnelApiKey;
 	}
 	if (typeof parsed.exportWatermarkEnabled !== "boolean") {
 		merged.exportWatermarkEnabled = DEFAULT_SETTINGS.exportWatermarkEnabled;
@@ -638,12 +649,18 @@ function normalizeLayoutProviderConfigs(
 			baseUrl?: unknown;
 			model?: unknown;
 			prompt?: unknown;
+			language?: unknown;
+			isOcr?: unknown;
 		};
+		const language =
+			typeof cfg.language === "string" ? cfg.language.trim() : "";
 		out[id] = {
 			apiKey: typeof cfg.apiKey === "string" ? cfg.apiKey.trim() : "",
 			baseUrl: typeof cfg.baseUrl === "string" ? cfg.baseUrl.trim() : "",
 			model: typeof cfg.model === "string" ? cfg.model.trim() : "",
 			prompt: typeof cfg.prompt === "string" ? cfg.prompt.trim() : "",
+			language: isMineruLanguage(language) ? language : DEFAULT_MINERU_LANGUAGE,
+			isOcr: cfg.isOcr === true,
 		};
 	}
 	return out;

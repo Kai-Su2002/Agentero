@@ -8,7 +8,7 @@
 |---|---|---|
 | Library | `agentero:library` | 打开全库表格；右键导出 BibTeX / 发现引用我的新论文 |
 | Recycle Bin | `agentero:trash` | 打开回收站视图；右键清空 |
-| 广场 | `agentero:plaza` | 单击切换展开/收起并打开广场首页（与文件夹行相同）；`Globe` 图标。子来源含 Cool Papers、ModelScope 论文、Skill 推荐与 **订阅**；右键来源行可隐藏（`plazaHiddenSources`），右键父节点列出全部来源逐条切换显隐 |
+| 广场 | `agentero:plaza` | 单击只切换展开/收起（纯虚拟文件夹，无广场首页）；`Globe` 图标。子来源含 Cool Papers、ModelScope 论文、Skill 推荐与 **订阅**；右键父节点列出全部来源逐条勾选显隐（`plazaHiddenSources`） |
 
 ## 建树
 
@@ -19,7 +19,9 @@
 - 其它根目录（包括旧 Vault 中可能存在的 `plans/`）只 list 一层，展开再 list。
 - **缺失目录**：本地 `read_dir` 失败返回空列表；远程 list 的 `NoSuchFile` 同样按空处理（`isPathMissingError`），避免删除后刷新把整棵树清空。删除成功后会先 `removeTreeNode` 乐观剪枝，再 `refreshTree`。
 - 忽略：`.git`、`.venv`、`node_modules` 等（`TREE_IGNORE_NAMES`）。
+- 基础顺序：目录在文件前；同类按数字感知的自然顺序排序（如 `9-...` 在 `10-...` 前）。
 - 默认只展开 `papers/` 及其一级子目录。
+- 所有节点图标统一位于行首并使用一致的左右边距；文件夹与广场行悬停或键盘聚焦时，在同一位置将自身图标替换为展开/收缩箭头，保持行宽稳定并提示该行可展开。
 - 虚拟化：`@tanstack/react-virtual` 拍平窗口化；`getItemKey` 用行稳定 id，避免内联新建草稿插入/移除后按索引缓存行高留下空隙。文件/文件夹行固定为 `h-7`，论文资源操作按钮不改变行高。
 - 外部工具 / CLI 导入论文时，watcher 会刷新文件树，并在 Catalog 或 `papers/` 结构变更后去抖刷新 Library 元数据；论文行标签因此可在不重开论文库的情况下从目录 ID 更新为标题/作者。
 
@@ -37,7 +39,7 @@
 | 标签 | 默认「标题 · 作者」；`paperTreeLabelMode` 可改（展示用，不改磁盘名） |
 | 排序 | `paperTreeSortMode`：默认 `folder` 模式下组织文件夹始终排在论文文件夹之前，再按显示标签 A–Z；其他模式按标题/作者/年份/添加时间排序 |
 | Chevron | 仅当 `{paper}/attachments/` 非空时出现。点三角展开/收起附件；点行仍打开论文 |
-| Download | 缺 PDF，或既无 TeX 也无 `PAPER.md`（`source/` 为懒壳时按其 `hasTex` 标记判定） |
+| Download | 缺 PDF，或既无 TeX 也无 `PAPER.md`（`source/` 为懒壳时按其 `hasTex` 标记判定）；指向有效普通文件的 PDF 软链接也视为本地 PDF |
 | Zap | 资源齐且 `is_read === false` → paper-reader |
 
 ## 交互

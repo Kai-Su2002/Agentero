@@ -4,7 +4,7 @@
 > 相关：[`../frontend/vault-tree.md`](../frontend/vault-tree.md)、[`../backend/paper-import.md`](../backend/paper-import.md)、[`../backend/index.md`](../backend/index.md)。  
 > 订阅 MVP（已落地）：[`plaza-feeds.md`](plaza-feeds.md)。  
 > 开关：设置 → 通用 → **广场**（`plazaEnabled`，默认开）；关闭后不显示、不加载。
-> 单来源显隐：`plazaHiddenSources`（默认空）。右键来源行 →「在侧栏隐藏」；右键广场父节点列出全部来源逐条切换显隐（眼睛图标=恢复，划线眼睛=隐藏，菜单保持打开可连续操作）。侧栏子行与广场首页卡片同步过滤。
+> 单来源显隐：`plazaHiddenSources`（默认空）。右键广场父节点列出全部来源逐条勾选显隐（菜单保持打开可连续操作）；侧栏子行按此过滤。
 
 ## 0. 产品结论（2026-07-25，2026-08-14 修订）
 
@@ -79,9 +79,9 @@ Agentero 已是 **local-first 论文工作台**（Library + 文件树 + PDF\|NOT
 |---|---|
 | 路径 | `agentero:plaza`、`agentero:plaza/<sourceId>`；**永不落盘** |
 | 位置 | Library 与 Recycle Bin **之下**，真实根目录 **之上** |
-| 父节点 | 单击 → 切换展开/收起并打开广场首页（与文件夹行相同） |
+| 父节点 | 单击 → 只切换展开/收起（纯虚拟文件夹，无广场首页） |
 | 子节点 | 单击 → 对应来源 panel（dockview 虚拟 tab） |
-| 右键 | 来源行：「在侧栏隐藏」（写入 `plazaHiddenSources`）；父节点：列出全部来源逐条切换显隐；Cool Papers：可选「在系统浏览器打开 papers.cool」；无删除/拖拽/Finder |
+| 右键 | 父节点：列出全部来源逐条勾选显隐（写入 `plazaHiddenSources`，菜单保持打开）；来源行无菜单；无删除/拖拽/Finder |
 | 禁用 | 拖入拖出、删除、重命名、终端打开 |
 
 **图标（建议）**
@@ -104,21 +104,11 @@ i18n：`sidebar:plaza.*`。
 
 - dockview：`kind: "plaza"`，`path` = 虚拟 URI；同一 path 单实例 `activatePanel`。  
 - **无**独立应用顶栏（与 Library 一致）；来源工具条做在内容区内。  
-- 父路径 `agentero:plaza`：三张来源卡片（Cool Papers 可进；播客「即将推出」；推荐可进 v0）。
-
-```
-┌──────────────────────────────────────────────────────┐
-│  广场                                                 │
-│  ┌────────────┐ ┌────────────┐ ┌────────────┐        │
-│  │ Cool Papers│ │ 播客       │ │ 推荐       │        │
-│  │ 打开日更流  │ │ 即将推出   │ │ 基于本地库  │        │
-│  └────────────┘ └────────────┘ └────────────┘        │
-└──────────────────────────────────────────────────────┘
-```
+- 父路径 `agentero:plaza` **没有页面**：广场根只是文件树里的虚拟文件夹，单击只切换展开/收起；每个来源面板由子节点各自打开。
 
 ### 3.2 Cool Papers（P0，WebView）
 
-**主内容**：内嵌 iframe，经 Host 代理协议 `agentero-coolpapers://localhost`（Windows 为 `https://agentero-coolpapers.localhost`）加载 papers.cool。
+**主内容**：内嵌 iframe，经 Host 代理协议 `agentero-coolpapers://localhost`（Windows 为 `http://agentero-coolpapers.localhost`）加载 papers.cool。
 
 | 区域 | 行为 |
 |---|---|
@@ -231,7 +221,7 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 **页面**（`src/components/plaza/plaza-arxiv-rec-view.tsx`）
 
 - **header**：分类 chip 多选（默认 `ARXIV_FEED_CHIPS`，与订阅共用常量）+ 上次计算时间 + 刷新按钮。**不进 app settings** —— 分类就是页面状态，持久化在 `arxiv_rec_state`。
-- **body**：卡片列表（标题 / arXiv id / 分数 / 摘要三行截断），右上角外链 + 一键入库（走 `lookupSubmit`，与订阅同一条魔棒路线）。
+- **body**：卡片列表（标题 / arXiv id / 分数 / 摘要三行截断），右上角**阅读**（在应用内打开远程 PDF，不写盘）+ 外链 + 一键入库（走 `lookupSubmit`，与订阅同一条魔棒路线）。
 - **空态分三种**并给对应出路：未配置 embedding → 「打开 Agent 设置」按钮；库里没摘要 → 引导先导入论文；分类下无新论文 → 提示换分类。
 
 **取舍**
@@ -282,7 +272,7 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 | 魔棒 / 入库 | **已复用** `lookup_import_batch`：喂上游 URL，见 §3.2.1。订阅论文卡走同一条 |
 | 订阅 | 独立 XDG `feeds.sqlite`，不进 catalog；见 [`plaza-feeds.md`](plaza-feeds.md) |
 | PDF\|NOTES | 推荐打开本地论文时走现有阅读布局 |
-| Agent | P0 不强制；P1 可做「解释为何推荐」 |
+| Agent | 订阅详情与 arXiv Daily 远程 PDF 均支持划词提问 / 加入对话（#421；远程 ephemeral，不写 `marks/`） |
 | 命令面板 | P1：`Plaza: Cool Papers` 等 |
 
 ## 5. 虚拟路径与类型草图
@@ -307,7 +297,7 @@ DocTab：`kind: "plaza"`（或 `file` + mode `plaza` + path 虚拟 URI——实�
 
 | 阶段 | 交付 | 验收 |
 |---|---|---|
-| **P0a 壳** | 侧栏广场 + 三子节点；`PlazaView` 首页 + 路由 | 虚拟 path 不写盘；i18n；折叠位置正确 |
+| **P0a 壳** | 侧栏广场 + 三子节点；`PlazaView` 按来源路由 | 虚拟 path 不写盘；i18n；折叠位置正确 |
 | **P0b Cool Papers** | WebView 浏览 papers.cool + 导航 chrome + 外链 | 可分区浏览站点；失败可恢复 |
 | **P0c arXiv Daily** | embedding 相似度 + 时间衰减排序 + 一键入库（已交付） | 配好 embedding 后有排序结果；未配置有引导空态 |
 | **P0d 播客** | 占位页 | 可进入、文案清晰 |

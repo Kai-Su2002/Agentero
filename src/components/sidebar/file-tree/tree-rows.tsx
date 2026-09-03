@@ -11,6 +11,7 @@ import {
 import { useTranslation } from "react-i18next";
 import {
 	FileTreeActions,
+	FileTreeDisclosureIcon,
 	FileTreeFile,
 	FileTreeFolderRow,
 	FileTreeIcon,
@@ -26,7 +27,6 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { contextPathIcon } from "@/lib/agent/context-path-icon";
-import { getPlatformOS } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
 import { LIBRARY_VIRTUAL_PATH, TRASH_VIRTUAL_PATH } from "@/lib/paper/api";
 import {
@@ -89,7 +89,7 @@ export function PaperTreeRow({
 							aria-expanded={expanded}
 							aria-label={expandLabel}
 							className={cn(
-								"flex size-5 shrink-0 items-center justify-center rounded-sm",
+								"group/attachment relative flex size-4 shrink-0 items-center justify-center rounded-sm",
 								"text-muted-foreground hover:bg-muted/80",
 								"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 							)}
@@ -101,11 +101,16 @@ export function PaperTreeRow({
 							onPointerDown={(e) => e.stopPropagation()}
 							onKeyDown={(e) => e.stopPropagation()}
 						>
+							<ScrollText
+								className="size-4 transition-opacity group-hover/attachment:opacity-0 group-focus-visible/attachment:opacity-0"
+								aria-hidden
+							/>
 							<ChevronRight
 								className={cn(
-									"size-4 transition-transform",
+									"pointer-events-none absolute size-4 opacity-0 transition-[opacity,transform] group-hover/attachment:opacity-100 group-focus-visible/attachment:opacity-100",
 									expanded && "rotate-90",
 								)}
+								aria-hidden
 							/>
 						</button>
 					</TooltipTrigger>
@@ -114,20 +119,17 @@ export function PaperTreeRow({
 					</TooltipContent>
 				</Tooltip>
 			) : (
-				<span className="size-4 shrink-0" />
+				<ScrollText
+					className="size-4 shrink-0 text-muted-foreground"
+					aria-hidden
+				/>
 			)}
-			<FileTreeIcon>
-				<ScrollText className="size-4 text-muted-foreground" />
-			</FileTreeIcon>
 			<FileTreeName className="min-w-0 flex-1 truncate" title={label}>
 				{label}
 			</FileTreeName>
 			{showActions ? (
 				<FileTreeActions
-					// Linux (WebKitGTK) and macOS (WKWebView) draw overlay scrollbars
-					// that float over content with an 8px-wide hit area; Windows
-					// WebView2 uses classic scrollbars that reserve layout space.
-					className={cn("shrink-0", getPlatformOS() !== "windows" && "pr-2")}
+					className="shrink-0"
 					onClick={(e) => {
 						e.stopPropagation();
 					}}
@@ -157,7 +159,7 @@ export function PaperTreeRow({
 							</TooltipTrigger>
 							<TooltipContent
 								side="right"
-								className="max-w-xs select-none cursor-default"
+								className="max-w-xs select-none cursor-default flex-col items-start gap-0"
 							>
 								<p className="font-medium">{t("fileTree.downloadAssets")}</p>
 								<ul className="mt-1 list-disc space-y-0.5 pl-3 text-xs opacity-90">
@@ -264,7 +266,6 @@ export function LibraryRow({
 	const { t } = useTranslation("sidebar");
 	return (
 		<FileTreeFile path={LIBRARY_VIRTUAL_PATH} name={t("papersLibrary.title")}>
-			<span className="size-4 shrink-0" />
 			<FileTreeIcon>
 				<Library className="size-4 text-muted-foreground" />
 			</FileTreeIcon>
@@ -273,7 +274,7 @@ export function LibraryRow({
 			</FileTreeName>
 			{showDownload ? (
 				<FileTreeActions
-					className={cn("shrink-0", getPlatformOS() !== "windows" && "pr-2")}
+					className="shrink-0"
 					onClick={(e) => e.stopPropagation()}
 					onKeyDown={(e) => e.stopPropagation()}
 				>
@@ -315,7 +316,6 @@ export function TrashRow() {
 	const { t } = useTranslation("sidebar");
 	return (
 		<FileTreeFile path={TRASH_VIRTUAL_PATH} name={t("recycleBin.title")}>
-			<span className="size-4 shrink-0" />
 			<FileTreeIcon>
 				<Trash2 className="size-4 text-muted-foreground" />
 			</FileTreeIcon>
@@ -335,15 +335,10 @@ export function PlazaRow({ expanded }: { expanded: boolean }) {
 			name={t("plaza.plaza")}
 			aria-expanded={expanded}
 		>
-			<ChevronRight
-				className={cn(
-					"size-4 shrink-0 text-muted-foreground transition-transform",
-					expanded && "rotate-90",
-				)}
+			<FileTreeDisclosureIcon
+				isExpanded={expanded}
+				icon={<Globe className="size-4 text-muted-foreground" aria-hidden />}
 			/>
-			<FileTreeIcon>
-				<Globe className="size-4 text-muted-foreground" />
-			</FileTreeIcon>
 			<FileTreeName className="min-w-0 flex-1 truncate">
 				{t("plaza.plaza")}
 			</FileTreeName>
@@ -356,7 +351,6 @@ export function PlazaSourceRow({ source }: { source: PlazaSource }) {
 	const label = plazaSourceLabel(source);
 	return (
 		<FileTreeFile path={source.path} name={label}>
-			<span className="size-4 shrink-0" />
 			<FileTreeIcon>
 				<Icon className="size-4" />
 			</FileTreeIcon>

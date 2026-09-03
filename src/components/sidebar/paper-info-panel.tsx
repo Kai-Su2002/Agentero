@@ -103,7 +103,7 @@ function CopyValue({
 			aria-label={hint}
 			onClick={() => onCopy(text, label)}
 			className={cn(
-				"block w-full cursor-pointer rounded-sm text-left",
+				"block w-full cursor-pointer select-text rounded-sm text-left",
 				"hover:bg-muted/60 hover:text-foreground",
 				"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 			)}

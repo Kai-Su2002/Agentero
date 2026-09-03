@@ -135,7 +135,10 @@ export function PlazaSkillsView({ className }: { className?: string }) {
 	const { t } = useTranslation("sidebar");
 	return (
 		<div
-			className={cn("agentero-scroll h-full overflow-y-auto p-4", className)}
+			className={cn(
+				"agentero-scroll h-full select-none overflow-y-auto p-4",
+				className,
+			)}
 		>
 			<h1 className="font-medium text-sm">{t("plaza.skills.title")}</h1>
 			<div className="mt-4 space-y-6">

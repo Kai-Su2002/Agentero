@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	hydrateSessionTitles,
 	mergeImportedSessions,
+	sanitizeChatLines,
 	titleFromLoadedHistory,
 } from "@/components/agent/hooks/use-agent-history";
 import * as agentApi from "@/lib/agent";
@@ -44,6 +45,62 @@ function makeAcpSession(
 		...opts,
 	};
 }
+
+describe("sanitizeChatLines", () => {
+	it("preserves visualAnnotations and images on user turns", () => {
+		const lines = [
+			{
+				id: "l1",
+				kind: "user" as const,
+				text: "explain",
+				visualAnnotations: [
+					{
+						id: "v1",
+						page: 1,
+						comment: "region",
+						image: { data: "base64", mimeType: "image/png" },
+					},
+				],
+				images: [{ data: "base64", mimeType: "image/png" }],
+			},
+		];
+		const out = sanitizeChatLines(lines);
+		expect(out).toHaveLength(1);
+		expect(out[0]?.visualAnnotations).toHaveLength(1);
+		expect(out[0]?.visualAnnotations?.[0]?.id).toBe("v1");
+		expect(out[0]?.images).toHaveLength(1);
+	});
+
+	it("drops empty user turns that have no text, visuals, or images", () => {
+		const lines = [
+			{
+				id: "l1",
+				kind: "user" as const,
+				text: "   ",
+			},
+		];
+		expect(sanitizeChatLines(lines)).toHaveLength(0);
+	});
+
+	it("keeps user turns that are visual-only", () => {
+		const lines = [
+			{
+				id: "l1",
+				kind: "user" as const,
+				text: "",
+				visualAnnotations: [
+					{
+						id: "v1",
+						page: 1,
+						comment: "region",
+						image: { data: "base64", mimeType: "image/png" },
+					},
+				],
+			},
+		];
+		expect(sanitizeChatLines(lines)).toHaveLength(1);
+	});
+});
 
 describe("titleFromLoadedHistory", () => {
 	it("uses the first user turn when present", () => {

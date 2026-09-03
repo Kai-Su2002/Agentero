@@ -25,6 +25,7 @@ import { useSelectionContextPublish } from "@/components/editor/hooks/use-select
 import { useWikilinkEditing } from "@/components/editor/hooks/use-wikilink-editing";
 import { MarkdownExportDialog } from "@/components/editor/markdown-export-dialog";
 import { MarkdownExportSurface } from "@/components/editor/markdown-export-surface";
+import { BlockDragStateBridge } from "@/components/editor/nodes/block/block-draggable";
 import { ImageElement } from "@/components/editor/nodes/block/image-node";
 import { EditorStatusBar } from "@/components/editor/overlays/editor-status-bar";
 import { FindReplaceBar } from "@/components/editor/overlays/find-replace-bar";
@@ -56,6 +57,7 @@ import { scrollBehavior } from "@/lib/core/motion";
 import { errorMessage, notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
+import { insertBreakAfterSelectedVoidBlocks } from "@/lib/markdown/block-selection";
 import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
 import { editorContextMenuCapabilities } from "@/lib/markdown/editor-context-menu";
 import {
@@ -481,6 +483,34 @@ export function MarkdownEditor({
 		],
 	);
 
+	// The block-selection shadow input portals to document.body, so editor
+	// key capture never sees its events; intercept plain Enter there and
+	// break out below block-selected voids (hr / image).
+	useEffect(() => {
+		if (readOnly) return;
+		const handleShadowInputEnter = (event: globalThis.KeyboardEvent) => {
+			if (
+				event.key !== "Enter" ||
+				event.isComposing ||
+				event.metaKey ||
+				event.ctrlKey ||
+				event.altKey ||
+				event.shiftKey ||
+				!(event.target instanceof HTMLElement) ||
+				!event.target.classList.contains("slate-shadow-input")
+			) {
+				return;
+			}
+			if (insertBreakAfterSelectedVoidBlocks(editor)) {
+				event.preventDefault();
+				event.stopPropagation();
+			}
+		};
+		document.addEventListener("keydown", handleShadowInputEnter, true);
+		return () =>
+			document.removeEventListener("keydown", handleShadowInputEnter, true);
+	}, [editor, readOnly]);
+
 	const handleEditorBlur = useCallback(
 		(event: React.FocusEvent<HTMLDivElement>) => {
 			if (event.currentTarget.contains(event.relatedTarget)) return;
@@ -639,6 +669,7 @@ export function MarkdownEditor({
 					<BlockSelectionPublishBridge
 						onChange={scheduleSelectionContextPublish}
 					/>
+					<BlockDragStateBridge />
 					<div
 						className={cn(
 							"flex h-full min-h-0 min-w-0 flex-col overflow-hidden",
@@ -696,10 +727,10 @@ export function MarkdownEditor({
 												readOnly={readOnly}
 												// `pl-10` leaves room for the block drag handle
 												// (`-translate-x-full` in the left gutter).
-												// `pr-16` reserves a right gutter for the collapsed
-												// TOC strip (`right-2 w-12`) so it never covers text.
+												// `pr-14` reserves a right gutter for the collapsed
+												// TOC strip (`right-2 w-10`) so it never covers text.
 												// Narrow panes hide that strip, so the gutter goes too.
-												className="min-h-full pl-10 pr-16 pt-4 pb-48 @max-2xs/editor:pr-6 [&>*:first-child]:mt-0"
+												className="min-h-full pl-10 pr-14 pt-4 pb-48 @max-2xs/editor:pr-6 [&>*:first-child]:mt-0"
 												style={editorTypographyStyle}
 											/>
 											{!readOnly ? (

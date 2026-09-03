@@ -8,6 +8,7 @@ import {
 	isAskUserSurfaceActive,
 } from "@/components/agent/agent-ask-user-surface";
 import { AgentComposer } from "@/components/agent/agent-composer";
+import { AgentConfigBar } from "@/components/agent/agent-config-bar";
 import { SidebarHistoryTrailing } from "@/components/agent/agent-history";
 import { AgentPermissionDialog } from "@/components/agent/agent-permission-dialog";
 import { AgentSwitcher } from "@/components/agent/agent-switcher";
@@ -20,8 +21,9 @@ import { cn } from "@/lib/core/utils";
 
 const COMPOSER_DEFAULT_HEIGHT_PX = 208;
 const COMPOSER_MIN_HEIGHT_PX = 88;
+const COMPOSER_COMPACT_WITH_CHIPS_HEIGHT_PX = 104;
 const COMPOSER_MAX_HEIGHT_PX = 360;
-const COMPOSER_COMPACT_THRESHOLD_PX = 140;
+const COMPOSER_COMPACT_THRESHOLD_PX = 160;
 const TRANSCRIPT_MIN_HEIGHT_PX = 160;
 
 export type { AgentPanelProps } from "@/components/agent/types";
@@ -143,6 +145,17 @@ export const AgentPanel = memo(function AgentPanel({
 		[clampComposerHeight],
 	);
 	const composerCompact = composerHeightPx <= COMPOSER_COMPACT_THRESHOLD_PX;
+	const hasComposerChips =
+		panel.currentFilePath !== null ||
+		panel.mentionChipPaths.length > 0 ||
+		panel.selectionChips.length > 0 ||
+		panel.visualDrafts.length > 0 ||
+		panel.selectedSkills.length > 0;
+	const composerDisplayHeightPx = composerCompact
+		? hasComposerChips
+			? COMPOSER_COMPACT_WITH_CHIPS_HEIGHT_PX
+			: COMPOSER_MIN_HEIGHT_PX
+		: composerHeightPx;
 
 	const {
 		t,
@@ -288,6 +301,30 @@ export const AgentPanel = memo(function AgentPanel({
 					/>
 				</PaneHeader>
 
+				<AgentConfigBar
+					modelSelectorOpen={modelSelectorOpen}
+					onModelSelectorOpenChange={setModelSelectorOpen}
+					models={models}
+					groupedModels={groupedModels}
+					modelId={modelId}
+					selectedModelName={selectedModelName}
+					favoriteIds={favoriteIds}
+					warming={warming}
+					onPickModel={pickModel}
+					onToggleFavorite={toggleFavorite}
+					collaborationOptions={collaborationOptions}
+					collaborationModeId={collaborationModeId}
+					selectedCollaborationName={selectedCollaborationName}
+					onPickCollaborationMode={pickCollaborationMode}
+					effortOptionsInDisplayOrder={effortOptionsInDisplayOrder}
+					reasoningEffort={reasoningEffort}
+					onReasoningEffortChange={setReasoningEffort}
+					formatEffort={formatEffort}
+					fastAvailable={fastAvailable}
+					fastEnabled={fastEnabled}
+					onFastEnabledToggle={() => setFastEnabled((current) => !current)}
+				/>
+
 				<div ref={bodyRef} className="flex min-h-0 flex-1 flex-col">
 					<ChatTranscript
 						lines={lines}
@@ -337,9 +374,8 @@ export const AgentPanel = memo(function AgentPanel({
 
 							<AgentComposer
 								autoFocus={autoFocus}
-								heightPx={composerHeightPx}
+								heightPx={composerDisplayHeightPx}
 								compact={composerCompact}
-								linesLength={lines.length}
 								activeTabIsRunning={activeTabIsRunning}
 								switching={switching}
 								submitting={submitting}
@@ -404,32 +440,8 @@ export const AgentPanel = memo(function AgentPanel({
 								slashActiveIndex={slashActiveIndex}
 								onAttachSlashCommand={attachSlashCommand}
 								onSlashActiveIndexChange={setSlashActiveIndex}
-								modelSelectorOpen={modelSelectorOpen}
-								onModelSelectorOpenChange={setModelSelectorOpen}
-								models={models}
-								groupedModels={groupedModels}
-								modelId={modelId}
-								selectedModelName={selectedModelName}
-								favoriteIds={favoriteIds}
-								warming={warming}
-								onPickModel={pickModel}
-								onToggleFavorite={toggleFavorite}
-								collaborationOptions={collaborationOptions}
-								collaborationModeId={collaborationModeId}
-								selectedCollaborationName={selectedCollaborationName}
-								onPickCollaborationMode={pickCollaborationMode}
-								effortOptionsInDisplayOrder={effortOptionsInDisplayOrder}
-								reasoningEffort={reasoningEffort}
-								onReasoningEffortChange={setReasoningEffort}
-								formatEffort={formatEffort}
 								activeUsage={activeUsage}
-								fastAvailable={fastAvailable}
-								fastEnabled={fastEnabled}
-								onFastEnabledToggle={() =>
-									setFastEnabled((current) => !current)
-								}
 								onCancelRun={() => void cancelCurrentRun()}
-								onSendSuggestion={sendSuggestion}
 							/>
 						</>
 					) : null}

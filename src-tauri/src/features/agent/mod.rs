@@ -11,6 +11,8 @@ pub mod models;
 pub mod permission;
 pub mod prompts;
 pub mod registry;
+pub mod remote_catalog;
+pub mod remote_catalog_commands;
 pub mod runtime;
 pub mod skills;
 pub mod stream_coalesce;
@@ -25,6 +27,7 @@ pub use acp::{
 pub use ask_user::AskUserGate;
 pub use elicitation::ElicitationGate;
 pub use events::AgentEventEmitter;
+pub use models::AgentTelemetrySummary;
 pub use permission::PermissionGate;
 pub use registry::AgentRegistry;
 pub use runtime::{AgentRunController, AgentWarmGate};

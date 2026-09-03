@@ -32,6 +32,7 @@ import {
 	pdfTileDpr,
 } from "@/components/viewer/pdf/constants";
 import { EMBED_PAGE_ATTR } from "@/components/viewer/pdf/coords";
+import type { PdfTextLink } from "@/components/viewer/pdf/layers/citation-links";
 import { CitationLinkLayer } from "@/components/viewer/pdf/layers/citation-links";
 import { CommentCardsLayer } from "@/components/viewer/pdf/layers/comment-cards-layer";
 import { HighlightAnnotationMenu } from "@/components/viewer/pdf/layers/highlight-annotation-menu";
@@ -58,7 +59,10 @@ import {
 	type PdfLayoutRegion,
 	type PointerOrigin,
 } from "@/lib/pdf/layout";
-import { PDF_PAGE_RASTER_DARK_CLASS } from "@/lib/pdf/page-theme";
+import {
+	PDF_ANNOTATION_DARK_CLASS,
+	PDF_PAGE_RASTER_DARK_CLASS,
+} from "@/lib/pdf/page-theme";
 import type { SelectionPin } from "@/lib/pdf/selection";
 
 /** A mark region pinned to a page (visual draft frame / formula legend frame). */
@@ -101,6 +105,7 @@ export type PdfPageMarksSlice = {
 	/** Resolvable wiki target for comment copy-link/copy-embed; null hides them. */
 	commentWikiTarget: string | null;
 	citationLinks: ReadonlyMap<number, PdfLinkAnnoObject[]>;
+	textLinks: ReadonlyMap<number, PdfTextLink[]>;
 	activeCardId: string | null;
 	/** Id of the comment-rail card currently being hovered; null when idle. */
 	hoveredCommentId: string | null;
@@ -133,6 +138,7 @@ export type PdfPageHandlers = {
 	onCardHoverEnter: () => void;
 	onCardHoverLeave: () => void;
 	onCitationActivate: (link: PdfLinkAnnoObject) => void;
+	onTextLinkActivate: (url: string) => void;
 	onCitationHover: (link: PdfLinkAnnoObject | null) => void;
 	onRegionSelect: (page: number, region: PdfAskNormalizedRect) => void;
 	/** Click a figure / table / algorithm / formula hit target → crop + draft card. */
@@ -160,6 +166,8 @@ export type PdfPageHandlers = {
 	onCopyCommentLink: (comment: PageAnnotationComment) => void;
 	/** Copy the comment card's `![[target@id]]` embed. */
 	onCopyCommentEmbed: (comment: PageAnnotationComment) => void;
+	/** Add a visual comment's crop to the Agent sidebar composer (#396). */
+	onAddCommentToChat: (comment: PageAnnotationComment) => void;
 	/** Hover enters a comment-rail card. */
 	onHoverComment: (comment: PageAnnotationComment) => void;
 	/** Hover leaves a comment-rail card. */
@@ -307,13 +315,13 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 		!!emphasizedComment && emphasizedComment.id === marks.hoveredCommentId;
 	const isEditingComment =
 		!!emphasizedComment && emphasizedComment.id === marks.editingCommentId;
-	// Page shell: paper-white in light mode; near-black when PDF dark mode is on
-	// so loading gaps match inverted page rasters.
+	// Page shell: paper-white in light mode; muted dark gray when PDF dark mode
+	// is on so loading gaps match the softer inverted page rasters.
 	return (
 		<div
 			className={cn(
 				"relative overflow-visible rounded-sm shadow-sm ring-1",
-				pdfDark ? "bg-zinc-900 ring-white/10" : "bg-white ring-black/5",
+				pdfDark ? "bg-zinc-800 ring-white/10" : "bg-white ring-black/5",
 			)}
 			style={{ width, height }}
 			{...{ [EMBED_PAGE_ATTR]: pageIndex }}
@@ -362,18 +370,31 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				{mode.regionSelecting ? null : (
 					<SelectionLayer documentId={docId} pageIndex={pageIndex} />
 				)}
-				<AnnotationLayer
-					documentId={docId}
-					pageIndex={pageIndex}
-					selectionMenu={(menuProps) => (
-						<HighlightAnnotationMenu
-							{...menuProps}
-							onEdit={handlers.onEditHighlightAnnotation}
-							onDelete={handlers.onDeleteHighlightAnnotation}
-							onChangeColor={handlers.onChangeHighlightColor}
-						/>
+				{/*
+				 * AnnotationLayer is not inverted with the page rasters. In PDF dark
+				 * mode its bright highlight colors look glaring on dark paper, so
+				 * dim/saturation-reduce the whole layer slightly. Link annotations
+				 * are affected too but remain legible.
+				 */}
+				<div
+					className={cn(
+						"absolute inset-0",
+						pdfDark && PDF_ANNOTATION_DARK_CLASS,
 					)}
-				/>
+				>
+					<AnnotationLayer
+						documentId={docId}
+						pageIndex={pageIndex}
+						selectionMenu={(menuProps) => (
+							<HighlightAnnotationMenu
+								{...menuProps}
+								onEdit={handlers.onEditHighlightAnnotation}
+								onDelete={handlers.onDeleteHighlightAnnotation}
+								onChangeColor={handlers.onChangeHighlightColor}
+							/>
+						)}
+					/>
+				</div>
 				<PageTranslateTab
 					pageIndex={pageIndex}
 					active={pageTranslateState.active}
@@ -382,10 +403,12 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				/>
 				<CitationLinkLayer
 					links={marks.citationLinks.get(pageIndex) ?? EMPTY_CITATION_LINKS}
+					textLinks={marks.textLinks.get(pageIndex) ?? []}
 					pageWidthPt={width / zoomRef.current}
 					pageHeightPt={height / zoomRef.current}
 					label={t("pdf.linkAria")}
 					onActivate={handlers.onCitationActivate}
+					onTextActivate={handlers.onTextLinkActivate}
 					onHover={handlers.onCitationHover}
 				/>
 				<PdfRegionSelectLayer
@@ -678,6 +701,34 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 							/>
 						))
 					: null}
+				{/*
+				 * Bidirectional hover for visual annotations: hovering the page region
+				 * highlights the right-rail card and shows the border (#396).
+				 */}
+				{comments
+					.filter((comment) => comment.kind === "visual")
+					.map((comment) =>
+						comment.rects.map((rect) => (
+							<button
+								key={`visual-hover-${comment.id}-${rect.x}-${rect.y}-${rect.w}-${rect.h}`}
+								type="button"
+								className="absolute z-[3] cursor-pointer bg-transparent"
+								style={{
+									left: `${rect.x * 100}%`,
+									top: `${rect.y * 100}%`,
+									width: `${rect.w * 100}%`,
+									height: `${rect.h * 100}%`,
+								}}
+								aria-label={t("pdfExplain.visualAnnotation")}
+								onMouseEnter={() => handlers.onHoverComment(comment)}
+								onMouseLeave={handlers.onLeaveComment}
+								onClick={(event) => {
+									event.stopPropagation();
+									handlers.onOpenComment(comment);
+								}}
+							/>
+						)),
+					)}
 				<CommentCardsLayer
 					items={comments}
 					pageHeightPx={height}
@@ -690,6 +741,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 					onDelete={handlers.onDeleteComment}
 					onCopyLink={handlers.onCopyCommentLink}
 					onCopyEmbed={handlers.onCopyCommentEmbed}
+					onAddToChat={handlers.onAddCommentToChat}
 					onHover={handlers.onHoverComment}
 					onLeave={handlers.onLeaveComment}
 				/>

@@ -12,6 +12,7 @@ use crate::core::error::AppError;
 use crate::features::catalog::CapsCache;
 use crate::features::import::has_local_tex;
 use serde::Serialize;
+use std::cmp::Ordering;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -78,6 +79,59 @@ fn should_ignore(name: &str) -> bool {
         return true;
     }
     name.ends_with(".egg-info")
+}
+
+fn natural_name_cmp(a: &str, b: &str) -> Ordering {
+    let a = a.as_bytes();
+    let b = b.as_bytes();
+    let mut ai = 0;
+    let mut bi = 0;
+
+    while ai < a.len() && bi < b.len() {
+        let ac = a[ai];
+        let bc = b[bi];
+
+        if ac.is_ascii_digit() && bc.is_ascii_digit() {
+            let mut a_end = ai;
+            while a_end < a.len() && a[a_end].is_ascii_digit() {
+                a_end += 1;
+            }
+
+            let mut b_end = bi;
+            while b_end < b.len() && b[b_end].is_ascii_digit() {
+                b_end += 1;
+            }
+
+            let a_num = &a[ai..a_end];
+            let b_num = &b[bi..b_end];
+            match a_num.len().cmp(&b_num.len()).then_with(|| a_num.cmp(b_num)) {
+                Ordering::Equal => {
+                    ai = a_end;
+                    bi = b_end;
+                    continue;
+                }
+                cmp => return cmp,
+            }
+        }
+
+        match ac.to_ascii_lowercase().cmp(&bc.to_ascii_lowercase()) {
+            Ordering::Equal => {
+                ai += 1;
+                bi += 1;
+            }
+            cmp => return cmp,
+        }
+    }
+
+    a.len().cmp(&b.len())
+}
+
+fn sort_nodes(nodes: &mut [VaultTreeNode]) {
+    nodes.sort_by(|a, b| match (a.kind, b.kind) {
+        ("directory", "file") => Ordering::Less,
+        ("file", "directory") => Ordering::Greater,
+        _ => natural_name_cmp(&a.name, &b.name),
+    });
 }
 
 /// Whether a vault-relative dir (`""` = root) belongs to a fully-walked tree.
@@ -169,7 +223,16 @@ fn list_dir(
         };
         if file_type.is_dir() {
             dirs.push((name, child_path, child_rel));
-        } else if file_type.is_file() {
+        } else if file_type.is_file()
+            // `file_type()` intentionally does not follow symlinks. A valid
+            // symlink to a regular file is still a local paper asset (for
+            // example a PDF kept in a shared Downloads folder), so include it
+            // in the tree without ever traversing symlinked directories.
+            || (file_type.is_symlink()
+                && fs::metadata(&child_path)
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false))
+        {
             if PAPER_MARKER_FILES.contains(&name.as_str()) {
                 paper_marker = true;
             }
@@ -232,6 +295,7 @@ fn list_dir(
         nodes.push(node);
     }
     nodes.extend(files);
+    sort_nodes(&mut nodes);
     nodes
 }
 
@@ -405,6 +469,25 @@ mod tests {
         assert_eq!(source_has_tex(&build_tree(root, &caps)), Some(true));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn valid_symlinked_pdf_is_listed_as_a_file() {
+        use std::os::unix::fs::symlink;
+
+        let root = &temp_root("symlink-pdf");
+        let paper = root.join("papers/p1");
+        write(&paper.join("NOTES.md"), "# n");
+        write(&paper.join("source/main.tex"), "x");
+        let target = root.join("outside.pdf");
+        write(&target, "pdf");
+        symlink(&target, paper.join("p1.pdf")).unwrap();
+
+        let tree = build_tree(root, &CapsCache::new());
+        let papers = find(&tree, "papers").unwrap();
+        let p1 = find(papers.children.as_ref().unwrap(), "p1").unwrap();
+        assert!(find(p1.children.as_ref().unwrap(), "p1.pdf").is_some());
+    }
+
     /// Quantifies the caps-cache win: 20 papers with 200 files each under
     /// `source/`. The first build walks every source/ tree (cold); the second
     /// hits the cache and must not re-walk. Prints both durations
@@ -454,5 +537,28 @@ mod tests {
             warm < cold,
             "warm build ({warm:?}) should be faster than cold build ({cold:?})"
         );
+    }
+
+    #[test]
+    fn sorts_names_naturally_with_directories_first() {
+        let root = &temp_root("sort");
+        write(&root.join("papers/10-topic/NOTES.md"), "# n");
+        write(&root.join("papers/9-topic/NOTES.md"), "# n");
+        write(&root.join("10-note.md"), "x");
+        write(&root.join("9-note.md"), "x");
+
+        let tree = build_tree(root, &CapsCache::new());
+        let names: Vec<&str> = tree.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(names, vec!["papers", "9-note.md", "10-note.md"]);
+
+        let papers = find(&tree, "papers").unwrap();
+        let paper_names: Vec<&str> = papers
+            .children
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|n| n.name.as_str())
+            .collect();
+        assert_eq!(paper_names, vec!["9-topic", "10-topic"]);
     }
 }

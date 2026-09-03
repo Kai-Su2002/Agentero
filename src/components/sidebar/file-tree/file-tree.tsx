@@ -69,8 +69,6 @@ type FileTreeProps = {
 	onSelectLibrary?: () => void;
 	/** Virtual trash node → recycle bin view in center pane. */
 	onSelectTrash?: () => void;
-	/** Virtual 广场 node → discovery source overview in center pane. */
-	onSelectPlaza?: () => void;
 	/** Virtual 广场 child node → that source's page in center pane. */
 	onSelectPlazaSource?: (source: PlazaSource) => void;
 	/** Empty recycle bin (confirm + purge). From trash node context menu. */
@@ -176,7 +174,6 @@ export const FileTree = memo(
 			onSelectFile,
 			onSelectLibrary,
 			onSelectTrash,
-			onSelectPlaza,
 			onSelectPlazaSource,
 			onEmptyTrash,
 			onExportLibrary,
@@ -252,7 +249,6 @@ export const FileTree = memo(
 			onSelectFile,
 			onSelectLibrary,
 			onSelectTrash,
-			onSelectPlaza,
 			onSelectPlazaSource,
 			onTogglePath: expansion.togglePath,
 			onDeletePath,
@@ -411,7 +407,7 @@ export const FileTree = memo(
 					/>
 					<div
 						ref={treeScrollRef}
-						className="agentero-scroll min-h-0 flex-1 overflow-y-auto py-1"
+						className="agentero-scroll min-h-0 flex-1 overflow-y-auto py-1 [scrollbar-gutter:stable]"
 					>
 						{nodes.length === 0 && !createDraft ? (
 							<>

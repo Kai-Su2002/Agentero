@@ -1,12 +1,18 @@
-import { ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
+	HelpLabel,
 	PageTitle,
 	SettingsGroup,
 	SettingsRow,
 } from "@/components/settings/settings-layout";
 import { Button } from "@/components/ui/button";
+import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -16,6 +22,7 @@ import {
 	SelectTrigger,
 	SelectValue,
 } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 import {
 	Tooltip,
 	TooltipContent,
@@ -24,6 +31,7 @@ import {
 import { isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
 import {
+	layoutBackendsAfterClearingProvider,
 	persistLayoutProviderConfig,
 	probeLayoutProvider,
 } from "@/lib/pdf/layout/provider-config";
@@ -36,12 +44,14 @@ import {
 	type ProviderCardDescriptor,
 } from "@/lib/pdf/layout/providers";
 import {
+	DEFAULT_MINERU_LANGUAGE,
 	isLayoutBackend,
 	isParserBackend,
 	LAYOUT_PROVIDER_DEFAULT_BASE_URLS,
 	LAYOUT_PROVIDER_DOCS_URLS,
 	type LayoutProviderConfig,
 	type LayoutProviderId,
+	MINERU_LANGUAGES,
 	PARSER_BACKENDS,
 	PROVIDER_MODEL_PRESETS,
 } from "@/lib/pdf/layout/settings";
@@ -60,6 +70,8 @@ const EMPTY_PROVIDER_CONFIG: LayoutProviderConfig = {
 	baseUrl: "",
 	model: "",
 	prompt: "",
+	language: DEFAULT_MINERU_LANGUAGE,
+	isOcr: false,
 };
 
 type ProbeStatus = "idle" | "probing" | "ok" | "fail";
@@ -109,6 +121,19 @@ export function LayoutPane({
 		),
 		...Object.values(PARSER_PROVIDERS),
 	]);
+	const backendOptions = Object.values(LAYOUT_PROVIDERS).filter(
+		(descriptor) => {
+			if (!isRemoteLayoutProvider(descriptor)) return true;
+			if (descriptor.id === layout.backend) return true;
+			return isProviderConfigured(descriptor.id);
+		},
+	);
+	const parserBackendOptions = PARSER_BACKENDS.filter(
+		(backend) =>
+			backend === "local" ||
+			backend === layout.parserBackend ||
+			isProviderConfigured(backend),
+	);
 
 	return (
 		<div className="space-y-6">
@@ -118,6 +143,7 @@ export function LayoutPane({
 				<SettingsRow label={t("layout.backend.label")} htmlFor="layout-backend">
 					<Select
 						value={layout.backend}
+						disabled={backendOptions.length <= 1}
 						onValueChange={(value) => {
 							if (isLayoutBackend(value)) {
 								patch({ layout: { ...layout, backend: value } });
@@ -127,24 +153,24 @@ export function LayoutPane({
 						<SelectTrigger
 							id="layout-backend"
 							size="sm"
-							className="min-w-[200px] max-w-[280px]"
+							className={cn(
+								"min-w-[200px] max-w-[280px]",
+								// Keep full opacity when the sole option is locked — avoids
+								// a washed-out look and width jump vs plain text.
+								backendOptions.length <= 1 &&
+									"disabled:cursor-default disabled:opacity-100",
+							)}
 						>
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent className="max-h-72">
-							{Object.values(LAYOUT_PROVIDERS)
-								.filter((descriptor) => {
-									if (!isRemoteLayoutProvider(descriptor)) return true;
-									if (descriptor.id === layout.backend) return true;
-									return isProviderConfigured(descriptor.id);
-								})
-								.map((descriptor) => (
-									<SelectItem key={descriptor.id} value={descriptor.id}>
-										{t(
-											`layout.backend.${descriptor.id}` as "layout.backend.local",
-										)}
-									</SelectItem>
-								))}
+							{backendOptions.map((descriptor) => (
+								<SelectItem key={descriptor.id} value={descriptor.id}>
+									{t(
+										`layout.backend.${descriptor.id}` as "layout.backend.local",
+									)}
+								</SelectItem>
+							))}
 						</SelectContent>
 					</Select>
 				</SettingsRow>
@@ -154,6 +180,7 @@ export function LayoutPane({
 				>
 					<Select
 						value={layout.parserBackend}
+						disabled={parserBackendOptions.length <= 1}
 						onValueChange={(value) => {
 							if (isParserBackend(value)) {
 								patch({ layout: { ...layout, parserBackend: value } });
@@ -163,17 +190,16 @@ export function LayoutPane({
 						<SelectTrigger
 							id="layout-parser-backend"
 							size="sm"
-							className="min-w-[200px] max-w-[280px]"
+							className={cn(
+								"min-w-[200px] max-w-[280px]",
+								parserBackendOptions.length <= 1 &&
+									"disabled:cursor-default disabled:opacity-100",
+							)}
 						>
 							<SelectValue />
 						</SelectTrigger>
 						<SelectContent className="max-h-72">
-							{PARSER_BACKENDS.filter(
-								(backend) =>
-									backend === "local" ||
-									backend === layout.parserBackend ||
-									isProviderConfigured(backend),
-							).map((backend) => (
+							{parserBackendOptions.map((backend) => (
 								<SelectItem key={backend} value={backend}>
 									{t(
 										`layout.parserBackend.${backend}` as "layout.parserBackend.local",
@@ -218,6 +244,7 @@ function ProviderConfigCard({
 	const stored = layout.providerConfigs[provider.id] ?? EMPTY_PROVIDER_CONFIG;
 	const [draft, setDraft] = useState<Partial<LayoutProviderConfig>>({});
 	const [status, setStatus] = useState<ProbeStatus>("idle");
+	const [advancedOpen, setAdvancedOpen] = useState(false);
 	const probeAbortRef = useRef<AbortController | null>(null);
 
 	const modelPresets = PROVIDER_MODEL_PRESETS[provider.id] ?? [];
@@ -235,6 +262,11 @@ function ProviderConfigCard({
 		draft.model !== undefined ? draft.model : stored.model || defaultModel;
 	const displayPrompt =
 		draft.prompt !== undefined ? draft.prompt : stored.prompt;
+	const displayLanguage =
+		draft.language !== undefined
+			? draft.language
+			: stored.language || DEFAULT_MINERU_LANGUAGE;
+	const displayIsOcr = draft.isOcr !== undefined ? draft.isOcr : stored.isOcr;
 	const configured = displayApiKey.trim().length > 0;
 
 	const runProbe = useCallback(
@@ -256,34 +288,71 @@ function ProviderConfigCard({
 		[provider.id],
 	);
 
-	/** Confirm: persist drafts (key kept secret by Host), mask UI, then probe. */
-	const confirmProvider = useCallback(async () => {
-		const apiKey = displayApiKey.trim();
-		if (!apiKey) {
-			setStatus("idle");
-			return;
-		}
-		const baseUrl = provider.supportsBaseUrl ? displayBaseUrl.trim() : "";
-		const model = provider.supportsModel ? displayModel.trim() : "";
-		const prompt = provider.supportsPrompt ? displayPrompt.trim() : "";
-		const { displayLayout } = await persistLayoutProviderConfig({
+	/**
+	 * Persist the current card fields. Empty apiKey clears the stored secret,
+	 * falls backends back to local when needed, and drops the provider from the
+	 * selects — clearing the input triggers this immediately (no Confirm).
+	 */
+	const persistConfig = useCallback(
+		async (apiKey: string) => {
+			const baseUrl = provider.supportsBaseUrl ? displayBaseUrl.trim() : "";
+			const model = provider.supportsModel ? displayModel.trim() : "";
+			const prompt = provider.supportsPrompt ? displayPrompt.trim() : "";
+			const language = provider.supportsLanguage ? displayLanguage : "";
+			const isOcr = provider.supportsOcr ? displayIsOcr : false;
+			const config = { apiKey, baseUrl, model, prompt, language, isOcr };
+
+			if (!apiKey) {
+				// Optimistic UI: hide from backend selects before Host round-trip.
+				const cleared = layoutBackendsAfterClearingProvider(
+					layout,
+					provider.id,
+				);
+				patch({
+					layout: {
+						...layout,
+						...cleared,
+						providerConfigs: {
+							...layout.providerConfigs,
+							[provider.id]: { ...stored, ...config },
+						},
+					},
+				});
+				setDraft({});
+				setStatus("idle");
+			}
+
+			const { displayLayout } = await persistLayoutProviderConfig({
+				settings,
+				provider: provider.id,
+				config,
+			});
+			patch({ layout: displayLayout });
+			setDraft({});
+			if (!apiKey) {
+				setStatus("idle");
+				return;
+			}
+			runProbe(apiKey);
+		},
+		[
+			displayBaseUrl,
+			displayModel,
+			displayPrompt,
+			displayLanguage,
+			displayIsOcr,
+			layout,
+			patch,
+			provider,
+			runProbe,
 			settings,
-			provider: provider.id,
-			config: { apiKey, baseUrl, model, prompt },
-		});
-		patch({ layout: displayLayout });
-		setDraft({});
-		runProbe(apiKey);
-	}, [
-		displayApiKey,
-		displayBaseUrl,
-		displayModel,
-		displayPrompt,
-		patch,
-		provider,
-		runProbe,
-		settings,
-	]);
+			stored,
+		],
+	);
+
+	const confirmProvider = useCallback(() => {
+		void persistConfig(displayApiKey.trim());
+	}, [displayApiKey, persistConfig]);
 
 	useEffect(() => {
 		return () => {
@@ -366,9 +435,26 @@ function ProviderConfigCard({
 							className="h-8 min-w-0 flex-1 font-mono text-xs placeholder:text-muted-foreground/50"
 							spellCheck={false}
 							autoComplete="off"
-							onChange={(e) =>
-								setDraft((prev) => ({ ...prev, apiKey: e.target.value }))
-							}
+							onChange={(e) => {
+								const next = e.target.value;
+								if (!next.trim()) {
+									setDraft((prev) => ({ ...prev, apiKey: "" }));
+									// Clear immediately — do not wait for Confirm.
+									if (
+										stored.apiKey.trim() ||
+										(isLayoutBackend(provider.id) &&
+											layout.backend === provider.id) ||
+										(isParserBackend(provider.id) &&
+											layout.parserBackend === provider.id)
+									) {
+										void persistConfig("");
+									} else {
+										setStatus("idle");
+									}
+									return;
+								}
+								setDraft((prev) => ({ ...prev, apiKey: next }));
+							}}
 							onFocus={(e) => e.target.select()}
 						/>
 					</div>
@@ -444,6 +530,87 @@ function ProviderConfigCard({
 							}
 						/>
 					</div>
+				) : null}
+				{provider.supportsLanguage || provider.supportsOcr ? (
+					<Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+						<CollapsibleTrigger asChild>
+							<button
+								type="button"
+								className="flex items-center gap-1 text-muted-foreground text-xs outline-none transition-colors hover:text-foreground"
+								aria-label={t("layout.providerConfig.advanced")}
+							>
+								<ChevronRight
+									className={cn(
+										"size-3.5 transition-transform",
+										advancedOpen && "rotate-90",
+									)}
+								/>
+								{t("layout.providerConfig.advanced")}
+							</button>
+						</CollapsibleTrigger>
+						<CollapsibleContent className="space-y-2 pt-2">
+							{provider.supportsLanguage ? (
+								<div className="flex items-center gap-2">
+									<Label
+										htmlFor={`layout-provider-${provider.id}-language`}
+										className="w-20 shrink-0 font-normal text-muted-foreground text-xs"
+									>
+										<HelpLabel
+											label={t("layout.providerConfig.language.label")}
+											help={t("layout.providerConfig.language.help")}
+										/>
+									</Label>
+									<Select
+										value={displayLanguage}
+										onValueChange={(value) =>
+											setDraft((prev) => ({ ...prev, language: value }))
+										}
+									>
+										<SelectTrigger
+											id={`layout-provider-${provider.id}-language`}
+											size="sm"
+											className="h-8 min-w-32 max-w-44 text-xs"
+										>
+											<SelectValue />
+										</SelectTrigger>
+										<SelectContent className="max-h-72">
+											{MINERU_LANGUAGES.map((language) => (
+												<SelectItem key={language} value={language}>
+													{t(
+														`layout.providerConfig.language.options.${language}` as "layout.providerConfig.language.options.en",
+													)}
+												</SelectItem>
+											))}
+										</SelectContent>
+									</Select>
+								</div>
+							) : null}
+							{provider.supportsOcr ? (
+								<div className="flex items-center gap-2">
+									<Label
+										htmlFor={`layout-provider-${provider.id}-force-ocr`}
+										className="w-20 shrink-0 font-normal text-muted-foreground text-xs"
+									>
+										<HelpLabel
+											label={t("layout.providerConfig.forceOcr.label")}
+											help={t("layout.providerConfig.forceOcr.help")}
+										/>
+									</Label>
+									<Switch
+										id={`layout-provider-${provider.id}-force-ocr`}
+										size="sm"
+										checked={displayIsOcr}
+										onCheckedChange={(checked) =>
+											setDraft((prev) => ({
+												...prev,
+												isOcr: checked === true,
+											}))
+										}
+									/>
+								</div>
+							) : null}
+						</CollapsibleContent>
+					</Collapsible>
 				) : null}
 			</div>
 		</div>

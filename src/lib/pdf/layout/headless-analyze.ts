@@ -26,6 +26,7 @@ import {
 import type { LayoutTaskLike } from "@/lib/pdf/layout/run-analysis";
 import { runDocumentLayoutAnalysis } from "@/lib/pdf/layout/run-analysis";
 import { clearLayoutDocumentResult } from "@/lib/pdf/layout/store";
+import { loadSystemCjkFontFallback } from "@/lib/pdf/system-font-fallback";
 
 function taskToPromise<T>(task: {
 	wait: (ok: (v: T) => void, err: (e: unknown) => void) => void;
@@ -42,6 +43,7 @@ export async function getHeadlessPdfEngine(): Promise<PdfEngine> {
 	if (analysisEngine) return analysisEngine;
 	if (analysisEnginePromise) return analysisEnginePromise;
 	const pending = (async () => {
+		const fontFallback = await loadSystemCjkFontFallback();
 		// Prefer worker engine (same as the app viewer).
 		try {
 			const pdfiumWasmUrl = (await import("@embedpdf/pdfium/pdfium.wasm?url"))
@@ -54,7 +56,7 @@ export async function getHeadlessPdfEngine(): Promise<PdfEngine> {
 				"@embedpdf/engines/pdfium-worker-engine"
 			);
 			const created = createPdfiumEngine(abs, {
-				fontFallback: null,
+				fontFallback,
 			});
 			const engine = (
 				created instanceof Promise ? await created : created
@@ -82,7 +84,7 @@ export async function getHeadlessPdfEngine(): Promise<PdfEngine> {
 				"@embedpdf/engines/pdfium-direct-engine"
 			);
 			const created = createPdfiumEngine(pdfiumWasmUrl, {
-				fontFallback: null,
+				fontFallback,
 			});
 			const engine = (
 				created instanceof Promise ? await created : created

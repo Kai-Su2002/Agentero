@@ -8,7 +8,7 @@
  * textarea, ⌘/Ctrl+Enter or blur saves, Escape cancels. No floating editor.
  */
 
-import { Crop, Link2, Trash2 } from "lucide-react";
+import { Crop, Link2, MessageSquarePlus, Trash2 } from "lucide-react";
 import { memo, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
@@ -42,6 +42,8 @@ const CARD_CHARS_PER_LINE = 15;
 const CARD_BASE_HEIGHT_PX = 54;
 /** View-mode clamp for the note body. */
 const VIEW_COMMENT_LINES = 3;
+/** View-mode clamp for the inline visual-mark conversation preview. */
+const VIEW_CONVERSATION_PREVIEW_LINES = 3;
 /** In-place editor: min rows so an empty new note has room to type. */
 const EDIT_MIN_COMMENT_LINES = 3;
 /** In-place editor: layout estimate cap; textarea scrolls past this. */
@@ -64,6 +66,8 @@ type CommentCardsLayerProps = {
 	onDelete: (comment: PageAnnotationComment) => void;
 	onCopyLink: (comment: PageAnnotationComment) => void;
 	onCopyEmbed: (comment: PageAnnotationComment) => void;
+	/** Add this visual mark's crop to the Agent sidebar composer (#396). */
+	onAddToChat: (comment: PageAnnotationComment) => void;
 	onHover: (comment: PageAnnotationComment) => void;
 	onLeave: () => void;
 };
@@ -84,7 +88,7 @@ function clampedLines(text: string, max: number): number {
 	return Math.max(1, lines);
 }
 
-/** Conservative card height estimate from clamped comment lines. */
+/** Conservative card height estimate from clamped comment + conversation lines. */
 export function estimateCommentCardHeight(
 	item: PageAnnotationComment,
 	editing = false,
@@ -95,7 +99,21 @@ export function estimateCommentCardHeight(
 				clampedLines(item.comment, EDIT_MAX_COMMENT_LINES),
 			)
 		: clampedLines(item.comment, VIEW_COMMENT_LINES);
-	return CARD_BASE_HEIGHT_PX + commentLines * CARD_LINE_HEIGHT_PX;
+	const conversationPreviewLines =
+		!editing && item.messages && item.messages.length > 0
+			? Math.min(
+					VIEW_CONVERSATION_PREVIEW_LINES,
+					item.messages.reduce(
+						(sum, m) => sum + clampedLines(m.content, VIEW_COMMENT_LINES),
+						0,
+					),
+				)
+			: 0;
+	return (
+		CARD_BASE_HEIGHT_PX +
+		commentLines * CARD_LINE_HEIGHT_PX +
+		conversationPreviewLines * CARD_LINE_HEIGHT_PX
+	);
 }
 
 /**
@@ -156,6 +174,7 @@ type CommentCardProps = {
 	onDelete: (comment: PageAnnotationComment) => void;
 	onCopyLink: (comment: PageAnnotationComment) => void;
 	onCopyEmbed: (comment: PageAnnotationComment) => void;
+	onAddToChat: (comment: PageAnnotationComment) => void;
 	onHover: (comment: PageAnnotationComment) => void;
 	onLeave: () => void;
 };
@@ -173,6 +192,7 @@ const CommentCard = memo(function CommentCard({
 	onDelete,
 	onCopyLink,
 	onCopyEmbed,
+	onAddToChat,
 	onHover,
 	onLeave,
 }: CommentCardProps) {
@@ -226,7 +246,7 @@ const CommentCard = memo(function CommentCard({
 	return (
 		<div
 			className={cn(
-				"group pointer-events-auto absolute select-none rounded-lg bg-background/95 shadow-sm ring-1 backdrop-blur-sm transition-all duration-200 ease-out hover:z-[7] hover:scale-[1.02] hover:shadow-md",
+				"group pointer-events-auto absolute select-none rounded-lg bg-background/95 shadow-sm ring-1 backdrop-blur-sm transition-all duration-200 ease-out hover:z-[7] hover:scale-[1.02] hover:shadow-md hover:!h-auto",
 				editing
 					? "z-[6] ring-2 ring-ring/50"
 					: hovered
@@ -247,7 +267,9 @@ const CommentCard = memo(function CommentCard({
 			<div
 				className={cn(
 					"h-full rounded-[inherit] px-2.5 py-2",
-					editing ? "overflow-visible" : "overflow-hidden",
+					editing
+						? "overflow-visible"
+						: "overflow-hidden group-hover:overflow-visible",
 				)}
 				onPointerDown={(e) => e.stopPropagation()}
 				onBlur={
@@ -344,6 +366,25 @@ const CommentCard = memo(function CommentCard({
 						>
 							{item.comment.trim() || t("annotations.placeholder")}
 						</p>
+						{item.messages && item.messages.length > 0 ? (
+							<div className="mt-1.5 border-t border-border/40 pt-1.5">
+								<div className="line-clamp-3 space-y-1 group-hover:line-clamp-none">
+									{item.messages.map((m) => (
+										<p
+											key={m.id}
+											className={cn(
+												"whitespace-pre-wrap break-words text-[11px] leading-relaxed",
+												m.role === "assistant"
+													? "text-muted-foreground"
+													: "text-foreground/80",
+											)}
+										>
+											{m.content}
+										</p>
+									))}
+								</div>
+							</div>
+						) : null}
 					</div>
 				)}
 				<div
@@ -396,6 +437,28 @@ const CommentCard = memo(function CommentCard({
 							</Tooltip>
 						</>
 					) : null}
+					{item.kind === "visual" ? (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-xs"
+									className="size-6 text-muted-foreground hover:text-foreground"
+									aria-label={t("pdfExplain.addToSidebarChat")}
+									onClick={(e) => {
+										e.stopPropagation();
+										onAddToChat(item);
+									}}
+								>
+									<MessageSquarePlus className="size-3.5" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent>
+								{t("pdfExplain.addToSidebarChat")}
+							</TooltipContent>
+						</Tooltip>
+					) : null}
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<Button
@@ -433,6 +496,7 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 	onDelete,
 	onCopyLink,
 	onCopyEmbed,
+	onAddToChat,
 	onHover,
 	onLeave,
 }: CommentCardsLayerProps) {
@@ -462,6 +526,7 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 							onDelete={onDelete}
 							onCopyLink={onCopyLink}
 							onCopyEmbed={onCopyEmbed}
+							onAddToChat={onAddToChat}
 							onHover={onHover}
 							onLeave={onLeave}
 						/>

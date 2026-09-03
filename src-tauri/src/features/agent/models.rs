@@ -17,7 +17,7 @@ pub enum AgentTemplate {
     /// Qoder CLI native ACP (`qodercli --acp`).
     /// Docs: https://docs.qoder.com/en/cli/acp
     QoderCli,
-    /// Grok Build ACP (`npx @xai-official/grok@0.2.100 agent stdio`).
+    /// Grok Build native ACP (`grok agent stdio`).
     /// Docs: https://zed.dev/acp/agent/grok-build
     GrokBuild,
     /// Pi coding agent via the community `pi-acp` adapter (pi has no native ACP).
@@ -50,6 +50,18 @@ impl AgentTemplate {
             Self::Custom => "custom",
         }
     }
+
+    /// Templates that launch through a community ACP adapter (rather than a
+    /// native ACP mode) may ignore the `NewSessionRequest` cwd and fall back to
+    /// the process cwd. For these agents we wrap the local spawn in a shell
+    /// `cd` so the OS-level working directory matches the vault.
+    ///
+    /// Custom agents are also wrapped: users commonly specify a relative script
+    /// path in `args`, and the shell `cd` guarantees it resolves against the
+    /// configured working directory instead of an unspecified process cwd.
+    pub fn needs_local_cwd_shell_wrap(&self) -> bool {
+        matches!(self, Self::Pi | Self::Custom)
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,6 +88,15 @@ pub struct AgentDescriptor {
     pub last_probe_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_probed_at: Option<String>,
+}
+
+/// Anonymous, telemetry-safe summary of registered agents: kebab-case
+/// template ids for catalog agents and a bare count for custom ones. Never
+/// carries agent names, commands, args, or env.
+#[derive(Debug, Clone, Default)]
+pub struct AgentTelemetrySummary {
+    pub templates: Vec<String>,
+    pub custom_count: usize,
 }
 
 pub const DEFAULT_AGENT_PROXY_URL: &str = "http://127.0.0.1:7890";

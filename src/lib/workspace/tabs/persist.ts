@@ -3,6 +3,7 @@ import {
 	removeStorageKey,
 	writeJsonStorage,
 } from "@/lib/core/storage";
+import { isRemoteArxivPath } from "@/lib/paper";
 import { tabIdForPath } from "@/lib/workspace/tabs/model";
 import type {
 	DocTab,
@@ -26,12 +27,12 @@ function isCenterViewMode(v: unknown): v is CenterViewMode {
 }
 
 export function panelPersistParams(tab: DocTab): PanelPersistParams {
-	return { panelId: tab.id, path: tab.path, mode: tab.mode };
+	return { panelId: tab.id, path: tab.path, mode: tab.mode, title: tab.title };
 }
 
 type LayoutPanelState = {
 	id?: string;
-	params?: { panelId?: string; path?: string; mode?: string };
+	params?: { panelId?: string; path?: string; mode?: string; title?: string };
 };
 
 type LayoutLeafData = {
@@ -94,6 +95,7 @@ export function extractTabsFromLayout(layout: unknown): {
 			typeof panel.params?.path === "string" && panel.params.path
 				? panel.params.path
 				: id;
+		if (isRemoteArxivPath(path)) continue;
 		const mode = isCenterViewMode(panel.params?.mode)
 			? panel.params.mode
 			: "markdown";
@@ -101,9 +103,13 @@ export function extractTabsFromLayout(layout: unknown): {
 			typeof panel.params?.panelId === "string" && panel.params.panelId
 				? panel.params.panelId
 				: id;
+		const title =
+			typeof panel.params?.title === "string" && panel.params.title.trim()
+				? panel.params.title
+				: undefined;
 		if (seen.has(panelId)) continue;
 		seen.add(panelId);
-		tabs.push({ id: panelId, path, mode });
+		tabs.push({ id: panelId, path, mode, title });
 	}
 	const activeId = findActivePanelIdInLayout(l);
 	return {
@@ -145,6 +151,7 @@ export function loadPersistedTabs(): PersistedTabs | null {
 	const seen = new Set<string>();
 	for (const pt of parsed.tabs) {
 		if (!pt || typeof pt.path !== "string" || !pt.path) continue;
+		if (isRemoteArxivPath(pt.path)) continue;
 		const id = tabIdForPath(pt.path);
 		if (seen.has(id)) continue;
 		seen.add(id);

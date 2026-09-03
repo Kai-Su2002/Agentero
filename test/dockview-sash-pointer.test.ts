@@ -146,7 +146,13 @@ describe("Dockview sash pointer scheduling", () => {
 		});
 		ownerDocument.defaultView = ownerWindow;
 
-		const sash = {} as Element;
+		const sashClasses = new Set<string>();
+		const sash = {
+			classList: {
+				add: (name: string) => sashClasses.add(name),
+				remove: (name: string) => sashClasses.delete(name),
+			},
+		} as unknown as Element;
 		const classes = new Set<string>();
 		const root = Object.assign(new EventTarget(), {
 			ownerDocument,
@@ -183,6 +189,7 @@ describe("Dockview sash pointer scheduling", () => {
 		});
 		root.dispatchEvent(pointerDown);
 		expect(classes.has("agentero-dock-sash-active")).toBe(true);
+		expect(sashClasses.has("agentero-dock-sash-dragging")).toBe(true);
 		expect(pointerDown.defaultPrevented).toBe(true);
 
 		for (const clientX of [20, 30, 40]) {
@@ -207,6 +214,7 @@ describe("Dockview sash pointer scheduling", () => {
 		);
 		expect(dockviewMoves).toEqual([40, 50]);
 		expect(classes.has("agentero-dock-sash-active")).toBe(false);
+		expect(sashClasses.has("agentero-dock-sash-dragging")).toBe(false);
 		expect(dockviewEnds).toBe(1);
 
 		root.dispatchEvent(
@@ -217,6 +225,7 @@ describe("Dockview sash pointer scheduling", () => {
 		);
 		ownerWindow.dispatchEvent(new Event("blur"));
 		expect(classes.has("agentero-dock-sash-active")).toBe(false);
+		expect(sashClasses.has("agentero-dock-sash-dragging")).toBe(false);
 		expect(dockviewEnds).toBe(2);
 
 		dispose();

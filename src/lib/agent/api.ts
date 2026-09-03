@@ -4,6 +4,14 @@ import i18n from "@/i18n";
 import { invokeApi } from "@/lib/core/ipc";
 import { readJsonStorage, writeJsonStorage } from "@/lib/core/storage";
 import { loadSettings } from "@/lib/settings";
+import type { CatalogAcpStatus, CatalogEntry, ProbeResult } from "./api-types";
+
+export type {
+	AcpSessionCapabilities,
+	CatalogAcpStatus,
+	CatalogEntry,
+	ProbeResult,
+} from "./api-types";
 
 export type AgentTemplate =
 	| "opencode"
@@ -18,8 +26,6 @@ export type AgentTemplate =
 	| "dsh"
 	| "kimi-code"
 	| "custom";
-
-export type CatalogAcpStatus = "missing" | "not-probed" | "ready" | "failed";
 
 export type AgentDescriptor = {
 	id: string;
@@ -42,34 +48,6 @@ export type AgentListResponse = {
 	enabled: boolean;
 };
 
-export type CatalogEntry = {
-	templateId: string;
-	name: string;
-	description: string;
-	command: string;
-	args: string[];
-	installHint: string;
-	/** Shell command for guided install (e.g. Claude ACP adapter via npm). */
-	installCommand?: string | null;
-	/** Host CLI present but ACP entrypoint missing — offer ACP install. */
-	offerInstall?: boolean;
-	/** Local silent install via `runToolLifecycle` is supported. */
-	canInstall?: boolean;
-	/** Host detect binary differs from ACP entrypoint (Claude/Codex adapters). */
-	adapterDistinct?: boolean;
-	/** Agent host CLI on PATH (`detect_command`). */
-	binaryAvailable: boolean;
-	resolvedPath?: string | null;
-	/** ACP entrypoint on PATH (`command`). */
-	acpCommandAvailable: boolean;
-	acpStatus: CatalogAcpStatus;
-	registeredId?: string | null;
-	isDefault: boolean;
-	acpAgentName?: string | null;
-	lastProbeError?: string | null;
-	lastProbedAt?: string | null;
-};
-
 export type CatalogScanResponse = {
 	entries: CatalogEntry[];
 	customAgents: AgentDescriptor[];
@@ -83,22 +61,6 @@ export type CatalogScanResponse = {
 	userAgentProviderIds?: string;
 };
 
-export type AcpSessionCapabilities = {
-	list: boolean;
-	resume: boolean;
-	load: boolean;
-	delete: boolean;
-};
-
-export type ProbeResult = {
-	agentId: string;
-	available: boolean;
-	agentName?: string | null;
-	protocolVersion?: string | null;
-	error?: string | null;
-	sessionCapabilities?: AcpSessionCapabilities | null;
-};
-
 export type AcpSessionInfo = {
 	sessionId: string;
 	cwd: string;
@@ -110,6 +72,12 @@ export type AcpListSessionsResult = {
 	sessions: AcpSessionInfo[];
 	nextCursor?: string | null;
 	supported: boolean;
+};
+
+export type PromptImage = {
+	/** Raw base64 without data: prefix */
+	data: string;
+	mimeType: string;
 };
 
 export type AcpHistoryToolCall = {
@@ -135,6 +103,18 @@ export type AcpHistoryLine = {
 	/** Ordered parts for agent lines (reasoning/text/tool/plan). */
 	parts?: AcpHistoryPart[];
 	sources?: string[];
+	/** Visual PDF annotations attached to a user turn. */
+	visualAnnotations?: {
+		id: string;
+		/** 1-based PDF page number. */
+		page: number;
+		comment: string;
+		image: PromptImage;
+		/** Vault-relative paper path when known. */
+		paperPath?: string;
+	}[];
+	/** Multimodal images attached to a user turn. */
+	images?: PromptImage[];
 };
 
 export type AcpLoadSessionResult = {
@@ -468,12 +448,6 @@ export async function toolUninstallInfo(
 ): Promise<UninstallInfo | null> {
 	return invokeAgentApi("agent_tool_uninstall_info", { templateId });
 }
-
-export type PromptImage = {
-	/** Raw base64 without data: prefix */
-	data: string;
-	mimeType: string;
-};
 
 export async function runOnce(request: {
 	agentId?: string;

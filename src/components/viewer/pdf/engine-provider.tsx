@@ -9,6 +9,7 @@ import {
 } from "react";
 import { errorText } from "@/lib/core/error";
 import { logger } from "@/lib/core/logger";
+import { loadSystemCjkFontFallback } from "@/lib/pdf/system-font-fallback";
 
 type PdfEngineContextValue = {
 	engine: PdfEngine | null;
@@ -68,18 +69,22 @@ function waitEngineReady(engine: ProbedPdfEngine): Promise<void> {
 	return ready.toPromise().then(() => undefined);
 }
 
-async function createWorkerPdfEngine(): Promise<ProbedPdfEngine> {
+async function createWorkerPdfEngine(
+	fontFallback: Awaited<ReturnType<typeof loadSystemCjkFontFallback>>,
+): Promise<ProbedPdfEngine> {
 	const { createPdfiumEngine } = await import(
 		"@embedpdf/engines/pdfium-worker-engine"
 	);
-	return createPdfiumEngine(absoluteWasmUrl(), { fontFallback: null });
+	return createPdfiumEngine(absoluteWasmUrl(), { fontFallback });
 }
 
-async function createDirectPdfEngine(): Promise<ProbedPdfEngine> {
+async function createDirectPdfEngine(
+	fontFallback: Awaited<ReturnType<typeof loadSystemCjkFontFallback>>,
+): Promise<ProbedPdfEngine> {
 	const { createPdfiumEngine } = await import(
 		"@embedpdf/engines/pdfium-direct-engine"
 	);
-	return createPdfiumEngine(pdfiumWasmUrl, { fontFallback: null });
+	return createPdfiumEngine(pdfiumWasmUrl, { fontFallback });
 }
 
 /**
@@ -87,14 +92,15 @@ async function createDirectPdfEngine(): Promise<ProbedPdfEngine> {
  * off the main thread → smooth zoom/scroll); verifies it with a readiness
  * handshake + timeout and falls back to the main-thread engine when the
  * worker cannot boot in this webview. The wasm binary is bundled as a local
- * asset (offline-first Tauri); font fallback is disabled so no external font
- * requests are made.
+ * asset (offline-first Tauri). Missing CJK fonts are supplied from a local
+ * system-font blob, so no external font requests are made.
  */
 async function initPdfEngine(): Promise<ProbedPdfEngine> {
+	const fontFallback = await loadSystemCjkFontFallback();
 	if (workerEngineUsable !== false) {
 		let probe: ProbedPdfEngine | null = null;
 		try {
-			probe = await createWorkerPdfEngine();
+			probe = await createWorkerPdfEngine(fontFallback);
 			await Promise.race([
 				waitEngineReady(probe),
 				new Promise<never>((_, reject) => {
@@ -120,7 +126,7 @@ async function initPdfEngine(): Promise<ProbedPdfEngine> {
 			);
 		}
 	}
-	return createDirectPdfEngine();
+	return createDirectPdfEngine(fontFallback);
 }
 
 function useAgenteroPdfEngine(): PdfEngineContextValue {

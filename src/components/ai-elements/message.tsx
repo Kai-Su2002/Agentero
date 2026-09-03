@@ -55,7 +55,7 @@ export const MessageContent = ({
 }: MessageContentProps) => (
 	<div
 		className={cn(
-			"flex w-fit min-w-0 max-w-full flex-col gap-2 overflow-hidden text-sm",
+			"flex w-fit min-w-0 max-w-full select-text flex-col gap-2 overflow-hidden text-sm",
 			"group-[.is-user]:ml-auto group-[.is-user]:rounded-lg group-[.is-user]:bg-black/5 group-[.is-user]:px-4 group-[.is-user]:py-3 group-[.is-user]:text-foreground dark:group-[.is-user]:bg-white/10",
 			"group-[.is-assistant]:text-foreground",
 			className,
@@ -350,7 +350,7 @@ export const MessageResponse = memo(
 				className={cn(
 					// Keep the renderer's height content-driven. `size-full` sets
 					// height: 100%, which can clip later blocks in auto-sized embeds.
-					"w-full min-w-0 [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+					"w-full min-w-0 select-text [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
 					className,
 				)}
 				components={{ a: ExternalLink }}

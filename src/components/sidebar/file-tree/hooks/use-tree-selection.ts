@@ -37,7 +37,6 @@ export function useTreeSelection({
 	onSelectFile,
 	onSelectLibrary,
 	onSelectTrash,
-	onSelectPlaza,
 	onSelectPlazaSource,
 	onTogglePath,
 	onDeletePath,
@@ -54,7 +53,6 @@ export function useTreeSelection({
 	onSelectFile: (node: FileNode) => void;
 	onSelectLibrary?: () => void;
 	onSelectTrash?: () => void;
-	onSelectPlaza?: () => void;
 	onSelectPlazaSource?: (source: PlazaSource) => void;
 	onTogglePath?: (path: string) => void;
 	onDeletePath?: (path: string) => void | Promise<void>;
@@ -88,13 +86,11 @@ export function useTreeSelection({
 				return;
 			}
 			// Plaza paths are virtual: they have no FileNode to fall through to.
+			// The root node is a plain folder — it only expands/collapses.
 			if (isPlazaVirtualPath(path)) {
 				const source = plazaSourceForPath(path);
 				if (source) onSelectPlazaSource?.(source);
-				else {
-					onTogglePath?.(path);
-					onSelectPlaza?.();
-				}
+				else onTogglePath?.(path);
 				return;
 			}
 			const node = byPath.get(path);
@@ -108,7 +104,6 @@ export function useTreeSelection({
 			onSelectFile,
 			onSelectLibrary,
 			onSelectTrash,
-			onSelectPlaza,
 			onSelectPlazaSource,
 			onTogglePath,
 		],

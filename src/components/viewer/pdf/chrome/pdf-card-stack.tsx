@@ -7,14 +7,12 @@ import {
 import { PdfCrossrefPreview } from "@/components/viewer/pdf/cards/crossref-preview";
 import { SelectionMenu } from "@/components/viewer/pdf/cards/selection-menu";
 import { TranslateCard } from "@/components/viewer/pdf/cards/translate-card";
-import { VisualAnnotationEditor } from "@/components/viewer/pdf/cards/visual-annotation-editor";
 import { VisualTraceCard } from "@/components/viewer/pdf/cards/visual-trace-card";
 import type {
 	CardScreenPoint,
 	CitationPreviewState,
 	CrossrefPreviewState,
 	SelectionMenuState,
-	VisualDraftEditorState,
 } from "@/components/viewer/pdf/types";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import type { PdfAskThread } from "@/lib/pdf/ask";
@@ -31,15 +29,8 @@ type PdfCardStackProps = {
 		onAddToChat: () => void;
 		onTranslate: () => void;
 		onClose: () => void;
-	};
-	visualDraft: {
-		state: VisualDraftEditorState | null;
-		onSave: (comment: string) => void;
-		onAddToChat: (comment: string) => void;
-		onSendNow: (comment: string) => void;
-		/** Discard the pending crop. */
-		onDelete: () => void;
-		onClose: () => void;
+		/** Hide highlight / note / translate; keep Copy / Ask / Add-to-chat. */
+		readOnly?: boolean;
 	};
 	citationPreview: {
 		state: CitationPreviewState | null;
@@ -52,9 +43,9 @@ type PdfCardStackProps = {
 		onHoverEnter: () => void;
 		onHoverLeave: () => void;
 	};
-	/** Shared anchor of the pin-attached cards (ask / visual trace / translate). */
+	/** Shared anchor of the pin-attached cards (ask / translate). */
 	cardScreen: CardScreenPoint | null;
-	/** Shared hover-hide contract of the pin-attached cards and the editor. */
+	/** Shared hover-hide contract of the pin-attached cards. */
 	onCardHoverEnter: () => void;
 	onCardHoverLeave: () => void;
 	ask: {
@@ -71,23 +62,16 @@ type PdfCardStackProps = {
 		onDelete: () => void;
 		onStop: () => void;
 	};
-	visualTrace: {
-		trace: PdfVisualSessionTrace | null;
-		error: string | null;
-		initialExpanded: boolean;
-		onOpenSession: () => void;
-		onAddToChat: () => void;
-		onSaveComment: (comment: string) => void;
-		onSend: (question: string) => void;
-		onDelete: () => void;
-		onHide: () => void;
-		onStop: () => void;
-	};
 	translate: {
 		record: PdfTranslateRecord | null;
 		streaming: boolean;
 		error: string | null;
 		onOpenSettings: () => void;
+		onHide: () => void;
+		onDelete: () => void;
+	};
+	visual: {
+		trace: PdfVisualSessionTrace | null;
 		onHide: () => void;
 		onDelete: () => void;
 	};
@@ -99,15 +83,14 @@ type PdfCardStackProps = {
  */
 export function PdfCardStack({
 	selectionMenu,
-	visualDraft,
 	citationPreview,
 	crossrefPreview,
 	cardScreen,
 	onCardHoverEnter,
 	onCardHoverLeave,
 	ask,
-	visualTrace,
 	translate,
+	visual,
 }: PdfCardStackProps) {
 	if (typeof document === "undefined") return null;
 
@@ -123,17 +106,7 @@ export function PdfCardStack({
 					onAddToChat={selectionMenu.onAddToChat}
 					onTranslate={selectionMenu.onTranslate}
 					onClose={selectionMenu.onClose}
-				/>
-			) : null}
-
-			{visualDraft.state ? (
-				<VisualAnnotationEditor
-					screen={visualDraft.state.screen}
-					onSave={visualDraft.onSave}
-					onAddToChat={visualDraft.onAddToChat}
-					onSendNow={visualDraft.onSendNow}
-					onDelete={visualDraft.onDelete}
-					onClose={visualDraft.onClose}
+					readOnly={selectionMenu.readOnly}
 				/>
 			) : null}
 
@@ -177,25 +150,6 @@ export function PdfCardStack({
 				/>
 			) : null}
 
-			{visualTrace.trace && cardScreen ? (
-				<VisualTraceCard
-					trace={visualTrace.trace}
-					screen={cardScreen}
-					preferRight={cardScreen.preferRight ?? true}
-					error={visualTrace.error}
-					initialExpanded={visualTrace.initialExpanded}
-					onOpenSession={visualTrace.onOpenSession}
-					onAddToChat={visualTrace.onAddToChat}
-					onSaveComment={visualTrace.onSaveComment}
-					onSend={visualTrace.onSend}
-					onDelete={visualTrace.onDelete}
-					onHide={visualTrace.onHide}
-					onPointerEnter={onCardHoverEnter}
-					onPointerLeave={onCardHoverLeave}
-					onStop={visualTrace.onStop}
-				/>
-			) : null}
-
 			{translate.record && cardScreen ? (
 				<TranslateCard
 					screen={cardScreen}
@@ -206,6 +160,18 @@ export function PdfCardStack({
 					onOpenSettings={translate.onOpenSettings}
 					onHide={translate.onHide}
 					onDelete={translate.onDelete}
+					onPointerEnter={onCardHoverEnter}
+					onPointerLeave={onCardHoverLeave}
+				/>
+			) : null}
+
+			{visual.trace && cardScreen ? (
+				<VisualTraceCard
+					trace={visual.trace}
+					screen={cardScreen}
+					preferRight={cardScreen.preferRight ?? true}
+					onHide={visual.onHide}
+					onDelete={visual.onDelete}
 					onPointerEnter={onCardHoverEnter}
 					onPointerLeave={onCardHoverLeave}
 				/>

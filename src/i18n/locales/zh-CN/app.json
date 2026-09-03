@@ -2,7 +2,8 @@
 	"labels": {
 		"agent": "Agent",
 		"notes": "笔记",
-		"untitled": "未命名"
+		"untitled": "未命名",
+		"remoteArxiv": "远程 arXiv"
 	},
 	"commandPalette": {
 		"title": "快速打开",
@@ -59,6 +60,11 @@
 		"hideRightSidebar": "隐藏右侧边栏",
 		"showRightSidebarHint": "显示右侧边栏 ({{shortcut}})",
 		"hideRightSidebarHint": "隐藏右侧边栏 ({{shortcut}})",
+		"layout": "布局",
+		"layoutModes": "窗口布局",
+		"layoutAgent": "Agent",
+		"layoutNotes": "笔记",
+		"layoutReading": "阅读",
 		"settings": "设置",
 		"settingsHint": "设置 ({{shortcut}})",
 		"menuSettings": "设置…",
@@ -126,7 +132,8 @@
 		"openVaultForCreate": "请先打开知识库，再创建双链目标。",
 		"wikiLinkAmbiguous": "双链目标不明确：{{target}}。请选择更具体的路径。",
 		"wikiLinkInvalidFragment": "目标文件存在，但标题或块引用不可用：{{target}}。",
-		"dropPdfNeedsVault": "请先打开知识库，再拖入 PDF 导入。"
+		"dropPdfNeedsVault": "请先打开知识库，再拖入 PDF 导入。",
+		"remotePaperUnavailable": "该远程论文预览已不再可用。"
 	},
 	"vault": {
 		"openDesktopOnly": "打开知识库仅在 Tauri 应用中可用。",
@@ -242,6 +249,7 @@
 		"lookupFetching": "正在拉取元数据与资源… · {{id}}",
 		"libraryImport": "导入文献库",
 		"importPdf": "导入 PDF",
+		"recognizeMeta": "识别论文元数据",
 		"libraryExport": "导出文献库",
 		"citingScan": "发现引用我的新论文",
 		"citingScanPhaseMeta": "正在读取论文库元数据…",

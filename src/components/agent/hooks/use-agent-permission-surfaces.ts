@@ -1,8 +1,12 @@
 /**
  * Interactive ACP surfaces: permission requests (ask mode), Codex
  * request_user_input elicitation, Grok ask_user_question, and the
- * tool-shaped ask promoted by the runtime. Each registers in the overlay
- * stack so Esc dismisses (and cancels) the topmost one.
+ * tool-shaped ask promoted by the runtime.
+ *
+ * The permission dialog is modal and blocks global shortcuts. The docked
+ * ask-user forms register on the overlay stack as non-modal so Esc can still
+ * dismiss them via {@link closeTopOverlay}, but they do not steal shortcut
+ * focus from the rest of the app.
  */
 import { type Dispatch, type SetStateAction, useRef, useState } from "react";
 import { useOverlayRegistration } from "@/hooks/use-overlay-registration";
@@ -48,12 +52,17 @@ export function useAgentPermissionSurfaces({
 
 	const permissionRequestRef = useRef(permissionRequest);
 	permissionRequestRef.current = permissionRequest;
-	useOverlayRegistration("agent-permission", permissionRequest !== null, () => {
-		const req = permissionRequestRef.current;
-		if (!req) return;
-		void respondPermission(req.requestId, null);
-		setPermissionRequest(null);
-	});
+	useOverlayRegistration(
+		"agent-permission",
+		permissionRequest !== null,
+		() => {
+			const req = permissionRequestRef.current;
+			if (!req) return;
+			void respondPermission(req.requestId, null);
+			setPermissionRequest(null);
+		},
+		{ modal: false },
+	);
 
 	const elicitationRequestRef = useRef(elicitationRequest);
 	elicitationRequestRef.current = elicitationRequest;
@@ -69,19 +78,25 @@ export function useAgentPermissionSurfaces({
 			});
 			setElicitationRequest(null);
 		},
+		{ modal: false },
 	);
 
 	const askUserRequestRef = useRef(askUserRequest);
 	askUserRequestRef.current = askUserRequest;
-	useOverlayRegistration("agent-ask-user", askUserRequest !== null, () => {
-		const req = askUserRequestRef.current;
-		if (!req) return;
-		void respondAskUser({
-			requestId: req.requestId,
-			action: "cancel",
-		});
-		setAskUserRequest(null);
-	});
+	useOverlayRegistration(
+		"agent-ask-user",
+		askUserRequest !== null,
+		() => {
+			const req = askUserRequestRef.current;
+			if (!req) return;
+			void respondAskUser({
+				requestId: req.requestId,
+				action: "cancel",
+			});
+			setAskUserRequest(null);
+		},
+		{ modal: false },
+	);
 
 	const toolAskUserRequestRef = useRef(toolAskUserRequest);
 	toolAskUserRequestRef.current = toolAskUserRequest;
@@ -91,6 +106,7 @@ export function useAgentPermissionSurfaces({
 		() => {
 			setToolAskUserRequest(null);
 		},
+		{ modal: false },
 	);
 
 	useTauriEvent<PermissionRequest>("agent:permission-request", (payload) =>

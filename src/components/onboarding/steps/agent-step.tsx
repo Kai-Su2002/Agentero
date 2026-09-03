@@ -1,4 +1,4 @@
-import { Download, LoaderCircle, Wifi } from "lucide-react";
+import { Download, LoaderCircle, Wifi, X } from "lucide-react";
 import {
 	forwardRef,
 	useCallback,
@@ -76,7 +76,7 @@ function sortEntries(entries: CatalogEntry[]): CatalogEntry[] {
 
 export const AgentStep = forwardRef<AgentStepHandle>(
 	function AgentStep(_props, ref) {
-		const { t } = useTranslation("onboarding");
+		const { t } = useTranslation(["onboarding", "common"]);
 		const [state, setState] = useState<CatalogScanResponse | null>(null);
 		const [scanning, setScanning] = useState(false);
 		const [error, setError] = useState<string | null>(null);
@@ -142,6 +142,7 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 			lifecycleBusyIds,
 			lifecycleProgress,
 			runToolLifecycle: runLifecycle,
+			cancelToolLifecycle,
 		} = useAgentToolLifecycle({
 			scanOnce: runScan,
 			probeInstalled,
@@ -269,7 +270,7 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 											aria-live="polite"
 											className="flex w-full flex-col gap-1"
 										>
-											<div className="grid grid-cols-[minmax(0,1fr)_2rem] items-center gap-1.5">
+											<div className="grid grid-cols-[minmax(0,1fr)_2rem_1rem] items-center gap-1.5">
 												<span className="truncate text-[10px] text-muted-foreground">
 													{rowLifecycle.detail}
 												</span>
@@ -278,6 +279,18 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 														? ""
 														: `${Math.round(rowLifecycle.progress)}%`}
 												</span>
+												<button
+													type="button"
+													aria-label={t("common:cancel")}
+													title={t("common:cancel")}
+													onClick={(e) => {
+														e.stopPropagation();
+														cancelToolLifecycle(entry.templateId);
+													}}
+													className="flex size-4 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+												>
+													<X className="size-3" aria-hidden />
+												</button>
 											</div>
 											<Progress
 												value={rowLifecycle.progress ?? 0}

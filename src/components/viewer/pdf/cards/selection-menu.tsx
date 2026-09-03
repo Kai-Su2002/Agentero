@@ -38,9 +38,12 @@ type SelectionMenuProps = {
 	onTranslate: () => void;
 	/** Dismiss the menu without acting */
 	onClose: () => void;
+	/** Hide highlight / note / translate (need marks/); keep Copy / Ask / Add-to-chat. */
+	readOnly?: boolean;
 };
 
-const BAR_W = 340;
+const BAR_W_NORMAL = 340;
+const BAR_W_READONLY = 160;
 const BAR_H = 40;
 const COPIED_FLASH_MS = 1500;
 
@@ -48,6 +51,8 @@ const COPIED_FLASH_MS = 1500;
  * Floating action bar shown next to a text selection: a row of color swatches
  * (highlight), then Copy / Annotate / Ask / Translate.
  * Copy keeps the bar open and swaps the copy icon for a check briefly.
+ * Remote papers are read-only: they keep Copy, Ask, and Add-to-chat but hide
+ * persistent highlight / note / translate actions.
  */
 export function SelectionMenu({
 	screen,
@@ -58,6 +63,7 @@ export function SelectionMenu({
 	onAddToChat,
 	onTranslate,
 	onClose,
+	readOnly = false,
 }: SelectionMenuProps) {
 	const { t } = useTranslation("viewer");
 	const [copied, setCopied] = useState(false);
@@ -71,9 +77,10 @@ export function SelectionMenu({
 
 	const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
 	const vh = typeof window !== "undefined" ? window.innerHeight : 800;
-	let left = screen.x - BAR_W / 2;
-	left = Math.min(Math.max(12, left), vw - BAR_W - 12);
-	// Prefer just above the selection; flip below if near the top edge
+	const barW = readOnly ? BAR_W_READONLY : BAR_W_NORMAL;
+	let left = screen.x - barW / 2;
+	left = Math.min(Math.max(12, left), vw - barW - 12);
+	// Prefer just above the selection; flip below if near the top edge.
 	let top = screen.y - BAR_H - 10;
 	let overContent = false;
 	if (top < 12) {
@@ -81,6 +88,8 @@ export function SelectionMenu({
 		// Menu sits below the selection and may cover body text.
 		overContent = true;
 	}
+	// Keep the toolbar on-screen even if the anchor page is scrolled out of view.
+	top = Math.max(12, Math.min(vh - BAR_H - 12, top));
 
 	const handleCopy = useCallback(() => {
 		onCopy();
@@ -127,32 +136,36 @@ export function SelectionMenu({
 			onMouseDown={(e) => e.stopPropagation()}
 		>
 			<TooltipProvider delayDuration={200}>
-				{HIGHLIGHT_COLORS.map((c) => (
-					<Tooltip key={c}>
-						<TooltipTrigger asChild>
-							{/*
-							 * 16px dot, 24px hit area (WCAG 2.5.8): the target is padded
-							 * out rather than the dot enlarged.
-							 */}
-							<button
-								type="button"
-								aria-label={colorLabel(c)}
-								className="group inline-flex size-6 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-								onClick={() => onHighlight(c)}
-							>
-								<span
-									className={cn(
-										"size-4 rounded-full ring-1 ring-black/15 transition-transform group-hover:scale-110 dark:ring-white/25",
-										swatchColorClass(c),
-									)}
-									aria-hidden
-								/>
-							</button>
-						</TooltipTrigger>
-						<TooltipContent side="top">{colorLabel(c)}</TooltipContent>
-					</Tooltip>
-				))}
-				<div className="mx-1 h-5 w-px shrink-0 bg-border" />
+				{!readOnly ? (
+					<>
+						{HIGHLIGHT_COLORS.map((c) => (
+							<Tooltip key={c}>
+								<TooltipTrigger asChild>
+									{/*
+									 * 16px dot, 24px hit area (WCAG 2.5.8): the target is padded
+									 * out rather than the dot enlarged.
+									 */}
+									<button
+										type="button"
+										aria-label={colorLabel(c)}
+										className="group inline-flex size-6 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+										onClick={() => onHighlight(c)}
+									>
+										<span
+											className={cn(
+												"size-4 rounded-full ring-1 ring-black/15 transition-transform group-hover:scale-110 dark:ring-white/25",
+												swatchColorClass(c),
+											)}
+											aria-hidden
+										/>
+									</button>
+								</TooltipTrigger>
+								<TooltipContent side="top">{colorLabel(c)}</TooltipContent>
+							</Tooltip>
+						))}
+						<div className="mx-1 h-5 w-px shrink-0 bg-border" />
+					</>
+				) : null}
 				<div className="relative">
 					{copied ? (
 						<span
@@ -186,20 +199,22 @@ export function SelectionMenu({
 						) : null}
 					</Tooltip>
 				</div>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							aria-label={t("selection.note")}
-							onClick={handleNote}
-						>
-							<NotebookPen className="size-4" />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent side="top">{t("selection.note")}</TooltipContent>
-				</Tooltip>
+				{!readOnly ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								aria-label={t("selection.note")}
+								onClick={handleNote}
+							>
+								<NotebookPen className="size-4" />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent side="top">{t("selection.note")}</TooltipContent>
+					</Tooltip>
+				) : null}
 				<Tooltip>
 					<TooltipTrigger asChild>
 						<Button
@@ -228,20 +243,24 @@ export function SelectionMenu({
 					</TooltipTrigger>
 					<TooltipContent side="top">{t("selection.addToChat")}</TooltipContent>
 				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							aria-label={t("selection.translate")}
-							onClick={onTranslate}
-						>
-							<Languages className="size-4" />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent side="top">{t("selection.translate")}</TooltipContent>
-				</Tooltip>
+				{!readOnly ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								aria-label={t("selection.translate")}
+								onClick={onTranslate}
+							>
+								<Languages className="size-4" />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent side="top">
+							{t("selection.translate")}
+						</TooltipContent>
+					</Tooltip>
+				) : null}
 			</TooltipProvider>
 		</div>
 	);

@@ -6,13 +6,13 @@ import { HtmlViewer, ImageViewer } from "@/components/viewer";
 import { RecycleBinView } from "@/components/workspace/recycle-bin-view";
 import { useSettings } from "@/hooks/use-app-stores";
 import type { PaperMetadata } from "@/lib/paper";
+import { isRemoteArxivPath } from "@/lib/paper";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace/types";
 import type { PdfAskThread } from "@/lib/pdf/ask/types";
 import type { PdfHighlight } from "@/lib/pdf/highlight/types";
 import type { LibraryColumnPref } from "@/lib/settings";
 import { isMarkdownPath, paperRelFromNotes } from "@/lib/vault";
 import type { WikiRenameHeadingRequest } from "@/lib/wiki";
-import { openPlazaSource } from "@/lib/workspace/actions";
 import { type DocTab, tabIsPaperNotes } from "@/lib/workspace/tabs";
 
 // Heavyweight viewers are lazy-loaded so the EmbedPDF (PDFium) and Plate
@@ -224,11 +224,7 @@ export const DocView = memo(function DocView({
 		if (!active) return null;
 		return (
 			<Suspense fallback={<TabLoadingSkeleton />}>
-				<PlazaView
-					path={tab.path}
-					onOpenSource={openPlazaSource}
-					className="bg-muted/20"
-				/>
+				<PlazaView path={tab.path} className="bg-muted/20" />
 			</Suspense>
 		);
 	}
@@ -304,7 +300,10 @@ export const DocView = memo(function DocView({
 							tab.paperMeta?.path ?? paperRelFromNotes(tab.notesPath, vaultPath)
 						}
 						vaultPath={vaultPath}
+						paperMeta={tab.paperMeta}
 						isActive={active}
+						isRemotePaper={isRemoteArxivPath(tab.path)}
+						importIdentifier={tab.paperMeta?.source_url ?? undefined}
 						onOpenSettings={pdf.onOpenSettings}
 						className="h-full w-full"
 						onHandle={handlePdfHandle}

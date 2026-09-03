@@ -103,15 +103,15 @@ LayoutAnalysisPluginPackage: {
 
 ### 后端选择（本地 ONNX / 远程 Provider）
 
-设置 →「版面解析」可选择检测后端（`settings.layout.backend`），选项由前端注册表 `LAYOUT_PROVIDERS`（`src/lib/pdf/layout/providers.ts`）驱动：
+设置 →「版面解析」可选择检测后端（`settings.layout.backend`），选项由前端注册表 `LAYOUT_PROVIDERS`（`src/lib/pdf/layout/providers.ts`）驱动；下拉只列出本地 + 已配置（apiKey 非空）的 provider，可选项 ≤1 时保留 Select 外观但 disabled、不弹出菜单（正文解析引擎 `parserBackend` 同理，避免换成纯文本导致布局抖动）。配置卡里清空 API Key 会立即清除已存密钥（无需点确认）；若当前后端指向该 provider 则回退本地：
 
 | 后端 | 值 | 说明 |
 |---|---|---|
 | 本地推理（默认） | `local` | 浏览器内 ONNX PP-DocLayoutV3，完全离线 |
 | Paddle API | `paddle` | AI Studio 托管 PP-StructureV3 **异步任务** API，**整份 PDF 会上传到云端**；端点固定（`supportsBaseUrl: false`） |
-| MinerU（云端 API） | `mineru` | mineru.net 批量解析 API，**整份 PDF 会上传到云端**；支持 Base URL 覆盖（https-only，loopback 例外） |
+| MinerU（云端 API） | `mineru` | mineru.net 批量解析 API，**整份 PDF 会上传到云端**；支持 Base URL 覆盖（https-only，loopback 例外）、语言（默认 `ch` 中英文，可选纯英文）与强制 OCR 选项（`supportsLanguage` / `supportsOcr`） |
 
-每个 provider 描述符带 `kind` / `requiresApiKey` / `supportsBaseUrl` / `sidecarMode`：设置面板与 Onboarding 据此显隐 API Key / Base URL 输入（保存 / 掩码 / 连通性测试逻辑共用 `provider-config.ts`）；`run-analysis.ts` 用 `layoutProviderFor(backend)` + `isRemoteLayoutProvider` 判定走远程分支（`startRemoteLayoutAnalysis`，按 `provider.id` 分发到 Host engine 注册表）。
+每个 provider 描述符带 `kind` / `requiresApiKey` / `supportsBaseUrl` / `sidecarMode`（MinerU 另有 `supportsLanguage` / `supportsOcr`）：设置面板与 Onboarding 据此显隐 API Key / Base URL / 语言 / 强制 OCR 输入（保存 / 掩码 / 连通性测试逻辑共用 `provider-config.ts`）；`run-analysis.ts` 用 `layoutProviderFor(backend)` + `isRemoteLayoutProvider` 判定走远程分支（`startRemoteLayoutAnalysis`，按 `provider.id` 分发到 Host engine 注册表）。
 
 远程 provider 共用流程（`src/lib/pdf/layout/paddle.ts` IPC 封装 + `run-analysis.ts`）：
 

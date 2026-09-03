@@ -65,7 +65,6 @@ import {
 	openPlazaSource,
 	selectFileNode,
 	selectLibrary,
-	selectPlaza,
 	selectTrash,
 } from "@/lib/workspace/actions";
 
@@ -181,7 +180,7 @@ export function VaultSidebar() {
 					onSyncZotero={onSyncZotero}
 				/>
 			</div>
-			<div className="flex min-h-0 flex-1 flex-col px-1">
+			<div className="flex min-h-0 flex-1 flex-col pl-1">
 				<FileTree
 					ref={fileTreeRef}
 					nodes={tree}
@@ -206,7 +205,6 @@ export function VaultSidebar() {
 					onSelectFile={selectFileNode}
 					onSelectLibrary={selectLibrary}
 					onSelectTrash={selectTrash}
-					onSelectPlaza={selectPlaza}
 					onSelectPlazaSource={openPlazaSource}
 					onEmptyTrash={onEmptyTrash}
 					onExportLibrary={onExportLibrary}

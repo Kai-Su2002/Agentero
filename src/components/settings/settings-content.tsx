@@ -251,7 +251,7 @@ export function SettingsContent({
 	return (
 		<>
 			{/* Sidebar — macOS Settings style */}
-			<nav className="flex w-[180px] shrink-0 flex-col border-r bg-muted/40">
+			<nav className="flex w-[180px] shrink-0 select-none flex-col border-r bg-muted/40">
 				{/* Modal fallback only: native window already shows the title in its title bar. */}
 				{onClose ? (
 					<div className="flex items-center justify-between gap-1 px-3 pt-3 pb-2">

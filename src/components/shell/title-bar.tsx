@@ -2,6 +2,7 @@ import { PanelLeft, Settings } from "lucide-react";
 import { memo } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentLogo } from "@/components/agent/agent-logo";
+import { LayoutMenu } from "@/components/shell/layout-menu";
 import { UpdateIndicator } from "@/components/shell/update-indicator";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +29,7 @@ import { cn } from "@/lib/core/utils";
 import { moveFeatureToWindow } from "@/lib/shell/leaf";
 import { openSettingsWindow } from "@/lib/shell/settings-window";
 import { formatShortcutById } from "@/lib/shell/shortcuts";
+import type { LayoutMode } from "@/lib/shell/ui-store";
 import { openPalette } from "@/lib/shell/ui-store";
 
 /** Platform-formatted shortcut chips for title bar tooltips (⌥⌘… on macOS, Ctrl+… elsewhere). */
@@ -42,8 +44,10 @@ type TitleBarProps = {
 	showSettingsGear: boolean;
 	sidebarCollapsed: boolean;
 	rightSidebarOpen: boolean;
+	layoutMode: LayoutMode;
 	onToggleSidebar: () => void;
 	onToggleAgent: () => void;
+	onApplyLayoutMode: (mode: Exclude<LayoutMode, "custom">) => void;
 	onOpenSettings: () => void;
 };
 
@@ -56,8 +60,10 @@ export const TitleBar = memo(function TitleBar({
 	showSettingsGear,
 	sidebarCollapsed,
 	rightSidebarOpen,
+	layoutMode,
 	onToggleSidebar,
 	onToggleAgent,
+	onApplyLayoutMode,
 	onOpenSettings,
 }: TitleBarProps) {
 	const { t } = useTranslation(["app"]);
@@ -115,6 +121,7 @@ export const TitleBar = memo(function TitleBar({
 				<div className="min-w-0 flex-1 self-stretch" data-tauri-drag-region />
 				<div className="flex shrink-0 items-center gap-0.5 pr-2">
 					<UpdateIndicator />
+					<LayoutMenu value={layoutMode} onValueChange={onApplyLayoutMode} />
 					<ContextMenu>
 						<Tooltip>
 							<TooltipTrigger asChild>

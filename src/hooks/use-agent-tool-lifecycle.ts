@@ -1,4 +1,5 @@
-import { useCallback, useState } from "react";
+import { invoke } from "@tauri-apps/api/core";
+import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	type CatalogEntry,
@@ -6,6 +7,7 @@ import {
 	runToolLifecycle as runAgentToolLifecycle,
 	type ToolLifecycleAction,
 } from "@/lib/agent";
+import { BACKGROUND_TASK_CANCELLED_MESSAGE } from "@/lib/core/background-tasks";
 import { errorText } from "@/lib/core/error";
 import { notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
@@ -35,6 +37,8 @@ export function useAgentToolLifecycle(opts: {
 	const [lifecycleProgress, setLifecycleProgress] = useState<
 		Record<string, LifecycleProgressState>
 	>({});
+	/** In-flight lifecycle taskId per template, so a cancel button can signal Host. */
+	const taskIdsRef = useRef<Map<string, string>>(new Map());
 
 	const patchLifecycleProgress = useCallback(
 		(templateId: string, patch: Partial<LifecycleProgressState>) => {
@@ -86,6 +90,7 @@ export function useAgentToolLifecycle(opts: {
 				return next;
 			});
 			const taskId = `agent-lifecycle-${entry.templateId}-${Date.now().toString(36)}`;
+			taskIdsRef.current.set(entry.templateId, taskId);
 			const stopProgress = listenSafe<LifecycleProgressEvent>(
 				"agent-lifecycle:progress",
 				(payload) => {
@@ -131,11 +136,15 @@ export function useAgentToolLifecycle(opts: {
 				return true;
 			} catch (e) {
 				const message = errorText(e);
-				onError?.(message);
-				notifyError(message);
+				// User-initiated cancel is not an error: no toast, no red banner.
+				if (message !== BACKGROUND_TASK_CANCELLED_MESSAGE) {
+					onError?.(message);
+					notifyError(message);
+				}
 				return false;
 			} finally {
 				stopProgress();
+				taskIdsRef.current.delete(entry.templateId);
 				clearLifecycleProgress(entry.templateId);
 				setLifecycleBusyIds((prev) => {
 					const next = new Map(prev);
@@ -155,9 +164,19 @@ export function useAgentToolLifecycle(opts: {
 		],
 	);
 
+	const cancelToolLifecycle = useCallback((templateId: string) => {
+		if (!isTauri()) return;
+		const taskId = taskIdsRef.current.get(templateId);
+		if (!taskId) return;
+		// Host polls is_cancelled(taskId) and kills the install child process.
+		// Not cancelBackgroundTask: this task is never registered in that store.
+		void invoke("background_task_cancel", { taskId }).catch(() => {});
+	}, []);
+
 	return {
 		lifecycleBusyIds,
 		lifecycleProgress,
 		runToolLifecycle,
+		cancelToolLifecycle,
 	};
 }

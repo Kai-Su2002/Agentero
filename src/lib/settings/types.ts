@@ -132,6 +132,12 @@ export type AppSettings = {
 	 */
 	paperNoteMode: PaperNoteMode;
 	/**
+	 * Open a paper's NOTES.md in the reading split whenever a paper is opened.
+	 * Default **on**; off opens only the PDF/HTML body — NOTES is still one
+	 * `⌘\` / "Open notes" away.
+	 */
+	autoOpenPaperNotes: boolean;
+	/**
 	 * Papers Library table columns: order (array position) + visibility.
 	 * Reconciled against {@link LIBRARY_COLUMN_KEYS}; `title` is always visible.
 	 */
@@ -148,6 +154,14 @@ export type AppSettings = {
 	 */
 	mcpEnabled: boolean;
 	mcpPort: number;
+	/**
+	 * OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex). Empty = not configured.
+	 */
+	mcpTunnelId: string;
+	/**
+	 * OpenAI control-plane Runtime API key. Masked on read like other keys.
+	 */
+	mcpTunnelApiKey: string;
 	/**
 	 * Zotero data directory (contains `zotero.sqlite` + `storage/`) used by
 	 * bidirectional sync. Empty = auto-detect `~/Zotero` or pick in the dialog.
@@ -175,9 +189,8 @@ export type AppSettings = {
 	 */
 	plazaEnabled: boolean;
 	/**
-	 * Plaza source ids hidden from the sidebar and Plaza home page
-	 * (e.g. `"cool-papers"`). Right-click a source row to hide it, the Plaza
-	 * parent row to restore. Empty = show all sources.
+	 * Plaza source ids hidden from the sidebar tree (e.g. `"cool-papers"`).
+	 * Right-click the Plaza parent row to toggle sources. Empty = show all.
 	 */
 	plazaHiddenSources: string[];
 	/**

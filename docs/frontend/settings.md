@@ -15,9 +15,9 @@
 
 | 分类 | 内容示例 |
 |---|---|
-| 通用 | Translator URL、Connector 开关、**MCP server** 开关（loopback Streamable HTTP，默认关；接 ChatGPT 见 [用 MCP 连接外部 Agent](../usage/mcp.md)）、**广场开关**（`plazaEnabled`，默认开；关闭后侧栏隐藏且不挂载广场面板）、文件树标签/排序、打开行为、笔记导出默认水印、隐私（PostHog `telemetryEnabled` 控制是否上报；本机 `usage.sqlite` 记录始终开启、可一键清除） |
+| 通用 | Translator URL、Connector 开关、**MCP server** 开关（loopback Streamable HTTP，默认关；同区块可填 ChatGPT Secure MCP Tunnel 的 Runtime API key / Tunnel ID 并一键起停，接 ChatGPT 见 [用 MCP 连接外部 Agent](../usage/mcp.md)）、**广场开关**（`plazaEnabled`，默认开；关闭后侧栏隐藏且不挂载广场面板）、文件树标签/排序、打开行为（`autoOpenPaperNotes` 默认开，关闭后打开论文只开 PDF/HTML、不自动分屏 NOTES）、笔记导出默认水印、隐私（PostHog `telemetryEnabled` 控制是否上报；本机 `usage.sqlite` 记录始终开启、可一键清除） |
 | Appearance | 明暗、`uiTheme`、`uiScale`；界面/正文/等宽字体；Markdown 字号 / 行距 / 工具栏 |
-| Agent | 目录两层检测（Agent CLI / ACP）、未装「安装」/ 缺 ACP「安装 ACP」/ 已装「升级」、已安装或已注册行「卸载」（Trash 按钮 → 确认对话框展示 logo 与清理项：npm 全局包、受管目录，或仅注册项）、默认 Agent、权限模式、自动精读、可选 **User-Agent**（Codex 中转亲和）、个人提示词、划词提问 Agent |
+| Agent | 目录两层检测（Agent CLI / ACP）、未装「安装」/ 缺 ACP「安装 ACP」/ 已装「升级」、已安装或已注册行「卸载」（Trash 按钮 → 确认对话框展示 logo 与清理项：npm 全局包、受管目录，或仅注册项）、安装 / 升级进行中行内显示阶段进度条与取消（X）按钮（点击静默中止安装子进程，不弹错误）、默认 Agent、权限模式、自动精读、可选 **User-Agent**（Codex 中转亲和）、个人提示词、划词提问 Agent |
 | 翻译 | 默认服务选择、商用 API 配置、语言与 Agent 座 |
 | 同步 | S3 兼容云同步配置、顶部常见服务商 logo 打开官方配置指南、自动同步、同步范围逐类开关；标题旁色点显示未连接 / 已连接 / 同步中 / 错误，标题右侧放置连接 / 保存 / 立即同步主操作，底部仅保留解绑 |
 | 知识库诊断 | Vault / Catalog / 双链 / 论文 aliases / 视觉批注格式；本地 Vault 可确认批量修复 |
@@ -74,6 +74,7 @@
 
 - 用户文案一律 `t()` / `react-i18next`；en 源语言，同步 `zh-CN`。
 - 词条：`src/i18n/locales/`。
+- Appearance → Language：`applyLocale` 在设置窗本地立即切语种（设置 webview 不挂 `useAppBootstrap`）；`settings:changed` 广播时各窗口 `subscribeSettings` 也会再应用一次，主窗另经 bootstrap 同步原生菜单。
 
 ## 代码
 

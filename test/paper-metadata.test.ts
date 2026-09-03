@@ -344,6 +344,23 @@ describe("sortFileTreeNodes", () => {
 		]);
 	});
 
+	it("folder mode sorts numeric prefixes naturally", () => {
+		const names = sortFileTreeNodes(
+			[
+				paper("10-topic"),
+				paper("9-topic"),
+				org("10-org", [paper("nested-a")]),
+				org("9-org", [paper("nested-b")]),
+			],
+			"folder",
+			null,
+			undefined,
+			"folder",
+		).map((n) => n.name);
+
+		expect(names).toEqual(["9-org", "10-org", "9-topic", "10-topic"]);
+	});
+
 	it("title mode: org folders first, then papers by title", () => {
 		const names = sortFileTreeNodes(siblings, "title", byRel, toRel).map(
 			(n) => n.name,

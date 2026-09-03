@@ -30,9 +30,9 @@ Agentero Host 端（`src-tauri/src/features/`）在论文识别、入库、引�
 当前主路径按以下顺序尝试：
 
 1. **标题/关键词搜索**（`features/import/title_search.rs::search_papers`）
-   - 先请求 Semantic Scholar `GET /graph/v1/paper/search?query=...&fields=title,authors,year,venue,publicationVenue,journal,externalIds,citationCount,url`。venue 取 `publicationVenue.name`（跳过 `type=repository`），其次 `journal.name`，再次 `venue`。
-   - S2 失败或空结果时，fallback 到 arXiv Atom `GET export.arxiv.org/api/query?search_query=ti:"..."`。
+   - Semantic Scholar `GET /graph/v1/paper/search?query=...&fields=title,authors,year,venue,publicationVenue,journal,externalIds,citationCount,url` 与 arXiv Atom `GET export.arxiv.org/api/query?search_query=ti:"..."` **并行**发起。S2 在 5s 预算（`S2_SEARCH_BUDGET`）内返回非空则优先（venue 取 `publicationVenue.name`（跳过 `type=repository`），其次 `journal.name`，再次 `venue`），否则取已在途的 arXiv 结果；最坏耗时 ≈ max(预算, 单请求 20s 超时)。
    - 仅保留带 DOI 或 arXiv id 的候选；返回结果会按精确标题匹配重新排序。
+   - `resolve_search_queries` 接收前端 `task_id`：关闭搜索卡片取消任务后，剩余查询直接跳过。
 2. **Translator Runtime**（`features/import/mod.rs::resolve_metadata`）
    - 若用户输入被识别为 arXiv id / DOI / URL，会构造 `{base}/web` 或 `{base}/search` 请求。
    - arXiv 的各类输入（`2508.05004`、`arXiv:2508.05004v2`、`https://arxiv.org/pdf/...`、`https://arxiv.org/html/...`）都会被规范化为 `https://arxiv.org/abs/{id}` 再走 `/web`。
@@ -71,7 +71,7 @@ Agentero Host 端（`src-tauri/src/features/`）在论文识别、入库、引�
 
 ### 2.5 Venue / Publication 回填
 
-入口：`features/catalog/commands.rs::paper_backfill_publication`。
+入口：`features/import/commands.rs::paper_backfill_publication`。
 
 用于 Library 的 publication 列批量补全。实测各源准确度：
 
@@ -141,7 +141,7 @@ UI 刷新（`paper_resolve_identifier`）对 DOI/arXiv/URL **先走标识符解�
 
 | 能力 | 并发控制 | 说明 |
 |---|---|---|
-| 标题/关键词搜索 | `SEARCH_CONCURRENCY = 2`（Semaphore） | S2 免费搜索端点限流严格，arXiv Atom 也有速率限制 |
+| 标题/关键词搜索 | `SEARCH_CONCURRENCY = 2`（Semaphore） | S2 免费搜索端点限流严格，arXiv Atom 也有速率限制；单条查询并行占用至多 2 个 permit（S2 + arXiv） |
 | 在线参考文献 | `ONLINE_REFERENCE_CONCURRENCY = 2` | 与 title search 独立 |
 | 批量入库 | 默认 `concurrency = 5` | `LookupImportBatchArgs.concurrency` 可覆盖 |
 | 反向引用发现 | `FETCH_CONCURRENCY = 8` | 实测 8 并发比串行快约 4.6 倍 |
@@ -168,7 +168,7 @@ Translator Runtime 约定端点：
 
 | 场景 | 第一选择 | Fallback | 最后兜底 |
 |---|---|---|---|
-| 用户输入 title/关键词 | S2 title search | arXiv title search | 无 |
+| 用户输入 title/关键词 | S2 ∥ arXiv 并行竞速（5s 预算内 S2 优先） | 已在途的 arXiv 结果 | 无 |
 | 用户输入 arXiv id | Translator `/web` (canonical abs URL) | arXiv Atom | 无 |
 | 用户输入 DOI | Translator `/search` | Crossref `works/{doi}` | 无 |
 | 用户输入 URL | Translator `/web` | - | 无 |

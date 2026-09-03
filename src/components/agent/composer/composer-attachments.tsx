@@ -169,11 +169,19 @@ export function ComposerSubmitControl({
 	const canSubmit = canSubmitBase || attachments.files.length > 0;
 	// Streaming + empty composer → stop; with text/images/drafts → queue follow-up.
 	const stop = activeTabIsRunning && !canSubmit;
+	const idleEmpty = !stop && !canSubmit;
 	return (
 		<PromptInputSubmit
-			className="ml-auto shrink-0"
-			size={compact ? "icon-xs" : "icon-sm"}
-			variant={compact ? "ghost" : "default"}
+			className={cn(
+				// Filled circle: match attach/context footprint (`size-7`); solid fill like ChatGPT send.
+				"size-7 shrink-0 rounded-full border-0 shadow-none disabled:opacity-100",
+				compact ? "self-center" : "ml-auto",
+				idleEmpty
+					? "bg-muted text-muted-foreground/55 hover:bg-muted"
+					: "bg-foreground text-background hover:bg-foreground/90",
+			)}
+			size="icon-xs"
+			variant="ghost"
 			status={
 				stop
 					? "streaming"
@@ -182,11 +190,7 @@ export function ComposerSubmitControl({
 						: "ready"
 			}
 			onStop={stop ? onCancelRun : undefined}
-			disabled={
-				switching ||
-				(submitting && !activeTabIsRunning) ||
-				(!stop && !canSubmit)
-			}
+			disabled={switching || (submitting && !activeTabIsRunning) || idleEmpty}
 		/>
 	);
 }

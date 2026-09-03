@@ -8,6 +8,7 @@
 - 粘贴一个或多个论文标识符、Skill 来源，或直接输入论文标题（按逗号/分号/换行分隔；空格不再分隔，留给标题与 `npx skills add …`）；去重后顺序处理。
 - 目标：`papers/` 或当前选中的 Papers 子文件夹。
 - 弹层内 **FileUp**：多选本地 PDF。
+- 本地 PDF 命中已有条目（按识别出的标识符去重）时不新建论文：PDF 合入原条目（缺主 PDF 时成为主 PDF，否则进 `attachments/`），Toast 提示「已将 PDF 合入已有条目」（#406）。
 - 成功后：局部刷新 `papers/` 子树、Wiki、Library；**不**自动打开论文（并行入库时抢焦点会让文件树反复跳转），批量也**不**自动连跑精读。
 - 同一条 identifier lookup 管线可由其它入口复用（References 面板、Plaza 入库、Zotero 迁移）。
 - Host：`lookup_import_batch` 等。
@@ -20,11 +21,12 @@
 
 ### 标题搜索
 
-- 输入识别不到标识符时自动走标题/关键词搜索（Semantic Scholar → arXiv 兜底，见 [../backend/identifier-lookup.md](../backend/identifier-lookup.md) § 3.4）。
-- 弹出**单选**窗口列 Top 3：标题、作者 · 年份 · 出处、arXiv/DOI 徽标与被引数。确认后按候选的标识符走常规入库管线，落回发起搜索时的目标文件夹。
-- 取消直接丢弃，无 Host 侧临时态需要清理。
+- 输入识别不到标识符时自动走标题/关键词搜索（Semantic Scholar 与 arXiv **并行**发起，5s 预算内 S2 非空优先，见 [../backend/identifier-lookup.md](../backend/identifier-lookup.md) § 3.4）。
+- 前端对疑似标题的输入**立刻**弹出单选窗并显示 shimmer 占位（#438）；Host 返回后替换为 Top 3 候选：标题、作者 · 年份 · 出处、arXiv/DOI 徽标与被引数。长标题在卡片内换行，不撑破对话框。
+- 确认后按候选的标识符走常规入库管线，落回发起搜索时的目标文件夹。
+- 取消/关闭卡片会同时取消仍在进行的后台搜索任务：任务卡立即标记已取消，Host 跳过剩余查询；候选直接丢弃，无 Vault 侧临时态需要清理。
 - 一次粘贴多个标题时按队列逐个弹窗，处理完一个自动显示下一个。
-- 无匹配结果时不弹窗，走错误 Toast。
+- 无匹配结果时关闭 pending 弹窗，走错误 Toast。
 
 ### Skill 导入
 
@@ -38,12 +40,14 @@
 
 | 方式 | 行为 |
 |---|---|
-| 魔棒 FileUp | 多选 → `paper_import_local_pdf` 后台导入；任务条显示 PDF 解析阶段 |
-| 拖到 `papers/` 组织夹 | 直接后台导入（无确认对话框），Host 自动识别元数据；无 TeX 时隔离运行 liteparse → `PAPER.md` |
+| 魔棒 FileUp | 多选 → `paper_import_local_pdf` **即时导入**（秒级，文件名元数据占位）；任务条随后出现 per-paper 的「识别论文元数据」行（可取消） |
+| 拖到 `papers/` 组织夹 | 直接后台导入（无确认对话框），同上；识别完成后目录自动改名为规范 id（如 `papers/1706.03762`），树/库/tab 路径无缝迁移 |
 | 拖到 Library 表 | 仅一个或多个 PDF 时显示虚线 overlay；松手后直接后台导入。目标：当前文件夹作用域，或全库时的树选中 Papers 夹 / `papers/`（[#309](https://github.com/poco-ai/Agentero/issues/309)） |
 | 拖到窗口其它区域 | 不入库（窗口级 `preventDefault` 防 WebView 导航） |
 
-PDF 解析最多等待 120 秒，取消任务会终止当前解析子进程。解析失败或超时时，后台入库任务仍会结束，已复制的 PDF、`NOTES.md` 与 catalog 记录保持可用；用户可稍后通过 CLI `paper parse` 重试派生正文。
+- 即时导入：`paper_commit` 立刻复制 PDF + 建目录 + 落 catalog，`paper:imported` 让论文马上出现在树/论文库；`RecognizeMetadata` job 在后台跑识别链路（见 [../backend/paper-import.md](../backend/paper-import.md)），返回值 `recognizePending=true` 时前端跳过自己的 layout enqueue（runner 统一在改名后编排 PAPER.md / refs / layout）。
+- 识别落地：改名/合并通过 `paper:renamed` 事件通知前端 —— handler 抑制 watcher 的外部 rename 修复（`trackInternalRenamePaths`）、remap 打开的 tab/标注、定向刷新树（新旧两个路径）与 Library；`outcome=merged` 时 Toast「识别后的 PDF 已合入已有条目」。仅元数据更新走 `job:changed` 终态 → Library 刷新，树行标签随 `paperMetaByRelPath` 自动更新。
+- PDF 解析最多等待 120 秒，取消任务会终止当前解析子进程。解析失败或超时时，后台入库任务仍会结束，已复制的 PDF、`NOTES.md` 与 catalog 记录保持可用；用户可稍后通过 CLI `paper parse` 重试派生正文。
 
 ## Zotero
 

@@ -12,9 +12,12 @@ pub mod pdf_parse;
 
 mod assets;
 pub(crate) mod batch;
+pub(crate) mod chain_resolve;
 pub(crate) mod map;
 pub(crate) mod parse;
 pub(crate) mod pdf_recognize;
+pub(crate) mod recognize_apply;
+pub(crate) mod resolver;
 mod skill_import;
 pub(crate) mod title_search;
 
@@ -50,6 +53,8 @@ pub use pdf_parse::engines::refresh_parser_config;
 #[cfg(feature = "desktop")]
 pub(crate) use pdf_parse::CANCELLED_MESSAGE;
 
+#[cfg(not(feature = "desktop"))]
+use crate::core::app_handle::AppHandle;
 use crate::core::error::AppError;
 use crate::features::catalog::{
     papers::{self, PaperRecord},
@@ -59,7 +64,7 @@ use crate::features::catalog::{
 use crate::features::import::assets::AssetDownloadProgress;
 use futures_util::StreamExt;
 use map::local_pdf_meta;
-use parse::{extract_primary_identifier, IdentifierKind};
+use parse::extract_primary_identifier;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -68,8 +73,6 @@ use std::sync::Arc;
 use std::time::Duration;
 #[cfg(feature = "desktop")]
 use tauri::{AppHandle, Emitter};
-#[cfg(not(feature = "desktop"))]
-pub struct AppHandle;
 use tokio::sync::Mutex;
 
 /// Public helper for remote PDF import staging.
@@ -229,8 +232,9 @@ pub struct ImportLocalPdfArgs {
     /// Frontend background-task id for parse-phase progress.
     #[serde(default)]
     pub task_id: Option<String>,
-    /// Translator base URL for identifier resolution during background
-    /// recognition (entries without dialog metadata). Empty → default.
+    /// Translator base URL override. Deferred recognition runs in the
+    /// RecognizeMetadata job, which reads Settings directly; kept for API
+    /// compatibility. Empty → default.
     #[serde(default)]
     pub translator_base_url: Option<String>,
 }
@@ -266,6 +270,16 @@ pub struct LookupImportResult {
     /// Download / parse messages (for UI warnings).
     #[serde(default)]
     pub asset_messages: Vec<String>,
+    /// `Deduped` when the paper already existed and (for local PDFs) the PDF
+    /// was merged into the existing entry instead of creating a duplicate.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status: Option<paper_import::CommitStatus>,
+    /// Local PDF imported with placeholder metadata; a RecognizeMetadata job
+    /// is resolving real metadata in the background (and will rename the
+    /// folder to the canonical id). The frontend must not enqueue its own
+    /// layout analysis — the runner owns the follow-ups.
+    #[serde(default)]
+    pub recognize_pending: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -351,7 +365,7 @@ pub async fn import_by_identifier_with_progress(
         PaperCommitOptions {
             vault: &vault,
             parent_dir: &args.parent_dir,
-            dedupe: DedupePolicy::ByCatalogId,
+            dedupe: DedupePolicy::ByIdentifiers,
             assets: AssetsPolicy::SyncDownload {
                 cookies: None,
                 progress: AssetProgressContext {
@@ -364,6 +378,7 @@ pub async fn import_by_identifier_with_progress(
             fresh_timestamps: false,
             cache,
             app,
+            defer_parse_jobs: false,
         },
     )
     .await?;
@@ -380,6 +395,8 @@ pub async fn import_by_identifier_with_progress(
         tex: commit.tex,
         paper_md: commit.paper_md,
         asset_messages: commit.asset_messages,
+        status: Some(commit.status),
+        recognize_pending: false,
     })
 }
 
@@ -410,7 +427,12 @@ pub async fn import_by_identifier_batch(
         }
     }
 
-    let search_candidates = resolve_search_queries(&preflight.queries, &mut preflight.errors).await;
+    let search_candidates = resolve_search_queries(
+        &preflight.queries,
+        &mut preflight.errors,
+        args.task_id.as_deref(),
+    )
+    .await;
 
     let to_import: Vec<(String, LookupImportArgs)> = preflight
         .papers
@@ -494,12 +516,17 @@ const SEARCH_CANDIDATE_LIMIT: usize = 3;
 
 /// Resolve free-text queries to importable candidates. Empty results and search
 /// failures become errors so a title that matches nothing is never a silent no-op.
+/// A cancelled `task_id` (picker card closed) skips the remaining queries.
 pub(crate) async fn resolve_search_queries(
     queries: &[String],
     errors: &mut Vec<String>,
+    task_id: Option<&str>,
 ) -> Vec<PaperSearchGroup> {
     let mut groups = Vec::new();
     for query in queries {
+        if check_task_not_cancelled(task_id).is_err() {
+            break;
+        }
         match title_search::search_papers(query, SEARCH_CANDIDATE_LIMIT).await {
             Ok(candidates) if candidates.is_empty() => {
                 errors.push(format!("{query}: no search results"));
@@ -540,30 +567,6 @@ fn emit_batch_progress(
                 total_count: Some(total),
             },
         );
-    }
-}
-
-pub(crate) fn identifier_kind_str(kind: IdentifierKind) -> String {
-    match kind {
-        IdentifierKind::Doi => "doi",
-        IdentifierKind::Isbn => "isbn",
-        IdentifierKind::Arxiv => "arxiv",
-        IdentifierKind::Pmid => "pmid",
-        IdentifierKind::AdsBibcode => "ads",
-        IdentifierKind::Url => "url",
-        IdentifierKind::Skill => "skill",
-    }
-    .to_string()
-}
-
-pub(crate) fn identifier_kind_column(kind: IdentifierKind) -> Option<&'static str> {
-    match kind {
-        IdentifierKind::Arxiv => Some("arxiv_id"),
-        IdentifierKind::Doi => Some("doi"),
-        IdentifierKind::Isbn => Some("isbn"),
-        IdentifierKind::Pmid => Some("pmid"),
-        IdentifierKind::AdsBibcode => Some("id"),
-        IdentifierKind::Url | IdentifierKind::Skill => None,
     }
 }
 
@@ -732,12 +735,6 @@ pub async fn import_local_pdfs(
             &parent_rel,
             entry,
             &ImportLocalPdfContext {
-                translator_base: args
-                    .translator_base_url
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(DEFAULT_TRANSLATOR_BASE_URL),
                 task_id: task_id.as_deref(),
                 app,
                 cache,
@@ -784,7 +781,6 @@ fn dedupe_local_pdf_entries(entries: Vec<LocalPdfImportEntry>) -> Vec<LocalPdfIm
 
 /// Shared per-import context threaded into `import_one_local_pdf`.
 struct ImportLocalPdfContext<'a> {
-    translator_base: &'a str,
     task_id: Option<&'a str>,
     app: Option<&'a AppHandle>,
     cache: Option<&'a CapsCache>,
@@ -798,7 +794,7 @@ async fn import_one_local_pdf(
     ctx: &ImportLocalPdfContext<'_>,
 ) -> Result<LookupImportResult, AppError> {
     use crate::features::import::paper_import::{
-        paper_commit, AssetsPolicy, DedupePolicy, PaperCommitOptions,
+        paper_commit, AssetsPolicy, CommitStatus, DedupePolicy, PaperCommitOptions,
     };
 
     let src = PathBuf::from(entry.file_path.trim());
@@ -843,50 +839,13 @@ async fn import_one_local_pdf(
         || entry.arxiv_id.is_some()
         || entry.extra.is_some();
 
-    // Entries straight from the picker (no dialog metadata) run background
-    // recognition so DOI/arXiv/title survive renamed files. Best-effort:
-    // any failure keeps the filename-derived metadata.
-    let mut meta = if dialog_meta {
-        local_pdf_meta(base_id, title)
-    } else {
-        let fallback = local_pdf_meta(base_id.clone(), title.clone());
-        match pdf_recognize::recognize_and_resolve(&src, ctx.translator_base, ctx.task_id).await {
-            probe if probe.status == "ok" => {
-                // Adopt the resolved identifier as the folder id (matches
-                // identifier-import naming, e.g. papers/1706.03762).
-                let resolved_id = probe
-                    .arxiv_id
-                    .as_deref()
-                    .map(slug_from_stem)
-                    .or_else(|| probe.doi.as_deref().map(map::doi_slug))
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or(base_id);
-                let mut m = local_pdf_meta(resolved_id, probe.title.clone().unwrap_or(title));
-                m.authors = probe.authors.clone();
-                m.year = probe.year;
-                m.doi = probe.doi.clone();
-                m.arxiv_id = probe.arxiv_id.clone();
-                m.abstract_text = probe.abstract_text.clone();
-                m.publication = probe.publication.clone();
-                m.volume = probe.volume.clone();
-                m.issue = probe.issue.clone();
-                m.pages = probe.pages.clone();
-                m.publisher = probe.publisher.clone();
-                m.meta_source = Some("recognize".into());
-                m
-            }
-            probe if probe.status == "title" => {
-                let mut m = local_pdf_meta(base_id, probe.title.clone().unwrap_or(title));
-                m.authors = probe.authors.clone();
-                m.year = probe.year;
-                m.doi = probe.doi.clone();
-                m.arxiv_id = probe.arxiv_id.clone();
-                m.meta_source = Some("recognize".into());
-                m
-            }
-            _ => fallback,
-        }
-    };
+    // Entries straight from the picker/drop (no dialog metadata) commit
+    // instantly with filename-derived metadata; a RecognizeMetadata job then
+    // resolves DOI/arXiv/title in the background and renames the folder to
+    // the canonical id (see `recognize_apply`). Best-effort: any recognition
+    // failure keeps the filename-derived metadata.
+    let recognize_deferred = !dialog_meta;
+    let mut meta = local_pdf_meta(base_id, title);
     if let Some(authors) = &entry.authors {
         meta.authors = authors
             .iter()
@@ -961,7 +920,7 @@ async fn import_one_local_pdf(
         PaperCommitOptions {
             vault,
             parent_dir: parent_rel,
-            dedupe: DedupePolicy::None,
+            dedupe: DedupePolicy::ByIdentifiers,
             assets: AssetsPolicy::CopyPdf {
                 src: &src,
                 progress,
@@ -971,9 +930,18 @@ async fn import_one_local_pdf(
             fresh_timestamps: false,
             cache: ctx.cache,
             app: ctx.app,
+            // Parse/refs/layout follow-ups are orchestrated by the
+            // RecognizeMetadata runner once the final path is known.
+            defer_parse_jobs: recognize_deferred,
         },
     )
     .await?;
+
+    let recognize_pending = recognize_deferred && commit.status == CommitStatus::Created;
+    if recognize_pending {
+        #[cfg(feature = "desktop")]
+        crate::features::jobs::spawn_recognize_metadata(ctx.app, vault, &commit.path);
+    }
 
     Ok(LookupImportResult {
         paper_dir: commit.paper_dir,
@@ -986,6 +954,8 @@ async fn import_one_local_pdf(
         tex: commit.tex,
         paper_md: commit.paper_md,
         asset_messages: commit.asset_messages,
+        status: Some(commit.status),
+        recognize_pending,
     })
 }
 
@@ -1064,15 +1034,17 @@ pub(crate) async fn resolve_metadata(
             Ok((meta, true))
         }
         Err(e) => {
-            // Fall back for arXiv so local dev works without sidecar
-            if let Some(aid) = parse::extract_arxiv_id(text) {
-                let meta = fetch_arxiv_metadata(&aid, task_id).await?;
-                check_task_not_cancelled(task_id)?;
-                Ok((meta, false))
-            } else {
-                Err(AppError::message(format!(
-                    "translator unreachable at {translator_base} ({e}); only arXiv fallback is available without Runtime"
-                )))
+            // Direct-connect fallbacks from the resolver table (arXiv Atom,
+            // DOI → Crossref) so local dev works without the Runtime sidecar.
+            match resolver::fetch_direct_fallback(text, task_id).await {
+                Some(Ok(meta)) => {
+                    check_task_not_cancelled(task_id)?;
+                    Ok((meta, false))
+                }
+                Some(Err(err)) => Err(err),
+                None => Err(AppError::message(format!(
+                    "translator unreachable at {translator_base} ({e}); only arXiv/Crossref fallbacks are available without Runtime"
+                ))),
             }
         }
     }
@@ -1143,19 +1115,21 @@ async fn translator_fetch(
 ///
 /// arXiv's PDF endpoints are binary resources, which the Translator Runtime
 /// cannot parse as web pages. Canonicalizing every recognized arXiv form to
-/// its abstract page also gives direct IDs and URLs the same metadata path.
+/// its abstract page (the arXiv resolver's target) also gives direct IDs and
+/// URLs the same metadata path — so it runs ahead of the generic table probe,
+/// where arXiv URLs would classify as `url`.
 fn translator_request(text: &str, base: &str) -> (String, String) {
     if let Some(arxiv_id) = parse::extract_arxiv_id(text) {
-        return (
-            format!("{base}/web"),
-            format!("https://arxiv.org/abs/{arxiv_id}"),
-        );
+        return resolver::find(resolver::ARXIV_KIND)
+            .expect("arxiv resolver is registered")
+            .translator_target(&arxiv_id, base);
     }
 
     let ident = extract_primary_identifier(text);
-    match &ident {
-        Some((IdentifierKind::Url, url)) => (format!("{base}/web"), url.clone()),
-        Some((_, value)) => (format!("{base}/search"), value.clone()),
+    match ident {
+        Some(ident) => resolver::find(ident.kind)
+            .map(|r| r.translator_target(&ident.value, base))
+            .unwrap_or_else(|| (format!("{base}/search"), ident.value.clone())),
         None => {
             // Treat as search raw text / possible URL.
             if text.starts_with("http://") || text.starts_with("https://") {
@@ -1233,38 +1207,6 @@ async fn translator_import(content: &str, base: &str) -> Result<Vec<serde_json::
         return Err(AppError::message("import returned no items"));
     }
     Ok(arr)
-}
-
-pub(crate) async fn fetch_arxiv_metadata(
-    arxiv_id: &str,
-    task_id: Option<&str>,
-) -> Result<PaperMeta, AppError> {
-    let bare = parse::strip_arxiv_version(arxiv_id);
-    let api = format!(
-        "https://export.arxiv.org/api/query?id_list={}",
-        urlencoding_encode(&bare)
-    );
-    let client = crate::core::http::client_builder()
-        .timeout(Duration::from_secs(30))
-        .user_agent("agentero-lookup/0.1")
-        .build()
-        .map_err(|e| AppError::message(format!("http client: {e}")))?;
-    let xml = client
-        .get(&api)
-        .send()
-        .await
-        .map_err(|e| AppError::message(format!("arXiv API: {e}")))?
-        .text()
-        .await
-        .map_err(|e| AppError::message(format!("arXiv body: {e}")))?;
-    check_task_not_cancelled(task_id)?;
-
-    map::map_arxiv_atom(&xml, &bare).await
-}
-
-fn urlencoding_encode(s: &str) -> String {
-    // minimal encode for arxiv ids
-    s.replace('/', "%2F")
 }
 
 pub(crate) fn paper_record_from_meta(path: &str, meta: &PaperMeta) -> PaperRecord {
@@ -1540,7 +1482,7 @@ fn render_note_template(template: &str, meta: &PaperMeta) -> String {
 
 /// Aliases guarantee for a rendered (Custom) shell: when the frontmatter has
 /// no aliases, merge in the title + short alias following the same logic as
-/// `catalog::papers::append_title_alias_best_effort`.
+/// `wiki::append_title_alias_best_effort`.
 fn ensure_note_aliases(notes: &str, aliases: &[String]) -> String {
     use crate::features::wiki::frontmatter::{self as fm, AliasEdit};
     let inspection = fm::inspect_aliases(notes);
@@ -1981,5 +1923,22 @@ mod tests {
         assert_eq!(fs::read_to_string(&path).unwrap(), "user template");
 
         let _ = fs::remove_dir_all(&vault);
+    }
+
+    #[tokio::test]
+    async fn cancelled_task_skips_title_search() {
+        let task_id = "test-resolve-search-cancelled";
+        crate::core::background_tasks::cancel(task_id);
+        let mut errors = Vec::new();
+        let groups = resolve_search_queries(
+            &["attention is all you need".to_string()],
+            &mut errors,
+            Some(task_id),
+        )
+        .await;
+        crate::core::background_tasks::finish(task_id);
+        // Cancelled before the first query runs: no groups, no network, no errors.
+        assert!(groups.is_empty());
+        assert!(errors.is_empty());
     }
 }

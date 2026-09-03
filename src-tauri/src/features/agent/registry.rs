@@ -1,8 +1,9 @@
 use crate::core::error::AppError;
 use crate::features::agent::discover::{probe_command, resolve_command};
 use crate::features::agent::models::{
-    default_agent_proxy_url, AgentDescriptor, AgentRegistryState, AgentTemplate, CatalogAcpStatus,
-    CatalogEntry, CatalogScanResponse, ProbeResult, UpsertAgentRequest,
+    default_agent_proxy_url, AgentDescriptor, AgentRegistryState, AgentTelemetrySummary,
+    AgentTemplate, CatalogAcpStatus, CatalogEntry, CatalogScanResponse, ProbeResult,
+    UpsertAgentRequest,
 };
 use crate::features::agent::templates::{
     catalog_templates, dsh_entrypoint_exists, dsh_launcher_dir, template_from_id, template_info,
@@ -24,9 +25,10 @@ impl AgentRegistry {
         let path = config_path();
         let mut state = read_state(&path).unwrap_or_default();
         let migrated_codex = migrate_legacy_codex_agents(&mut state);
+        let migrated_grok = migrate_legacy_grok_agents(&mut state);
         let migrated_env = migrate_catalog_env_defaults(&mut state);
         state.enabled = true;
-        if migrated_codex || migrated_env {
+        if migrated_codex || migrated_grok || migrated_env {
             if let Err(error) = persist(&path, &state) {
                 log::error!(
                     target: "agentero::agent",
@@ -125,7 +127,10 @@ impl AgentRegistry {
             .map_err(|_| AppError::message("agent registry lock poisoned"))?;
         if let Some(ref agent_id) = id {
             if !guard.agents.iter().any(|a| a.id == *agent_id) {
-                return Err(AppError::AgentNotFound(agent_id.clone()));
+                return Err(AppError::domain(
+                    "agent_not_found",
+                    format!("agent not found: {agent_id}"),
+                ));
             }
         }
         guard.default_id = id;
@@ -159,6 +164,9 @@ impl AgentRegistry {
 
         // Preserve probe history when re-saving the same id.
         let prev = guard.agents.iter().find(|a| a.id == id).cloned();
+        let preserve_probe = prev.as_ref().is_some_and(|p| {
+            p.command == req.command.trim() && p.args == req.args && p.env == req.env
+        });
 
         let descriptor = AgentDescriptor {
             id: id.clone(),
@@ -169,10 +177,18 @@ impl AgentRegistry {
             env: req.env,
             available,
             last_error,
-            last_probe_ok: prev.as_ref().and_then(|p| p.last_probe_ok),
-            last_probe_agent_name: prev.as_ref().and_then(|p| p.last_probe_agent_name.clone()),
-            last_probe_error: prev.as_ref().and_then(|p| p.last_probe_error.clone()),
-            last_probed_at: prev.as_ref().and_then(|p| p.last_probed_at.clone()),
+            last_probe_ok: preserve_probe
+                .then(|| prev.as_ref().and_then(|p| p.last_probe_ok))
+                .flatten(),
+            last_probe_agent_name: preserve_probe
+                .then(|| prev.as_ref().and_then(|p| p.last_probe_agent_name.clone()))
+                .flatten(),
+            last_probe_error: preserve_probe
+                .then(|| prev.as_ref().and_then(|p| p.last_probe_error.clone()))
+                .flatten(),
+            last_probed_at: preserve_probe
+                .then(|| prev.as_ref().and_then(|p| p.last_probed_at.clone()))
+                .flatten(),
         };
 
         if let Some(existing) = guard.agents.iter_mut().find(|a| a.id == id) {
@@ -270,7 +286,10 @@ impl AgentRegistry {
         let before = guard.agents.len();
         guard.agents.retain(|a| a.id != id);
         if guard.agents.len() == before {
-            return Err(AppError::AgentNotFound(id.to_string()));
+            return Err(AppError::domain(
+                "agent_not_found",
+                format!("agent not found: {id}"),
+            ));
         }
         if guard.default_id.as_deref() == Some(id) {
             guard.default_id = guard.agents.first().map(|a| a.id.clone());
@@ -349,7 +368,7 @@ impl AgentRegistry {
             .agents
             .into_iter()
             .find(|a| a.id == id)
-            .ok_or_else(|| AppError::AgentNotFound(id.to_string()))
+            .ok_or_else(|| AppError::domain("agent_not_found", format!("agent not found: {id}")))
     }
 
     pub fn apply_probe_result(&self, id: &str, result: &ProbeResult) -> Result<(), AppError> {
@@ -361,7 +380,7 @@ impl AgentRegistry {
             .agents
             .iter_mut()
             .find(|a| a.id == id)
-            .ok_or_else(|| AppError::AgentNotFound(id.to_string()))?;
+            .ok_or_else(|| AppError::domain("agent_not_found", format!("agent not found: {id}")))?;
         let now = chrono_like_now();
         agent.last_probe_ok = Some(result.available);
         agent.last_probe_agent_name = result.agent_name.clone();
@@ -523,6 +542,32 @@ impl AgentRegistry {
         })
     }
 
+    /// Anonymous summary of registered agents for telemetry (template ids +
+    /// custom count). Reads state without probing commands, so it is safe to
+    /// call during startup.
+    pub fn telemetry_summary(&self) -> AgentTelemetrySummary {
+        let Ok(guard) = self.inner.lock() else {
+            return AgentTelemetrySummary::default();
+        };
+        let mut templates: Vec<String> = guard
+            .agents
+            .iter()
+            .filter(|a| !matches!(a.template, AgentTemplate::Custom))
+            .map(|a| a.template.as_str().to_string())
+            .collect();
+        templates.sort();
+        templates.dedup();
+        let custom_count = guard
+            .agents
+            .iter()
+            .filter(|a| matches!(a.template, AgentTemplate::Custom))
+            .count();
+        AgentTelemetrySummary {
+            templates,
+            custom_count,
+        }
+    }
+
     pub fn resolve_default(&self, preferred: Option<&str>) -> Result<AgentDescriptor, AppError> {
         let state = self.snapshot()?;
         if !state.enabled {
@@ -540,11 +585,20 @@ impl AgentRegistry {
             .agents
             .into_iter()
             .find(|a| a.id == id)
-            .ok_or(AppError::AgentNotFound(id))?;
+            .ok_or(AppError::domain(
+                "agent_not_found",
+                format!("agent not found: {id}"),
+            ))?;
         if !agent.available {
-            return Err(AppError::AgentUnavailable(agent.last_error.unwrap_or_else(
-                || format!("command `{}` not available", agent.command),
-            )));
+            return Err(AppError::domain(
+                "agent_unavailable",
+                format!(
+                    "agent unavailable: {}",
+                    agent
+                        .last_error
+                        .unwrap_or_else(|| format!("command `{}` not available", agent.command))
+                ),
+            ));
         }
         Ok(agent)
     }
@@ -579,6 +633,25 @@ fn migrate_catalog_env_defaults(state: &mut AgentRegistryState) -> bool {
         }
     }
     changed
+}
+
+/// Grok Build used to launch as `npx @xai-official/grok@<pinned> agent stdio`,
+/// which downloaded the agent on first spawn. Repoint stale rows at the real CLI.
+fn migrate_legacy_grok_agents(state: &mut AgentRegistryState) -> bool {
+    let mut migrated = false;
+    for agent in &mut state.agents {
+        if agent.template != AgentTemplate::GrokBuild || agent.command != "npx" {
+            continue;
+        }
+        agent.command = "grok".to_string();
+        agent.args = vec!["agent".to_string(), "stdio".to_string()];
+        agent.last_probe_ok = None;
+        agent.last_probe_agent_name = None;
+        agent.last_probe_error = None;
+        agent.last_probed_at = None;
+        migrated = true;
+    }
+    migrated
 }
 
 fn migrate_legacy_codex_agents(state: &mut AgentRegistryState) -> bool {
@@ -851,8 +924,8 @@ fn refresh_availability(state: &mut AgentRegistryState) {
 mod tests {
     use super::{
         apply_user_agent_to_agent, merge_anthropic_custom_headers_user_agent,
-        merge_codex_config_user_agent, migrate_legacy_codex_agents, AGENTERO_USER_AGENT_ENV,
-        ANTHROPIC_CUSTOM_HEADERS_ENV,
+        merge_codex_config_user_agent, migrate_legacy_codex_agents, migrate_legacy_grok_agents,
+        AGENTERO_USER_AGENT_ENV, ANTHROPIC_CUSTOM_HEADERS_ENV,
     };
     use crate::features::agent::models::{AgentDescriptor, AgentRegistryState, AgentTemplate};
     use std::collections::HashMap;
@@ -889,6 +962,41 @@ mod tests {
         assert_eq!(agent.args, Vec::<String>::new());
         assert!(!agent.env.contains_key("CODEX_PATH"));
         assert_eq!(agent.last_probe_ok, None);
+    }
+
+    #[test]
+    fn migrates_legacy_grok_npx_launcher_to_native_cli() {
+        let mut state = AgentRegistryState {
+            agents: vec![AgentDescriptor {
+                id: "catalog-grok-build".to_string(),
+                name: "Grok Build".to_string(),
+                template: AgentTemplate::GrokBuild,
+                command: "npx".to_string(),
+                args: vec![
+                    "@xai-official/grok@0.2.100".to_string(),
+                    "agent".to_string(),
+                    "stdio".to_string(),
+                ],
+                env: HashMap::new(),
+                available: true,
+                last_error: None,
+                last_probe_ok: Some(true),
+                last_probe_agent_name: Some("grok".to_string()),
+                last_probe_error: None,
+                last_probed_at: Some("1".to_string()),
+            }],
+            ..AgentRegistryState::default()
+        };
+
+        assert!(migrate_legacy_grok_agents(&mut state));
+        let agent = &state.agents[0];
+        assert_eq!(agent.command, "grok");
+        assert_eq!(agent.args, vec!["agent".to_string(), "stdio".to_string()]);
+        assert_eq!(agent.last_probe_ok, None);
+        assert_eq!(agent.last_probed_at, None);
+
+        // Already native: nothing left to migrate.
+        assert!(!migrate_legacy_grok_agents(&mut state));
     }
 
     #[test]
@@ -968,6 +1076,47 @@ mod tests {
         assert!(raw.contains("X-Tenant: acme"));
         assert!(raw.contains("User-Agent: claude-cli/2.1.161"));
         assert!(!raw.contains("old-cli/0.1"));
+    }
+
+    #[test]
+    fn telemetry_summary_dedups_templates_and_counts_custom() {
+        use super::AgentRegistry;
+        use std::path::PathBuf;
+        use std::sync::Mutex;
+
+        fn desc(name: &str, template: AgentTemplate) -> AgentDescriptor {
+            AgentDescriptor {
+                id: name.to_string(),
+                name: name.to_string(),
+                template,
+                command: name.to_string(),
+                args: vec![],
+                env: HashMap::new(),
+                available: true,
+                last_error: None,
+                last_probe_ok: None,
+                last_probe_agent_name: None,
+                last_probe_error: None,
+                last_probed_at: None,
+            }
+        }
+
+        let registry = AgentRegistry {
+            inner: Mutex::new(AgentRegistryState {
+                agents: vec![
+                    desc("claude", AgentTemplate::ClaudeAcp),
+                    desc("claude-2", AgentTemplate::ClaudeAcp),
+                    desc("gemini", AgentTemplate::Gemini),
+                    desc("my-agent", AgentTemplate::Custom),
+                ],
+                ..AgentRegistryState::default()
+            }),
+            path: PathBuf::new(),
+        };
+
+        let summary = registry.telemetry_summary();
+        assert_eq!(summary.templates, vec!["claude-acp", "gemini"]);
+        assert_eq!(summary.custom_count, 1);
     }
 
     #[test]

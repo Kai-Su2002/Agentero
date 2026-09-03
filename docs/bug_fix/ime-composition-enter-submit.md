@@ -1,7 +1,7 @@
 # 输入法组字时 Enter 误发送（IME composition race）
 
 **状态**：已修复（`isComposing` + `keyCode 229` + compositionend 宽限）  
-**影响面**：Agent Composer、消息编辑重发、PDF 批注内联编辑器、划词提问输入  
+**影响面**：Agent Composer、消息编辑重发、PDF 批注内联编辑器、划词提问输入、魔棒入库输入框（#457）  
 **相关代码**：
 
 - `src/lib/core/ime.ts` — `isImeKeyboardEvent`、`IME_KEY_CODE`（229）、`IME_COMPOSITION_END_GRACE_MS`
@@ -9,6 +9,7 @@
 - `src/components/ai-elements/prompt-input.tsx` — `PromptInputTextarea` Enter 提交守卫
 - `src/components/agent/use-agent-panel.ts` — `@`/`$` 菜单 Enter、消息编辑重发
 - `src/components/viewer/pdf-ask/annotation-editor.tsx` — 批注 Enter 保存
+- `src/components/sidebar/vault-sidebar-header.tsx` — 魔棒标题搜索 Enter 提交守卫
 - `test/ime.test.ts` — 单元测试
 
 ---
@@ -84,6 +85,7 @@ keydown Enter    →  处理器仍把这次 Enter 当成「发送」
 | Agent `@` / `$` 菜单 | Enter 选择前 `isImeKeyboardEvent` |
 | 用户消息编辑重发 | `useImeGuard`；组字中 Enter 不重发 |
 | PDF 批注编辑器 | 同上；组字中 Enter 不保存 |
+| 魔棒入库输入框（#457） | `useImeGuard`；组字中 Enter 不触发标题搜索/导入 |
 
 ### 3.3 预期交互
 
@@ -99,8 +101,9 @@ keydown Enter    →  处理器仍把这次 Enter 当成「发送」
 2. 打开 `@` 菜单时组字确认，不误选路径；`$` 技能菜单同理。  
 3. 编辑已发送用户消息：组字中 Enter 不触发重发。  
 4. PDF 批注内联编辑器：组字中 Enter 不保存。  
-5. 英文 / 无 IME 场景：Enter 发送、`Shift+Enter` 换行不变。  
-6. `pnpm exec vitest run test/ime.test.ts` 通过。
+5. 魔棒入库：中文输入法组字中按 Enter，只上屏、不触发标题搜索；再按一次 Enter 才提交。  
+6. 英文 / 无 IME 场景：Enter 发送、`Shift+Enter` 换行不变。  
+7. `pnpm exec vitest run test/ime.test.ts` 通过。
 
 ---
 

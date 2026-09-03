@@ -128,7 +128,12 @@ export function RecycleBinView({
 	}, [vaultPath, purgeTarget, busyId, t]);
 
 	return (
-		<div className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
+		<div
+			className={cn(
+				"flex min-h-0 min-w-0 flex-1 select-none flex-col",
+				className,
+			)}
+		>
 			{loading ? (
 				<div className="flex min-h-0 flex-1 items-center justify-center text-muted-foreground text-sm">
 					{t("recycleBin.loading")}

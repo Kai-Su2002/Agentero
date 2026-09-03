@@ -48,6 +48,7 @@ import { cn } from "@/lib/core/utils";
 import { isLibraryVirtualPath, isTrashVirtualPath } from "@/lib/paper/api";
 import { moveDocToWindow } from "@/lib/shell/leaf";
 import { TAG_COLOR_IDS, tagSwatchStyle } from "@/lib/ui/tag-colors";
+import { installDockviewDragSelectionGuard } from "@/lib/workspace/dockview-drag-selection";
 import { installDockviewSashFrameLoop } from "@/lib/workspace/dockview-sash";
 import { agenteroDockTheme } from "@/lib/workspace/dockview-theme";
 import {
@@ -85,6 +86,8 @@ export type DockWorkspaceHandle = {
 	cycleActive: (delta: number) => void;
 	/** Activate an existing panel by id. */
 	activatePanel: (panelId: string) => void;
+	/** Make all visible Dockview grid groups equal width. */
+	equalizeGridGroups: () => void;
 };
 
 type WorkspaceCtx = {
@@ -652,6 +655,11 @@ export const DockWorkspace = memo(
 				activatePanel(panelId) {
 					apiRef.current?.getPanel(panelId)?.api.setActive();
 				},
+				equalizeGridGroups() {
+					const api = apiRef.current;
+					if (!api) return;
+					rebalanceGridGroupWidths(api);
+				},
 			}),
 			[endSync],
 		);
@@ -662,6 +670,10 @@ export const DockWorkspace = memo(
 				apiRef.current = api;
 
 				disposablesRef.current = [
+					installDockviewDragSelectionGuard(
+						workspaceRootRef.current as HTMLDivElement,
+						api,
+					),
 					api.onUnhandledDragOver((e: DockviewDndOverlayEvent) => {
 						if (!isExternalPathDrag(e.nativeEvent)) return;
 						e.accept();
@@ -733,7 +745,10 @@ export const DockWorkspace = memo(
 				if (!panel) continue;
 				applyTabPanelMeta(panel, tab);
 			}
-		}, [metaKey]);
+			// Param updates (e.g. resolved title) don't emit onDidLayoutChange;
+			// re-save so the next restore shows titles before hydration (#410).
+			scheduleLayoutSave(api);
+		}, [metaKey, scheduleLayoutSave]);
 
 		// Activate panel when React activePanelId changes (openTab / library).
 		useEffect(() => {
