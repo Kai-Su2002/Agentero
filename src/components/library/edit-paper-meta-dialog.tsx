@@ -175,15 +175,15 @@ export function EditPaperMetaDialog({
 								: prev.authors,
 							year: meta.year != null ? String(meta.year) : prev.year,
 							doi: meta.doi?.trim() || prev.doi,
-							arxivId: meta.arxivId?.trim() || prev.arxivId,
+							arxivId: meta.arxiv_id?.trim() || prev.arxivId,
 							publication: meta.publication?.trim() || prev.publication,
 							volume: meta.volume?.trim() || prev.volume,
 							issue: meta.issue?.trim() || prev.issue,
 							pages: meta.pages?.trim() || prev.pages,
 							publisher: meta.publisher?.trim() || prev.publisher,
 							abstract: meta.abstract?.trim() || prev.abstract,
-							pdfUrl: meta.pdfUrl?.trim() || prev.pdfUrl,
-							htmlUrl: meta.htmlUrl?.trim() || prev.htmlUrl,
+							pdfUrl: meta.pdf_url?.trim() || prev.pdfUrl,
+							htmlUrl: meta.html_url?.trim() || prev.htmlUrl,
 						}
 					: prev,
 			);

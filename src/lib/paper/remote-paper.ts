@@ -16,7 +16,7 @@ export type RemotePaperItem = {
 	title: string;
 	abstract?: string;
 	url: string;
-	score?: number;
+	score?: number | null;
 };
 
 const cache = new Map<string, PaperMetadata>();
@@ -40,6 +40,9 @@ export function stageRemoteArxivPaper(item: RemotePaperItem): PaperMetadata {
 	const urls = arxivUrls(item.arxivId);
 	const now = new Date().toISOString();
 	const meta: PaperMetadata = {
+		// Empty `path` is the Rust-side sentinel for "no vault folder yet";
+		// a remote preview is never a catalog row.
+		path: "",
 		id: item.arxivId,
 		type: "arxiv",
 		title: item.title,
@@ -47,6 +50,7 @@ export function stageRemoteArxivPaper(item: RemotePaperItem): PaperMetadata {
 		authors: [],
 		tags: [],
 		status: "completed",
+		is_read: false,
 		arxiv_id: item.arxivId,
 		source_url: item.url,
 		pdf_url: urls?.pdf ?? undefined,

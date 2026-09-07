@@ -1,37 +1,47 @@
 /**
- * Renderer-side executor registry for Rust JobCenter jobs.
+ * Renderer-side executor registry + task-panel projection for Rust JobCenter
+ * jobs.
  *
  * Rust emits `job:offer` when a renderer-executed job (e.g. layout analysis)
- * starts. This module routes offers to the matching frontend executor and
- * provides helpers to report progress / completion back via `job_report`.
+ * starts. This module routes offers to the matching frontend executor,
+ * provides helpers to report progress / completion back via `job_report`,
+ * mirrors `job:changed` into the background-tasks panel and renders
+ * byte/count `job:progress` events onto the projected rows.
+ *
+ * Internal bridge: the public facade for background work is `tasks.ts`.
  */
 
 import i18n from "@/i18n";
 import {
-	type BackgroundTaskKind,
+	type BackgroundTaskIcon,
 	cancelBackgroundTask,
 	completeBackgroundTask,
 	failBackgroundTask,
+	formatBytes,
 	getBackgroundTasksSnapshot,
 	isFinishedBackgroundTask,
+	mapDownloadProgress,
+	phaseLabel,
 	registerBackgroundTaskCancelHandler,
-	registerBackgroundTaskCancellation,
-	releaseBackgroundTaskCancellation,
+	releaseBackgroundTaskCancelHandler,
 	startBackgroundTask,
 	updateBackgroundTask,
 } from "@/lib/core/background-tasks";
-import type {
-	JobChangedPayload,
-	JobKind,
-	JobOfferPayload,
-	JobReportArgs,
-	JobSnapshot,
-	JobState,
+import {
+	commands,
+	events,
+	type JobKind,
+	type JobOfferPayload,
+	type JobProgressEvent,
+	type JobReportArgs,
+	type JobSnapshot,
+	type JobState,
 } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApiResult } from "@/lib/core/ipc";
 import { logger } from "@/lib/core/logger";
-import { listenSafe } from "@/lib/core/tauri-events";
+import { isTauri } from "@/lib/core/tauri";
+import { toSafeDisposer } from "@/lib/core/tauri-events";
 
 export type { JobKind, JobOfferPayload, JobState };
 
@@ -90,11 +100,9 @@ function dispatchJobOffer(offer: JobOfferPayload): void {
  */
 async function claimRunningJobOffers(): Promise<void> {
 	try {
-		const jobs = await invokeApi<JobChangedSnapshot[]>(
-			"job_list",
-			{ args: {} },
-			{ fallback: "job list failed" },
-		);
+		const jobs = await callApiResult(() => commands.jobList({}), {
+			fallback: "job list failed",
+		});
 		for (const job of jobs ?? []) {
 			if (job.state !== "running" || !executors.has(job.kind)) continue;
 			dispatchJobOffer({
@@ -103,6 +111,7 @@ async function claimRunningJobOffers(): Promise<void> {
 				vaultPath: job.vaultPath,
 				paperPath: job.paperPath ?? null,
 				force: job.force ?? false,
+				params: job.params ?? null,
 			});
 		}
 	} catch (error) {
@@ -114,9 +123,15 @@ async function claimRunningJobOffers(): Promise<void> {
 
 export function startJobCenterExecutorListener(): void {
 	if (offerSubscription) return;
-	offerSubscription = listenSafe<JobOfferPayload>("job:offer", (payload) => {
-		dispatchJobOffer(payload);
-	});
+	if (isTauri()) {
+		offerSubscription = toSafeDisposer(
+			events.jobOffer.listen((event) => {
+				dispatchJobOffer(event.payload);
+			}),
+		);
+	} else {
+		offerSubscription = () => undefined;
+	}
 	void claimRunningJobOffers();
 }
 
@@ -132,18 +147,14 @@ export async function jobReport(args: {
 	error?: string | null;
 	state?: JobState | null;
 }): Promise<void> {
-	await invokeApi(
-		"job_report",
-		{
-			args: {
-				jobId: args.jobId,
-				progress: args.progress ?? undefined,
-				phase: args.phase ?? undefined,
-				error: args.error ?? undefined,
-				state: args.state ?? undefined,
-			} satisfies JobReportArgs,
-		},
-		{ allowVoid: true },
+	await callApiResult(() =>
+		commands.jobReport({
+			jobId: args.jobId,
+			progress: args.progress ?? null,
+			phase: args.phase ?? null,
+			error: args.error ?? null,
+			state: args.state ?? null,
+		} satisfies JobReportArgs),
 	);
 }
 
@@ -155,22 +166,81 @@ export type JobChangedSnapshot = JobSnapshot;
 
 /**
  * Job kinds projected into the background-tasks panel (§7.6). Kinds absent
- * here (pageCount / wikiReindex) stay silent to avoid idle-lane noise.
+ * here (pageCount / wikiReindex / layoutTranslate) stay silent to avoid
+ * idle-lane noise.
  */
-const PROJECTED_JOB_KINDS: Partial<Record<JobKind, BackgroundTaskKind>> = {
-	layoutAnalyze: "layout",
-	parseRefs: "parse",
-	parseBody: "pdfParse",
-	downloadAssets: "download",
-	recognizeMetadata: "recognize",
-};
+const PROJECTED_JOB_KINDS: ReadonlySet<JobKind> = new Set([
+	"layoutAnalyze",
+	"parseRefs",
+	"parseBody",
+	"downloadAssets",
+	"recognizeMetadata",
+	"import",
+	"connectorSync",
+	"modelDownload",
+	"citingScan",
+	"libraryIo",
+	"metadataRefresh",
+]);
 
-function projectedTaskKind(kind: JobKind): BackgroundTaskKind | null {
-	return PROJECTED_JOB_KINDS[kind] ?? null;
+/**
+ * Import rows keep the icon their legacy row had (`search` for the magic wand
+ * and 广场, `layout` for Cool Papers notes).
+ */
+function importRowIcon(params: unknown): BackgroundTaskIcon {
+	switch (jobParams(params).mode) {
+		case "lookup":
+		case "plaza":
+			return "search";
+		case "coolNotes":
+			return "layout";
+		default:
+			return "fileUp";
+	}
 }
 
-function jobPanelTitle(kind: JobKind): string {
-	switch (kind) {
+/** Params-dependent icon hint; other kinds derive their icon from the kind. */
+function jobRowIcon(job: JobChangedSnapshot): BackgroundTaskIcon | undefined {
+	if (job.kind === "import") return importRowIcon(job.params);
+	if (job.kind === "libraryIo") {
+		return jobParams(job.params).op === "export" ? "package" : "fileUp";
+	}
+	return undefined;
+}
+
+/** Scheduler-owned phase words carry no user-facing status. */
+const LIFECYCLE_PHASES: ReadonlySet<string> = new Set([
+	"queued",
+	"running",
+	"completed",
+	"failed",
+	"cancelled",
+	"dependency failed",
+]);
+
+/**
+ * The job's status text: executors report their localized phase (the legacy
+ * `setDetail`), which the row shows while running and keeps once settled.
+ */
+function statusDetail(job: JobChangedSnapshot): string | undefined {
+	const phase = job.phase?.trim();
+	if (!phase || LIFECYCLE_PHASES.has(phase)) return undefined;
+	return phase;
+}
+
+/** Absent / zero progress stays indeterminate so the ring keeps spinning. */
+function panelProgress(job: JobChangedSnapshot): number | null {
+	return typeof job.progress === "number" && job.progress > 0
+		? job.progress
+		: null;
+}
+
+function jobPanelTitle(job: JobChangedSnapshot): string {
+	switch (job.kind) {
+		case "import":
+			return importPanelTitle(job.params);
+		case "connectorSync":
+			return connectorPanelTitle(job.params);
 		case "parseRefs":
 			return i18n.t("app:tasks.parseRefs");
 		case "parseBody":
@@ -179,9 +249,98 @@ function jobPanelTitle(kind: JobKind): string {
 			return i18n.t("app:tasks.downloadPaper");
 		case "recognizeMetadata":
 			return i18n.t("app:tasks.recognizeMeta");
+		case "modelDownload":
+			return i18n.t("app:tasks.layoutModelDownload");
+		case "citingScan":
+			return i18n.t("app:tasks.citingScan");
+		case "metadataRefresh":
+			return i18n.t("sidebar:papersLibrary.refreshMetadataTaskTitle");
+		case "libraryIo":
+			return jobParams(job.params).op === "export"
+				? i18n.t("app:tasks.libraryExport")
+				: i18n.t("app:tasks.libraryImport");
 		default:
 			return i18n.t("app:tasks.layoutAnalysis");
 	}
+}
+
+/**
+ * Renderer-executed jobs carry their panel identity in `params`: imports their
+ * flow (`mode`) plus source identifiers, Connector saves the progress key and
+ * the paper title.
+ */
+type JobParams = {
+	mode?: string;
+	text?: string;
+	title?: string;
+	id?: string;
+	detail?: string;
+	entries?: Array<{ filePath?: string }>;
+	op?: string;
+	papers?: unknown[];
+};
+
+function jobParams(params: unknown): JobParams {
+	return (params && typeof params === "object" ? params : {}) as JobParams;
+}
+
+function importPanelTitle(params: unknown): string {
+	switch (jobParams(params).mode) {
+		case "skill":
+			return i18n.t("sidebar:lookup.skillImportTask");
+		case "localPdf":
+			return i18n.t("app:tasks.importPdf");
+		case "plaza":
+			return i18n.t("app:plazaImport.taskTitle");
+		case "coolNotes":
+			return i18n.t("app:coolPapers.fetchTask");
+		default:
+			return i18n.t("app:tasks.lookupImport");
+	}
+}
+
+function importPanelDetail(job: JobChangedSnapshot): string | undefined {
+	const p = jobParams(job.params);
+	switch (p.mode) {
+		case "lookup":
+			return p.text?.slice(0, 80) || undefined;
+		case "plaza":
+			return (p.title?.trim() || p.id || "").slice(0, 80) || undefined;
+		case "coolNotes":
+			return (p.title?.trim() || job.paperPath || "").slice(0, 80) || undefined;
+		case "localPdf": {
+			const first = p.entries?.[0]?.filePath?.split(/[\\/]/).pop();
+			const extra = (p.entries?.length ?? 0) - 1;
+			if (!first) return undefined;
+			return extra > 0 ? `${first} +${extra}` : first;
+		}
+		default:
+			return undefined;
+	}
+}
+
+/** Connector rows are titled after the paper the attachment belongs to. */
+function connectorPanelTitle(params: unknown): string {
+	return jobParams(params).title?.trim() || i18n.t("app:tasks.connector");
+}
+
+function jobPanelDetail(job: JobChangedSnapshot): string | undefined {
+	if (job.kind === "import") return importPanelDetail(job);
+	if (job.kind === "connectorSync") {
+		return jobParams(job.params).detail?.slice(0, 80) || undefined;
+	}
+	if (job.kind === "modelDownload") {
+		return i18n.t("app:tasks.layoutModelDetail");
+	}
+	if (job.kind === "metadataRefresh") {
+		return i18n.t("sidebar:papersLibrary.refreshMetadataTaskDetail", {
+			current: 0,
+			total: jobParams(job.params).papers?.length ?? 0,
+		});
+	}
+	// Vault-scope kinds carry no paper target.
+	if (job.kind === "citingScan" || job.kind === "libraryIo") return undefined;
+	return job.paperPath ?? undefined;
 }
 
 let projectionSubscription: (() => void) | null = null;
@@ -194,19 +353,20 @@ const wiredJobCancels = new Set<string>();
  */
 export function startJobTaskProjection(): void {
 	if (projectionSubscription) return;
-	projectionSubscription = listenSafe<JobChangedPayload>(
-		"job:changed",
-		({ job }) => {
-			projectJobToBackgroundTask(job);
-		},
-	);
+	if (isTauri()) {
+		projectionSubscription = toSafeDisposer(
+			events.jobChanged.listen((event) => {
+				projectJobToBackgroundTask(event.payload.job);
+			}),
+		);
+	} else {
+		projectionSubscription = () => undefined;
+	}
 	void (async () => {
 		try {
-			const jobs = await invokeApi<JobChangedSnapshot[]>(
-				"job_list",
-				{ args: {} },
-				{ fallback: "job list failed" },
-			);
+			const jobs = await callApiResult(() => commands.jobList({}), {
+				fallback: "job list failed",
+			});
 			for (const job of jobs ?? []) {
 				projectJobToBackgroundTask(job);
 			}
@@ -224,10 +384,12 @@ export function stopJobTaskProjection(): void {
 }
 
 export function projectJobToBackgroundTask(job: JobChangedSnapshot): void {
-	const taskKind = projectedTaskKind(job.kind);
-	if (!taskKind) return;
-	const title = jobPanelTitle(job.kind);
-	const detail = job.paperPath ?? undefined;
+	if (!PROJECTED_JOB_KINDS.has(job.kind)) return;
+	const title = jobPanelTitle(job);
+	const detail = jobPanelDetail(job);
+	const icon = jobRowIcon(job);
+	const status = statusDetail(job);
+	const progress = panelProgress(job);
 	switch (job.state) {
 		case "queued":
 		case "running": {
@@ -242,19 +404,23 @@ export function projectJobToBackgroundTask(job: JobChangedSnapshot): void {
 			}
 			startBackgroundTask({
 				id: job.id,
-				kind: taskKind,
+				kind: job.kind,
 				title,
 				detail,
+				icon,
 				running: job.state === "running",
-				progress: typeof job.progress === "number" ? job.progress : null,
+				progress,
 			});
 			wireJobCancellation(job.id);
 			updateBackgroundTask(
 				job.id,
 				{
 					status: job.state === "running" ? "running" : "queued",
-					progress: typeof job.progress === "number" ? job.progress : null,
-					...(job.phase ? { detail: job.phase } : {}),
+					// Byte progress (`job:progress`) owns the bar for
+					// download/import rows, so an absent job progress must not
+					// reset it to indeterminate.
+					...(progress === null ? {} : { progress }),
+					...(status ? { detail: status } : {}),
 				},
 				{ absoluteProgress: true },
 			);
@@ -262,7 +428,7 @@ export function projectJobToBackgroundTask(job: JobChangedSnapshot): void {
 		}
 		case "succeeded":
 		case "skipped":
-			completeBackgroundTask(job.id, detail);
+			completeBackgroundTask(job.id, status ?? detail);
 			releaseJobCancellation(job.id);
 			return;
 		case "failed":
@@ -276,12 +442,10 @@ export function projectJobToBackgroundTask(job: JobChangedSnapshot): void {
 	}
 }
 
-function requestJobCancel(jobId: string): void {
-	void invokeApi<boolean>(
-		"job_cancel",
-		{ jobId },
-		{ fallback: "job cancellation failed" },
-	).catch((error) =>
+export function requestJobCancel(jobId: string): void {
+	void callApiResult(() => commands.jobCancel(jobId), {
+		fallback: "job cancellation failed",
+	}).catch((error) =>
 		logger.warn("job cancellation failed", {
 			jobId,
 			error: errorText(error),
@@ -292,12 +456,74 @@ function requestJobCancel(jobId: string): void {
 function wireJobCancellation(jobId: string): void {
 	if (wiredJobCancels.has(jobId)) return;
 	wiredJobCancels.add(jobId);
-	registerBackgroundTaskCancellation(jobId);
 	registerBackgroundTaskCancelHandler(jobId, () => requestJobCancel(jobId));
 }
 
 function releaseJobCancellation(jobId: string): void {
 	if (!wiredJobCancels.has(jobId)) return;
 	wiredJobCancels.delete(jobId);
-	releaseBackgroundTaskCancellation(jobId);
+	releaseBackgroundTaskCancelHandler(jobId);
+}
+
+let progressSubscription: (() => void) | null = null;
+
+/**
+ * Single global `job:progress` listener, routed by task id (= job id) onto
+ * the projected panel rows. Host runners (model download) and Host commands
+ * driven by renderer executors (asset downloads, citing scans, import
+ * batches) report byte/count progress under their JobCenter job id.
+ */
+export function startJobProgressListener(): void {
+	if (progressSubscription) return;
+	if (isTauri()) {
+		progressSubscription = toSafeDisposer(
+			events.jobProgress.listen((event) => handleJobProgress(event.payload)),
+		);
+	} else {
+		progressSubscription = () => undefined;
+	}
+}
+
+export function stopJobProgressListener(): void {
+	progressSubscription?.();
+	progressSubscription = null;
+}
+
+function handleJobProgress(payload: JobProgressEvent): void {
+	const id = payload.taskId;
+	const task = getBackgroundTasksSnapshot().tasks.find((t) => t.id === id);
+	if (!task) return;
+	const { downloadedBytes, totalBytes, currentCount, totalCount } = payload;
+	if (payload.phase === "parse") {
+		updateBackgroundTask(id, {
+			progress: mapDownloadProgress(payload.phase, payload.progress),
+			detail: phaseLabel(payload.phase),
+		});
+		return;
+	}
+	if (currentCount != null && totalCount != null) {
+		updateBackgroundTask(id, {
+			progress: payload.progress,
+			detail: i18n.t("app:tasks.batchProgress", {
+				phase: phaseLabel(payload.phase),
+				current: currentCount,
+				total: totalCount,
+			}),
+		});
+		return;
+	}
+	updateBackgroundTask(id, {
+		progress: mapDownloadProgress(payload.phase, payload.progress),
+		detail:
+			totalBytes == null
+				? i18n.t("app:tasks.downloadBytesUnknown", {
+						phase: phaseLabel(payload.phase),
+						downloaded: formatBytes(downloadedBytes),
+					})
+				: i18n.t("app:tasks.downloadBytes", {
+						phase: phaseLabel(payload.phase),
+						downloaded: formatBytes(downloadedBytes),
+						total: formatBytes(totalBytes),
+					}),
+	});
 }

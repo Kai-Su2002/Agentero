@@ -121,7 +121,9 @@ cargo test -p agentero-cli
 | 3.3 | 设置 → 通用 | 改 **Paper 行标签** / **排序** 各选一档，回看树 | 展示标签/顺序变了；磁盘路径不变 | ☐ |
 | 3.4 | 左栏·树 | 在 `notes/` 右键 → **新建文件**，输入名回车 | 出现新 `.md`；中间可打开编辑 | ☐ |
 | 3.5 | 左栏·树 | 右键 → **新建文件夹** | 内联命名成功；树刷新 | ☐ |
-| 3.6 | 左栏·树 | ⌘ 点多选若干项，拖到 `papers/` 某组织夹 | 文件移入目标；树与磁盘一致 | ☐ |
+| 3.6 | 左栏·树 | ⌘ 点多选若干项，再拖到 `papers/` 某组织夹 | 标题栏原位切换为数量 / 移动 / 删除 / 清除；树不下移、不被遮挡；文件移入目标后树与磁盘一致 | ☐ |
+| 3.6a | 左栏·树 | 多选后分别右键已选行与未选行；Shift 范围同时覆盖父夹与后代 | 已选行菜单作用于整组；未选行先收敛为单项；父夹代表其后代且批量数量不重复 | ☐ |
+| 3.6b | 左栏·树 | 用 Tab 聚焦文件行，按 Enter / Space；多选后按 Esc | 行可由键盘激活且读屏获得 `aria-selected`；Esc 退出选择模式，树不位移 | ☐ |
 | 3.7 | 左栏·树 | 选中文件，右键 **在 Finder 中显示** 或 `⌥⌘R` | 系统访达定位到该项 | ☐ |
 | 3.8 | 左栏·树 | 选中文件夹，右键 **在终端中打开** 或 `⌥⌘T` | 系统终端 cwd = 该文件夹 | ☐ |
 | 3.9 | 左栏·树 | 选中文件再 `⌥⌘T` | 终端 cwd = **父目录** | ☐ |
@@ -352,7 +354,7 @@ cargo test -p agentero-cli
 | # | 界面 | 操作 | 预期 | 结果 |
 |---|---|---|---|---|
 | 11.0.1 | 右栏·Agent | 未配置 Agent 时打开面板 | 有安装/配置指引；**左栏库与 PDF 仍可用** | ☐ |
-| 11.0.2 | 设置 → Agent | 本机未装 Claude/Codex/OpenCode/Gemini 等预设 Agent 时，点「安装」/「安装 ACP」 | 静默执行官方 installer；安装成功后探测状态变绿 | ☐ |
+| 11.0.2 | 设置 → Agent | 本机未装 Claude/Codex/OpenCode/Antigravity 等预设 Agent 时，点「安装」/「安装 ACP」 | 静默执行官方 installer；安装成功后探测状态变绿 | ☐ |
 | 11.0.3 | 设置 → Agent | 已装 Agent 有可用更新时，点「升级」 | 升级成功；版本号或探测状态更新 | ☐ |
 
 ### 11.1 对话
@@ -368,6 +370,8 @@ cargo test -p agentero-cli
 | 11.1.7 | 右栏·Agent | 会话空闲时 hover 用户消息 → Edit → 改完重发 | 该消息之后内容丢弃，新 turn 发出 | ☐ |
 | 11.1.8 | 右栏·Agent | 切换历史会话 / 加载旧会话 | 能 list 并恢复（provider 支持时） | ☐ |
 | 11.1.9 | 右栏·Agent | 看回答中的 Sources（若 Agent 返回） | 展示读过的本地路径 | ☐ |
+| 11.1.10 | 右栏·Agent（支持 Client terminal 的 Agent） | 依次执行 `pwd`、`echo AGENTERO_SMOKE`，再启动长命令，发送 `wait_for_exit` 并在等待期间读取 output、kill、release | 前两条及时返回；wait 挂起时同连接仍能处理 output / kill / release，卡片最终 completed / failed | ☐ |
+| 11.1.11 | 右栏·Agent | 在工具卡 pending 时结束或取消回合，再依次接收迟到 progress、completion、progress | 回合结束后不保留永久 spinner；内容与终态按同一 toolCallId 修正原卡片，迟到 progress 不恢复 spinner，也不新增重复卡片 | ☐ |
 
 ### 11.2 权限
 

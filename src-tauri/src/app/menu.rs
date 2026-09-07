@@ -178,6 +178,7 @@ pub fn build_menu(
 /// macOS-only: other platforms have no native window menu (actions live in the
 /// React title bar + keyboard shortcuts), so this is a no-op there.
 #[tauri::command]
+#[specta::specta]
 pub fn set_locale(app: tauri::AppHandle, locale: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {

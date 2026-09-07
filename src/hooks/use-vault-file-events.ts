@@ -1,11 +1,11 @@
 import { useEffect } from "react";
+import { events } from "@/lib/core/bindings";
 import { isTauri } from "@/lib/core/tauri";
-import { listenSafe } from "@/lib/core/tauri-events";
+import { listenEventSafe } from "@/lib/core/tauri-events";
 import { isPaperAssetPath, isUnderPapers } from "@/lib/paper/paths";
 import {
 	startVaultWatch,
 	stopVaultWatch,
-	VAULT_FILE_CHANGED_EVENT,
 	type VaultFileChangedPayload,
 } from "@/lib/vault/fs-watch";
 
@@ -61,26 +61,23 @@ export function useVaultFileEvents({
 	}, [vaultPath]);
 
 	useEffect(() => {
-		return listenSafe<VaultFileChangedPayload>(
-			VAULT_FILE_CHANGED_EVENT,
-			async (payload) => {
-				if (shouldIgnoreEvent?.(payload)) return;
-				if (onLibraryChange && payloadAffectsLibrary(payload)) {
-					onLibraryChange();
-				}
-				if (payload.rename) {
-					await onExternalRename?.(payload.rename, payload);
-				} else if (payload.kind === "rename") {
-					onUnverifiedRename?.(payload);
-				}
-				for (const p of payload.paths) {
-					onDiskChange(p);
-					onWikiChange?.(p);
-				}
-				// Structural changes affect the tree; plain content edits don't.
-				if (payload.kind !== "modify") onStructuralChange(payload.paths);
-			},
-		);
+		return listenEventSafe(events.vaultFileChanged, async (payload) => {
+			if (shouldIgnoreEvent?.(payload)) return;
+			if (onLibraryChange && payloadAffectsLibrary(payload)) {
+				onLibraryChange();
+			}
+			if (payload.rename) {
+				await onExternalRename?.(payload.rename, payload);
+			} else if (payload.kind === "rename") {
+				onUnverifiedRename?.(payload);
+			}
+			for (const p of payload.paths) {
+				onDiskChange(p);
+				onWikiChange?.(p);
+			}
+			// Structural changes affect the tree; plain content edits don't.
+			if (payload.kind !== "modify") onStructuralChange(payload.paths);
+		});
 	}, [
 		onDiskChange,
 		onExternalRename,

@@ -66,4 +66,8 @@ export {
 	type PaperTreeSortMode,
 	sortFileTreeNodes,
 } from "@/lib/paper/tree-label";
-export type { PaperMetadata, PaperTag } from "@/lib/paper/types";
+export type {
+	PaperLibraryRow,
+	PaperMetadata,
+	PaperTag,
+} from "@/lib/paper/types";

@@ -1,5 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
 import i18n from "@/i18n";
+import { commands } from "@/lib/core/bindings";
+import { callResult } from "@/lib/core/ipc";
 import { readJsonStorage, writeJsonStorage } from "@/lib/core/storage";
 import { isTauri } from "@/lib/core/tauri";
 import { isRemoteVaultHandle } from "@/lib/vault/remote/remote-vault";
@@ -119,5 +120,5 @@ export async function openNewWindow(): Promise<void> {
 	if (!isTauri()) {
 		throw new Error(i18n.t("app:vault.openDesktopOnly"));
 	}
-	await invoke("window_new");
+	await callResult(() => commands.windowNew());
 }

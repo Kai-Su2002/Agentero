@@ -1,5 +1,6 @@
+import { commands, type VaultTreeNode_Serialize } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApiResult } from "@/lib/core/ipc";
 import { toVaultRelative } from "@/lib/core/path";
 import { compareNaturalName } from "@/lib/core/sort";
 import { normalizePathKey } from "@/lib/vault/path";
@@ -264,30 +265,20 @@ async function buildDirNode(
 	};
 }
 
-/** Host `VaultTreeNode` payload (`vault_tree_build` / `vault_tree_children`). */
-type VaultTreeNodeDto = {
-	name: string;
-	path: string;
-	kind: "file" | "directory";
-	children?: VaultTreeNodeDto[];
-	childrenPending?: boolean;
-	hasTex?: boolean;
-};
-
-/** Map Host nodes to `FileNode`s, sorting each level like {@link sortNodes}. */
-function mapHostTreeNodes(nodes: VaultTreeNodeDto[]): FileNode[] {
+/** Map Host `vault_tree_build` / `vault_tree_children` nodes to `FileNode`s,
+ *  sorting each level like {@link sortNodes}. */
+function mapHostTreeNodes(nodes: VaultTreeNode_Serialize[]): FileNode[] {
 	return sortNodes(
 		nodes.map((n) => {
 			const node: FileNode = {
 				id: n.path,
 				name: n.name,
 				path: n.path,
-				kind: n.kind,
+				kind: n.kind === "directory" ? "directory" : "file",
 			};
 			if (n.children) node.children = mapHostTreeNodes(n.children);
-			if (n.childrenPending !== undefined)
-				node.childrenPending = n.childrenPending;
-			if (n.hasTex !== undefined) node.hasTex = n.hasTex;
+			if (n.childrenPending != null) node.childrenPending = n.childrenPending;
+			if (n.hasTex != null) node.hasTex = n.hasTex;
 			return node;
 		}),
 	);
@@ -307,10 +298,9 @@ export async function listVaultDirChildren(
 		return buildTree(remoteTreeAdapter(rootPath), dirAbsPath, rel, 0, true);
 	}
 	// Local: single IPC; the Host applies the same eager/lazy semantics.
-	const nodes = await invokeApi<VaultTreeNodeDto[]>("vault_tree_children", {
-		vaultPath: rootPath,
-		dirPath: dirAbsPath,
-	});
+	const nodes = await callApiResult(() =>
+		commands.vaultTreeChildren(rootPath, dirAbsPath),
+	);
 	return mapHostTreeNodes(nodes);
 }
 
@@ -490,8 +480,6 @@ export async function loadVaultTree(rootPath: string): Promise<FileNode[]> {
 	}
 	await ensureLocalFsScope(rootPath);
 	// Local: the Host walks the vault in-process and returns the tree in one IPC.
-	const nodes = await invokeApi<VaultTreeNodeDto[]>("vault_tree_build", {
-		vaultPath: rootPath,
-	});
+	const nodes = await callApiResult(() => commands.vaultTreeBuild(rootPath));
 	return mapHostTreeNodes(nodes);
 }

@@ -3,9 +3,9 @@
 use crate::error::CliError;
 use crate::output::to_value;
 use crate::resolve::{resolve_vault, GlobalOpts};
-use agentero_lib::features::import as paper_import;
-use agentero_lib::features::import::{LookupImportArgs, PaperImportArgs};
-use agentero_lib::features::zotero;
+use agentero_core::features::import as paper_import;
+use agentero_core::features::import::{LookupImportArgs, PaperImportArgs};
+use agentero_core::features::zotero;
 use clap::{Subcommand, ValueHint};
 use serde_json::{json, Value};
 use std::fs;

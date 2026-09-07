@@ -1,6 +1,7 @@
 import { open } from "@tauri-apps/plugin-dialog";
 import i18n from "@/i18n";
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 import {
 	remoteEnsureVault,
@@ -56,13 +57,9 @@ export async function createVault(
 
 	const { logOp } = await import("@/lib/core/logger");
 	return logOp("createVault", { path, locale }, async () => {
-		return invokeApi<CreateVaultResult>(
-			"vault_create",
-			{ path, locale },
-			{
-				fallback: i18n.t("app:vault.createFailed"),
-			},
-		);
+		return callApi(() => commands.vaultCreate(path, locale ?? null), {
+			fallback: i18n.t("app:vault.createFailed"),
+		});
 	});
 }
 
@@ -85,13 +82,9 @@ export async function ensureVault(
 		if (remoteSessionId) {
 			return remoteEnsureVault(remoteSessionId, locale);
 		}
-		return invokeApi<CreateVaultResult>(
-			"vault_ensure",
-			{ path, locale },
-			{
-				fallback: i18n.t("app:vault.createFailed"),
-			},
-		);
+		return callApi(() => commands.vaultEnsure(path, locale ?? null), {
+			fallback: i18n.t("app:vault.createFailed"),
+		});
 	});
 }
 

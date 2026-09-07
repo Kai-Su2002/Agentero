@@ -119,7 +119,6 @@ export {
 export type { PdfHighlight } from "@/lib/pdf/highlight/types";
 export {
 	applyLayoutTranslateSidecar,
-	attachLayoutModelTaskListener,
 	compareLayoutReadingOrder,
 	currentLayoutTranslateCacheKey,
 	dedupeLayoutRegions,
@@ -164,7 +163,7 @@ export {
 	toggleLayoutOverlayVisible,
 	toLayoutTranslateItems,
 } from "@/lib/pdf/layout";
-export { initJobCenterExecutors } from "@/lib/pdf/layout/enqueue-paper-layout";
+export { registerLayoutTaskExecutor } from "@/lib/pdf/layout/enqueue-paper-layout";
 export {
 	layoutBackendsAfterClearingProvider,
 	persistLayoutProviderConfig,
@@ -203,8 +202,15 @@ export {
 } from "@/lib/pdf/outline-location";
 export { getPdfPageCount } from "@/lib/pdf/page-count";
 export {
+	isPdfPaperTone,
 	PDF_ANNOTATION_DARK_CLASS,
 	PDF_PAGE_RASTER_DARK_CLASS,
+	PDF_PAPER_BLOCK_CLASS,
+	PDF_PAPER_SHELL_CLASS,
+	PDF_PAPER_SWATCH_CLASS,
+	PDF_PAPER_TINT,
+	PDF_PAPER_TONES,
+	type PdfPaperTone,
 } from "@/lib/pdf/page-theme";
 export { readReadingPage, writeReadingPage } from "@/lib/pdf/reading-position";
 export {

@@ -27,8 +27,8 @@ settings 只提供读/写/持久化/广播能力，**不 import 任何域 featur
   - connector：`set_port`（端口变更重绑监听）
   - mcp：`set_port` + translator / note-mode 快照（端口变更重绑监听；端口变化时自动停掉内置 ChatGPT tunnel，用户需再点 Start）
   - tunnel：与 MCP 同域，但凭据从 settings store 原值读取（不通过 redacted 快照传递），启动/停止由 `mcp_tunnel_start` / `mcp_tunnel_stop` 命令驱动
-  - jobs：`apply_layout_backend` + `drain_and_spawn`（layout 并发上限）
+  - jobs：`apply_layout_backend` + `apply_import_concurrency` + `drain_and_spawn`（layout / 导入并发上限）
 - 反序列化期需要的域默认值（如 `DEFAULT_CONNECTOR_PORT`）定义在 settings，由属主域 re-export（方向 `connector → settings`，不成环）。
 
 前端：[../frontend/settings.md](../frontend/settings.md)  
-代码：`src-tauri/src/features/settings/`
+代码：`src-tauri/src/features/system/settings/`

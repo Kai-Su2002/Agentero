@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { commands } from "@/lib/core/bindings";
 import { isTauri } from "@/lib/core/tauri";
 import { isRemoteVaultHandle } from "@/lib/vault/remote/remote-vault";
 
@@ -22,7 +22,8 @@ export function ensureLocalFsScope(rootPath: string | null): Promise<void> {
 	const key = rootPath.replace(/[\\/]+$/, "");
 	let pending = fsScopeGrants.get(key);
 	if (!pending) {
-		pending = invoke("vault_allow_fs_scope", { path: key })
+		pending = commands
+			.vaultAllowFsScope(key)
 			.then(() => undefined)
 			.catch(() => {
 				// Best-effort: the static scope may already cover it; the actual

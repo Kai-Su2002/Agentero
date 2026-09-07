@@ -5,6 +5,7 @@ import type {
 	LayoutAnalysisScope,
 	LayoutTask,
 } from "@embedpdf/plugin-layout-analysis";
+import { events } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
 
 import { logger } from "@/lib/core/logger";
@@ -25,8 +26,6 @@ import {
 } from "@/lib/pdf/layout/normalize";
 import {
 	invokeLayoutRemoteAnalyzePdf,
-	LAYOUT_REMOTE_PROGRESS_EVENT,
-	type LayoutRemoteProgressPayload,
 	paddlePageToRegions,
 } from "@/lib/pdf/layout/paddle";
 import {
@@ -844,37 +843,33 @@ function startRemoteLayoutAnalysis(
 			const requestId = `layout-remote-${documentId}`;
 			// Host emits job progress (upload → pending/running → download).
 			if (isTauri()) {
-				const { listen } = await import("@tauri-apps/api/event");
-				unlisten = await listen<LayoutRemoteProgressPayload>(
-					LAYOUT_REMOTE_PROGRESS_EVENT,
-					(event) => {
-						const p = event.payload;
-						if (p.requestId && p.requestId !== requestId) return;
-						const known =
-							typeof p.totalPages === "number" && p.totalPages > 0
-								? p.totalPages
-								: totalPages;
-						const done =
-							typeof p.extractedPages === "number" ? p.extractedPages : 0;
-						const progress =
-							p.phase === "uploading"
-								? 3
-								: p.phase === "downloading" || p.phase === "done"
-									? 96
-									: clampProgress(6 + (done / known) * 88);
-						setLayoutAnalysisUi(
-							{
-								stage: "running",
-								message: analyzingMessage,
-								progress,
-								page: Math.min(done + 1, known),
-								completed: done,
-								total: known,
-							},
-							documentId,
-						);
-					},
-				);
+				unlisten = await events.layoutRemoteProgress.listen((event) => {
+					const p = event.payload;
+					if (p.requestId && p.requestId !== requestId) return;
+					const known =
+						typeof p.totalPages === "number" && p.totalPages > 0
+							? p.totalPages
+							: totalPages;
+					const done =
+						typeof p.extractedPages === "number" ? p.extractedPages : 0;
+					const progress =
+						p.phase === "uploading"
+							? 3
+							: p.phase === "downloading" || p.phase === "done"
+								? 96
+								: clampProgress(6 + (done / known) * 88);
+					setLayoutAnalysisUi(
+						{
+							stage: "running",
+							message: analyzingMessage,
+							progress,
+							page: Math.min(done + 1, known),
+							completed: done,
+							total: known,
+						},
+						documentId,
+					);
+				});
 			}
 
 			setLayoutAnalysisUi(

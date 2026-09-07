@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	type AppSettings_Deserialize,
+	type AppSettings_Serialize,
+	commands,
+	events,
+} from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 import {
 	isPaperTreeLabelMode,
@@ -47,11 +53,20 @@ import { isKnownUiTheme } from "@/lib/ui/theme";
 /** Legacy browser key — only used once to migrate into Host `settings.json`. */
 const LEGACY_SETTINGS_KEY = "agentero-settings";
 
-type SettingsGetResult = {
-	settings: AppSettings;
-	path: string;
-	existed: boolean;
-};
+/**
+ * Host wire snapshot → frontend domain type.
+ *
+ * The generated bindings keep plain strings / nullable numbers where the
+ * frontend refines unions (`theme`, `locale`, modes) and non-null numbers.
+ * `normalizePartial` re-validates every field and falls back to defaults, so
+ * this boundary cast mirrors the `JSON.parse` ingest in
+ * {@link readLegacyLocalStorage}.
+ */
+type SettingsWire = AppSettings_Serialize | AppSettings_Deserialize;
+
+function fromSettingsWire(raw: SettingsWire): AppSettings {
+	return raw as AppSettings;
+}
 
 /** In-memory snapshot (source of truth between Host round-trips). */
 let cache: AppSettings = {
@@ -106,15 +121,11 @@ export async function ensureSettingsLoaded(): Promise<AppSettings> {
 	loadPromise = (async () => {
 		try {
 			if (isTauri()) {
-				const res = await invokeApi<SettingsGetResult>(
-					"settings_get",
-					undefined,
-					{
-						fallback: "settings_get failed",
-					},
-				);
+				const res = await callApi(() => commands.settingsGet(), {
+					fallback: "settings_get failed",
+				});
 				settingsFilePath = res.path;
-				let next = normalizeSettings(res.settings);
+				let next = normalizeSettings(fromSettingsWire(res.settings));
 
 				if (!res.existed) {
 					const legacy = readLegacyLocalStorage();
@@ -205,9 +216,8 @@ export function initSettingsSync(): void {
 	syncStarted = true;
 	void (async () => {
 		try {
-			const { listen } = await import("@tauri-apps/api/event");
-			await listen<AppSettings>("settings:changed", (event) => {
-				applyExternalSettings(event.payload);
+			await events.settingsChanged.listen((event) => {
+				applyExternalSettings(fromSettingsWire(event.payload));
 			});
 		} catch (e) {
 			console.warn("[settings] sync listener failed", e);
@@ -226,12 +236,10 @@ export async function saveSettingsAsync(
 }
 
 async function persistToHost(settings: AppSettings): Promise<AppSettings> {
-	const res = await invokeApi<AppSettings>(
-		"settings_set",
-		{ settings },
-		{ fallback: "settings_set failed" },
-	);
-	return setCache(normalizeSettings(res));
+	const res = await callApi(() => commands.settingsSet(settings), {
+		fallback: "settings_set failed",
+	});
+	return setCache(normalizeSettings(fromSettingsWire(res)));
 }
 
 function readLegacyLocalStorage(): AppSettings | null {
@@ -301,6 +309,11 @@ function normalizePartial(
 		merged.translatorBaseUrl = merged.translatorBaseUrl
 			.trim()
 			.replace(/\/+$/, "");
+	}
+	if (typeof parsed.easyScholarKey !== "string") {
+		merged.easyScholarKey = DEFAULT_SETTINGS.easyScholarKey;
+	} else {
+		merged.easyScholarKey = parsed.easyScholarKey.trim();
 	}
 	if (typeof parsed.networkProxyEnabled !== "boolean") {
 		merged.networkProxyEnabled = DEFAULT_SETTINGS.networkProxyEnabled;
@@ -579,6 +592,9 @@ function normalizeTranslateSettings(
 	);
 	if (typeof raw.autoTranslateSelection === "boolean") {
 		base.autoTranslateSelection = raw.autoTranslateSelection;
+	}
+	if (typeof raw.dualPaneTranslate === "boolean") {
+		base.dualPaneTranslate = raw.dualPaneTranslate;
 	}
 	if (typeof raw.agentId === "string") {
 		base.agentId = raw.agentId.trim();

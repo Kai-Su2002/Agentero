@@ -1,4 +1,5 @@
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 import {
 	aggregateReadingHeatmap,
@@ -35,11 +36,12 @@ async function fetchReadingActivityBatch(
 	);
 	if (isRemoteVaultHandle(vaultPath)) return {};
 	try {
-		return await invokeApi<Record<string, ReadingActivityPoint[]>>(
-			"paper_reading_activity_batch",
-			{ args: { vaultPath, paths: rels } },
+		// Wire points type `y`/`weight` as nullable; JS arithmetic in the
+		// aggregator treats `null` as 0 (unchanged from the pre-binding cast).
+		return (await callApi(
+			() => commands.paperReadingActivityBatch({ vaultPath, paths: rels }),
 			{ fallback: "paper_reading_activity_batch failed" },
-		);
+		)) as Record<string, ReadingActivityPoint[]>;
 	} catch {
 		return {};
 	}

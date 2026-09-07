@@ -3,8 +3,8 @@
  * Install may use a local/dev binary or download the same app version from GitHub Releases.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-import { type ApiResult, invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
 export type CliInstallStatus = {
@@ -35,19 +35,19 @@ export type CliInstallResult = {
 };
 
 export function fetchCliInstallStatus(): Promise<CliInstallStatus> {
-	return invokeApi<CliInstallStatus>("cli_install_status", undefined, {
+	return callApi(() => commands.cliInstallStatus(), {
 		fallback: "Failed to read CLI install status",
 	});
 }
 
 export function installCliCommand(): Promise<CliInstallResult> {
-	return invokeApi<CliInstallResult>("cli_install_command", undefined, {
+	return callApi(() => commands.cliInstallCommand(), {
 		fallback: "Failed to install CLI command",
 	});
 }
 
 export function uninstallCliCommand(): Promise<CliInstallResult> {
-	return invokeApi<CliInstallResult>("cli_uninstall_command", undefined, {
+	return callApi(() => commands.cliUninstallCommand(), {
 		fallback: "Failed to remove CLI command",
 	});
 }
@@ -64,19 +64,19 @@ export type FinderServiceStatus = {
 };
 
 export function fetchFinderServiceStatus(): Promise<FinderServiceStatus> {
-	return invokeApi<FinderServiceStatus>("finder_service_status", undefined, {
+	return callApi(() => commands.finderServiceStatus(), {
 		fallback: "Failed to read Finder service status",
 	});
 }
 
 export function installFinderService(): Promise<FinderServiceStatus> {
-	return invokeApi<FinderServiceStatus>("finder_service_install", undefined, {
+	return callApi(() => commands.finderServiceInstall(), {
 		fallback: "Failed to install Finder service",
 	});
 }
 
 export function uninstallFinderService(): Promise<FinderServiceStatus> {
-	return invokeApi<FinderServiceStatus>("finder_service_uninstall", undefined, {
+	return callApi(() => commands.finderServiceUninstall(), {
 		fallback: "Failed to remove Finder service",
 	});
 }
@@ -84,7 +84,7 @@ export function uninstallFinderService(): Promise<FinderServiceStatus> {
 /** Consume Host-queued vault path from a cold-start deep link (null if none). */
 export async function takePendingVaultOpen(): Promise<string | null> {
 	if (!isTauri()) return null;
-	const res = await invoke<ApiResult<string | null>>("vault_open_take_pending");
+	const res = await commands.vaultOpenTakePending();
 	if (!res.ok) return null;
 	// `data: null` means no pending path (not a failure).
 	return res.data ?? null;

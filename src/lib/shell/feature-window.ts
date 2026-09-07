@@ -11,13 +11,15 @@
  */
 
 import i18n from "@/i18n";
+import { commands } from "@/lib/core/bindings";
 import { notifyError } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
+import type { FeatureViewType } from "@/lib/shell/ui-store";
 import { getVaultPath } from "@/lib/vault/store";
 
-/** Same set as right-rail tabs / leaf feature views. */
-export type FeatureViewType = "agent" | "annotations";
+export type { FeatureViewType };
 
+/** Same set as right-rail tabs / leaf feature views. */
 const FEATURE_TAB_ORDER: FeatureViewType[] = ["agent", "annotations"];
 
 function featureWindowTitle(view: FeatureViewType): string {
@@ -48,7 +50,7 @@ async function clearMainHostForFeature(view: FeatureViewType): Promise<void> {
 	// switch to another non-popped-out tab so the switcher + content remain usable.
 	const { rightSidebarTab, featurePoppedOut } = ui.uiStore.getState();
 	if (rightSidebarTab !== view) return;
-	const next = FEATURE_TAB_ORDER.find(
+	const next = (FEATURE_TAB_ORDER as Array<"agent" | "annotations">).find(
 		(t) => t !== view && !featurePoppedOut[t],
 	);
 	if (!next) return;
@@ -71,14 +73,17 @@ export async function openFeatureWindow(view: FeatureViewType): Promise<void> {
 		const { WebviewWindow } = await import("@tauri-apps/api/webviewWindow");
 		const existed =
 			(await WebviewWindow.getByLabel(featureWindowLabel(view))) != null;
-		const { invoke } = await import("@tauri-apps/api/core");
-		await invoke("feature_window_open", {
+		const res = await commands.featureWindowOpen(
 			view,
-			vaultPath: getVaultPath(),
-			activePath: active?.path ?? null,
-			paperTitle: active?.paperMeta?.title ?? null,
-			title: featureWindowTitle(view),
-		});
+			getVaultPath(),
+			active?.path ?? null,
+			active?.paperMeta?.title ?? null,
+			featureWindowTitle(view),
+		);
+		if (res.status === "error") {
+			notifyError(res.error);
+			return;
+		}
 		await clearMainHostForFeature(view);
 		// Existing feature windows only get focused — re-broadcast so they follow.
 		const { broadcastWorkspaceActive, scheduleAgentSessionHandoffFromMain } =

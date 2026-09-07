@@ -1,12 +1,15 @@
 /**
- * Vault cloud sync (S3-compatible) — Host command wrappers + event names.
+ * Vault cloud sync (S3-compatible) — Host command wrappers.
  * Design: docs/development/cloud-sync-s3.md
  */
 
-import { invokeApi } from "@/lib/core/ipc";
-
-export const SYNC_STATE_EVENT = "sync:state";
-export const SYNC_PROGRESS_EVENT = "sync:progress";
+import {
+	commands,
+	type SyncBackendConfig as SyncBackendConfigWire,
+	type SyncStateEvent_Deserialize,
+	type SyncStatus_Serialize,
+} from "@/lib/core/bindings";
+import { callApiResult } from "@/lib/core/ipc";
 
 /**
  * Which bulky paper assets take part in sync. Notes, metadata sidecars,
@@ -54,18 +57,30 @@ export type SyncOutcome = {
 	conflictCopies: string[];
 };
 
-export type SyncStateEvent = {
-	vaultPath: string;
-	status: "syncing" | "idle" | "error";
-	error?: string;
-};
+/** `sync:state` payload comes straight from the generated wire contract. */
+export type SyncStateEvent = SyncStateEvent_Deserialize;
+
+/** `sync:progress` phases; the wire payload types `phase` as a plain string. */
+export type SyncPhase = "scan" | "pull" | "download" | "upload" | "finalize";
 
 export type SyncProgressEvent = {
 	vaultPath: string;
-	phase: "scan" | "pull" | "download" | "upload" | "finalize";
+	phase: SyncPhase;
 	current: number;
 	total: number;
 };
+
+const SYNC_PHASES: readonly string[] = [
+	"scan",
+	"pull",
+	"download",
+	"upload",
+	"finalize",
+];
+
+export function isSyncProgressPhase(phase: string): phase is SyncPhase {
+	return SYNC_PHASES.includes(phase);
+}
 
 export const emptySyncConfig = (): SyncBackendConfig => ({
 	endpoint: "",
@@ -91,31 +106,61 @@ export type SyncScopeSizes = {
 	attachments: number;
 };
 
-export function syncGetStatus(vaultPath: string): Promise<SyncStatus> {
-	return invokeApi("sync_get_status", { args: { vaultPath } });
+/** Fold the generated wire status into the local all-fields-present shape. */
+function statusFromWire(status: SyncStatus_Serialize): SyncStatus {
+	const config = status.config;
+	return {
+		configured: status.configured,
+		config: config ? configFromWire(config) : undefined,
+		running: status.running,
+		lastSyncAt: status.lastSyncAt ?? undefined,
+		lastVersion: status.lastVersion,
+	};
 }
 
-export function syncScopeSizes(vaultPath: string): Promise<SyncScopeSizes> {
-	return invokeApi("sync_scope_sizes", { args: { vaultPath } });
-}
-
-export function syncConfigure(
-	vaultPath: string,
-	config: SyncBackendConfig,
-): Promise<SyncStatus> {
-	return invokeApi("sync_configure", { args: { vaultPath, config } });
-}
-
-export function syncDisconnect(vaultPath: string): Promise<void> {
-	return invokeApi(
-		"sync_disconnect",
-		{ args: { vaultPath } },
-		{
-			allowVoid: true,
+function configFromWire(config: SyncBackendConfigWire): SyncBackendConfig {
+	return {
+		endpoint: config.endpoint,
+		region: config.region ?? "us-east-1",
+		bucket: config.bucket,
+		prefix: config.prefix ?? "",
+		accessKey: config.accessKey,
+		secretKey: config.secretKey,
+		forcePathStyle: config.forcePathStyle ?? true,
+		autoSync: config.autoSync ?? true,
+		intervalMinutes: config.intervalMinutes ?? 30,
+		conditionalWrites: config.conditionalWrites ?? true,
+		scope: {
+			pdf: config.scope?.pdf ?? true,
+			source: config.scope?.source ?? true,
+			attachments: config.scope?.attachments ?? true,
 		},
+	};
+}
+
+export async function syncGetStatus(vaultPath: string): Promise<SyncStatus> {
+	return statusFromWire(
+		await callApiResult(() => commands.syncGetStatus({ vaultPath })),
 	);
 }
 
+export function syncScopeSizes(vaultPath: string): Promise<SyncScopeSizes> {
+	return callApiResult(() => commands.syncScopeSizes({ vaultPath }));
+}
+
+export async function syncConfigure(
+	vaultPath: string,
+	config: SyncBackendConfig,
+): Promise<SyncStatus> {
+	return statusFromWire(
+		await callApiResult(() => commands.syncConfigure({ vaultPath, config })),
+	);
+}
+
+export async function syncDisconnect(vaultPath: string): Promise<void> {
+	await callApiResult(() => commands.syncDisconnect({ vaultPath }));
+}
+
 export function syncNow(vaultPath: string): Promise<SyncOutcome> {
-	return invokeApi("sync_now", { args: { vaultPath } });
+	return callApiResult(() => commands.syncNow({ vaultPath }));
 }

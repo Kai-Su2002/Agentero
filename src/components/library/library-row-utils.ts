@@ -4,7 +4,7 @@
  * context types shared by COLUMN_META and the row component. No React state.
  */
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
-import type { PaperMetadata } from "@/lib/paper";
+import type { PaperLibraryRow, PaperMetadata } from "@/lib/paper";
 import type { ReadingHeatmap } from "@/lib/paper/reading-heatmap";
 import { type PaperTag, visiblePaperTags } from "@/lib/paper/tags";
 import type { LibraryColumnKey, LibraryColumnPref } from "@/lib/settings";
@@ -26,15 +26,23 @@ export function identifierValue(p: PaperMetadata): string | null {
 	return p.id || null;
 }
 
+/**
+ * Only a real probe result counts: `has_pdf` is `undefined` for remote
+ * listings, which nothing checked for a local PDF.
+ */
+export function isMissingLocalPdf(p: PaperLibraryRow): boolean {
+	return p.has_pdf === false;
+}
+
 /** Precomputed per-paper keys so sort/filter avoid O(n log n) re-coerce. */
 export type PaperRow = {
-	paper: PaperMetadata;
+	paper: PaperLibraryRow;
 	tags: PaperTag[];
 	tagSearch: string;
 	sort: Record<SortKey, string | number>;
 };
 
-export function buildPaperRow(p: PaperMetadata): PaperRow {
+export function buildPaperRow(p: PaperLibraryRow): PaperRow {
 	const tags = visiblePaperTags(p.tags);
 	const id = identifierValue(p) ?? "";
 	return {
@@ -54,6 +62,7 @@ export function buildPaperRow(p: PaperMetadata): PaperRow {
 				.map((t) => t.name)
 				.join(", ")
 				.toLocaleLowerCase(),
+			citations: p.citation_count ?? Number.NEGATIVE_INFINITY,
 		},
 	};
 }
@@ -128,5 +137,5 @@ export type ColumnDef = {
 	labelKey: string;
 	widthWeight: number;
 	headerClassName: string;
-	render: (p: PaperMetadata, ctx: CellCtx) => ReactNode;
+	render: (p: PaperLibraryRow, ctx: CellCtx) => ReactNode;
 };

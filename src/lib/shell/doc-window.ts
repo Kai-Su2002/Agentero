@@ -3,6 +3,7 @@
  */
 
 import i18n from "@/i18n";
+import { commands } from "@/lib/core/bindings";
 import { notifyError } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { getVaultPath } from "@/lib/vault/store";
@@ -19,14 +20,15 @@ export async function openDocWindow(
 	}
 	try {
 		const fileName = path.split(/[/\\]/).pop() || undefined;
-		const { invoke } = await import("@tauri-apps/api/core");
-		await invoke("doc_window_open", {
+		const res = await commands.docWindowOpen(
 			path,
-			mode: mode ?? null,
-			vaultPath: getVaultPath(),
-			title:
-				opts?.title?.trim() || fileName || i18n.t("app:windows.titleDocument"),
-		});
+			mode ?? null,
+			getVaultPath(),
+			opts?.title?.trim() || fileName || i18n.t("app:windows.titleDocument"),
+		);
+		if (res.status === "error") {
+			notifyError(res.error);
+		}
 	} catch (e) {
 		notifyError(String(e));
 	}

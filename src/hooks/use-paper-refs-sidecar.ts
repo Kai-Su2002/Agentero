@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useTauriEvent } from "@/hooks/use-tauri-event";
+import { events } from "@/lib/core/bindings";
 import { type CiteSidecar, loadPaperRefsReadOnly } from "@/lib/paper/refs";
-
-type JobChangedPayload = {
-	job: { kind: string; paperPath?: string | null; state: string };
-};
 
 const normPaperPath = (p: string | null | undefined) =>
 	(p ?? "").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
@@ -28,7 +25,7 @@ export function usePaperRefsSidecar(
 
 	// Reload when this paper's ParseRefs backfill settles (event-driven,
 	// replacing the old blocking list→parse fallback).
-	useTauriEvent<JobChangedPayload>("job:changed", ({ job }) => {
+	useTauriEvent(events.jobChanged, ({ job }) => {
 		if (job.kind !== "parseRefs") return;
 		if (normPaperPath(job.paperPath) !== normPaperPath(paperPath)) return;
 		if (

@@ -1,6 +1,12 @@
+import type { EventCallback, UnlistenFn } from "@tauri-apps/api/event";
 import { isTauri } from "@/lib/core/tauri";
 
 export type TauriEventHandler<T> = (payload: T) => void;
+
+/** One generated specta event binding (`events.*` in `@/lib/core/bindings`). */
+export type TypedEventBinding<T> = {
+	listen: (cb: EventCallback<T>) => Promise<UnlistenFn>;
+};
 
 /**
  * Wrap a promise-returning subscribe so its disposer is safe to call at any
@@ -24,17 +30,13 @@ export function toSafeDisposer(pending: Promise<() => void>): () => void {
 	};
 }
 
-/** Subscribe to a global Tauri wire event. No-op outside the Tauri shell. */
-export function listenSafe<T>(
-	event: string,
+/** Subscribe to a typed specta event binding. No-op outside the Tauri shell. */
+export function listenEventSafe<T>(
+	event: TypedEventBinding<T>,
 	handler: TauriEventHandler<T>,
 ): () => void {
 	if (!isTauri()) return () => undefined;
-	return toSafeDisposer(
-		import("@tauri-apps/api/event").then(({ listen }) =>
-			listen<T>(event, (e) => handler(e.payload)),
-		),
-	);
+	return toSafeDisposer(event.listen((e) => handler(e.payload)));
 }
 
 /** Emit a global Tauri wire event. No-op outside the Tauri shell; failures are non-fatal. */

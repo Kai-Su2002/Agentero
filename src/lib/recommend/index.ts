@@ -6,8 +6,14 @@
  * run unless `force` is set, so calling this on vault open is cheap.
  */
 
+import {
+	commands,
+	type ProbeEmbeddingResult,
+	type RecommendItem,
+	type RecommendResult,
+} from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApi } from "@/lib/core/ipc";
 
 /** Categories the Host falls back to when neither caller nor state has any. */
 export const DEFAULT_REC_CATEGORIES = [
@@ -18,23 +24,8 @@ export const DEFAULT_REC_CATEGORIES = [
 	"stat.ML",
 ] as const;
 
-export type RecommendItem = {
-	arxivId: string;
-	title: string;
-	abstract: string;
-	url: string;
-	publishedAt: string | null;
-	score: number;
-};
-
-export type RecommendResult = {
-	items: RecommendItem[];
-	computedAt: string;
-	categories: string[];
-	corpusSize: number;
-	/** True when the Host served its stored same-day run. */
-	reusedCache: boolean;
-};
+/** Read models come straight from the generated wire contract. */
+export type { ProbeEmbeddingResult, RecommendItem, RecommendResult };
 
 /** Host marker for "no embedding endpoint configured" (Settings → Agent). */
 export const ERR_NO_EMBEDDING = "recommend.no_embedding";
@@ -61,12 +52,6 @@ export function isProbeFailedError(error: unknown): boolean {
 	return errorMessage(error) === ERR_PROBE_FAILED;
 }
 
-/** Result of the Host's liveness probe against the embedding endpoint. */
-export type ProbeEmbeddingResult = {
-	dim: number;
-	latencyMs: number;
-};
-
 /**
  * Liveness check for the configured embedding endpoint.
  *
@@ -79,15 +64,13 @@ export async function probeEmbedding(opts?: {
 	apiKey?: string;
 	model?: string;
 }): Promise<ProbeEmbeddingResult> {
-	return invokeApi<ProbeEmbeddingResult>(
-		"probe_embedding",
-		{
-			args: {
-				baseUrl: opts?.baseUrl,
-				apiKey: opts?.apiKey,
-				model: opts?.model,
-			},
-		},
+	return callApi(
+		() =>
+			commands.probeEmbedding({
+				baseUrl: opts?.baseUrl ?? null,
+				apiKey: opts?.apiKey ?? null,
+				model: opts?.model ?? null,
+			}),
 		{ fallback: "recommend.probe_failed" },
 	);
 }
@@ -102,16 +85,14 @@ export async function recommendArxiv(opts: {
 	topN?: number;
 	force?: boolean;
 }): Promise<RecommendResult> {
-	return invokeApi<RecommendResult>(
-		"recommend_arxiv",
-		{
-			args: {
+	return callApi(
+		() =>
+			commands.recommendArxiv({
 				vaultPath: opts.vaultPath,
-				categories: opts.categories,
-				topN: opts.topN,
+				categories: opts.categories ?? null,
+				topN: opts.topN ?? null,
 				force: opts.force ?? false,
-			},
-		},
+			}),
 		{ fallback: "recommend.failed" },
 	);
 }
@@ -120,10 +101,9 @@ export async function recommendArxiv(opts: {
 export async function recommendArxivLast(
 	vaultPath: string,
 ): Promise<RecommendResult | null> {
-	const result = await invokeApi<RecommendResult | null>(
-		"recommend_arxiv_last",
-		{ args: { vaultPath } },
-		{ fallback: "recommend.failed", allowVoid: true },
+	const result = await callApi(
+		() => commands.recommendArxivLast({ vaultPath }),
+		{ fallback: "recommend.failed" },
 	);
 	return result ?? null;
 }

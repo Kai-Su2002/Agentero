@@ -1,5 +1,5 @@
 import { Copy, ExternalLink, LoaderCircle, Power } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { NetworkProxyRow } from "@/components/settings/agent-common-rows";
 import {
@@ -26,12 +26,20 @@ import {
 } from "@/components/ui/tooltip";
 import { useTauriEvent } from "@/hooks/use-tauri-event";
 import { clearUsage } from "@/lib/activity";
+import { commands, events } from "@/lib/core/bindings";
 import { copyTextToClipboard } from "@/lib/core/clipboard";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApi } from "@/lib/core/ipc";
 import { notifyError, notifySuccess } from "@/lib/core/notify";
 import { openExternalUrl } from "@/lib/core/open-external";
 import { isTauri } from "@/lib/core/tauri";
+import {
+	type EasyScholarProbeStatus,
+	hasEasyScholarKey,
+	isEasyScholarKeyMask,
+	maskEasyScholarKey,
+	probeEasyScholarKey,
+} from "@/lib/easyscholar";
 import {
 	type McpStatus,
 	mcpGetStatus,
@@ -63,6 +71,7 @@ import {
 	type AutoUpdateInternalLinks,
 	PAPER_NOTE_MODES,
 	type PaperNoteMode,
+	saveSettingsAsync,
 } from "@/lib/settings";
 import { DEFAULT_NETWORK_PROXY_URL } from "@/lib/settings/defaults";
 import { notesTemplateSeed } from "@/lib/vault/note-template";
@@ -80,6 +89,9 @@ export function GeneralPane({
 }) {
 	const { t } = useTranslation("settings");
 	const [proxyUrlDraft, setProxyUrlDraft] = useState(settings.networkProxyUrl);
+	const [easyScholarKeyDraft, setEasyScholarKeyDraft] = useState(
+		settings.easyScholarKey,
+	);
 	// OS system proxy detected by the Host (Windows "Internet Settings"); used
 	// automatically while the app proxy is off — surface it for transparency.
 	const [systemProxy, setSystemProxy] = useState<string | null>(null);
@@ -113,9 +125,13 @@ export function GeneralPane({
 	}, [settings.networkProxyUrl]);
 
 	useEffect(() => {
+		setEasyScholarKeyDraft(settings.easyScholarKey);
+	}, [settings.easyScholarKey]);
+
+	useEffect(() => {
 		if (!isTauri()) return;
 		let cancelled = false;
-		void invokeApi<string | null>("network_system_proxy")
+		void callApi(() => commands.networkSystemProxy())
 			.then((p) => {
 				if (!cancelled) setSystemProxy(p ?? null);
 			})
@@ -300,6 +316,19 @@ export function GeneralPane({
 					}
 				/>
 			</SettingsGroup>
+			<EasyScholarSettingsBlock
+				savedKey={settings.easyScholarKey}
+				keyDraft={easyScholarKeyDraft}
+				onKeyDraftChange={setEasyScholarKeyDraft}
+				onCommitKey={async (value) => {
+					const trimmed = value.trim();
+					const next = await saveSettingsAsync({
+						...settings,
+						easyScholarKey: trimmed,
+					});
+					setEasyScholarKeyDraft(next.easyScholarKey);
+				}}
+			/>
 			<ConnectorSettingsBlock settings={settings} patch={patch} />
 			<div className="mt-4">
 				<p className="mb-2 px-0.5 font-medium text-[13px]">
@@ -315,6 +344,140 @@ export function GeneralPane({
 			<PrivacySettingsBlock settings={settings} patch={patch} />
 		</>
 	);
+}
+
+function EasyScholarSettingsBlock({
+	savedKey,
+	keyDraft,
+	onKeyDraftChange,
+	onCommitKey,
+}: {
+	savedKey: string;
+	keyDraft: string;
+	onKeyDraftChange: (value: string) => void;
+	onCommitKey: (value: string) => Promise<void>;
+}) {
+	const { t } = useTranslation("settings");
+	const [status, setStatus] = useState<EasyScholarProbeStatus>("idle");
+	const abortRef = useRef<AbortController | null>(null);
+
+	const runProbe = useCallback(async () => {
+		if (!hasEasyScholarKey(savedKey)) {
+			setStatus("idle");
+			return;
+		}
+		abortRef.current?.abort();
+		const ac = new AbortController();
+		abortRef.current = ac;
+		setStatus("probing");
+		const ok = await probeEasyScholarKey(ac.signal);
+		if (ac.signal.aborted) return;
+		setStatus(ok ? "ok" : "fail");
+	}, [savedKey]);
+
+	useEffect(() => {
+		void runProbe();
+		return () => {
+			abortRef.current?.abort();
+		};
+	}, [runProbe]);
+
+	const changed = useMemo(() => {
+		const saved = savedKey.trim();
+		const draft = keyDraft.trim();
+		if (!saved && !draft) return false;
+		if (!saved || !draft) return true;
+		return draft !== saved;
+	}, [savedKey, keyDraft]);
+
+	const handleConfirm = async () => {
+		await onCommitKey(keyDraft.trim());
+	};
+
+	const statusLabel = t(
+		status === "idle"
+			? "general.easyScholar.probeIdle"
+			: status === "probing"
+				? "general.easyScholar.probeProbing"
+				: status === "ok"
+					? "general.easyScholar.probeOk"
+					: "general.easyScholar.probeFail",
+	);
+
+	return (
+		<div className="mt-4">
+			<p className="mb-2 px-0.5 font-medium text-[13px]">
+				{t("general.easyScholar.section")}
+			</p>
+			<SettingsGroup>
+				<SettingsRow
+					label={
+						<span className="inline-flex items-center gap-1.5">
+							{t("general.easyScholar.keyLabel")}
+							<StatusDot tone={probeTone(status)} label={statusLabel} />
+						</span>
+					}
+					htmlFor="easy-scholar-key"
+				>
+					<div className="flex items-center gap-2">
+						<Input
+							id="easy-scholar-key"
+							type="password"
+							autoComplete="off"
+							placeholder={t("general.easyScholar.placeholder")}
+							className="h-8 w-64 max-w-[18rem] font-mono text-xs"
+							value={keyDraft}
+							onChange={(e) => {
+								const next = e.currentTarget.value;
+								const shownMask = hasEasyScholarKey(savedKey)
+									? isEasyScholarKeyMask(savedKey)
+										? savedKey
+										: maskEasyScholarKey(savedKey)
+									: null;
+								if (
+									shownMask != null &&
+									(next === shownMask || next.startsWith(shownMask))
+								) {
+									onKeyDraftChange(next.slice(shownMask.length));
+								} else {
+									onKeyDraftChange(next);
+								}
+							}}
+							onKeyDown={(e) => {
+								if (e.key === "Enter") {
+									void handleConfirm();
+								}
+							}}
+						/>
+						<Button
+							type="button"
+							variant="outline"
+							size="xs"
+							disabled={!changed || status === "probing"}
+							onClick={() => void handleConfirm()}
+						>
+							{t("general.easyScholar.confirm")}
+						</Button>
+					</div>
+				</SettingsRow>
+			</SettingsGroup>
+		</div>
+	);
+}
+
+function probeTone(
+	status: EasyScholarProbeStatus,
+): "ok" | "idle" | "warn" | "err" {
+	switch (status) {
+		case "ok":
+			return "ok";
+		case "probing":
+			return "warn";
+		case "fail":
+			return "err";
+		default:
+			return "idle";
+	}
 }
 
 function PrivacySettingsBlock({
@@ -419,7 +582,7 @@ function ConnectorSettingsBlock({
 		void refresh();
 	}, [refresh]);
 
-	useTauriEvent<ConnectorStatus>("connector:status", (payload) => {
+	useTauriEvent(events.connectorStatus, (payload) => {
 		setStatus(payload);
 	});
 
@@ -531,7 +694,7 @@ function McpSettingsBlock({
 		void refresh();
 	}, [refresh]);
 
-	useTauriEvent<McpStatus>("mcp:status", (payload) => {
+	useTauriEvent(events.mcpStatus, (payload) => {
 		setStatus(payload);
 	});
 
@@ -696,7 +859,7 @@ function McpTunnelRows({
 		void refresh();
 	}, [refresh]);
 
-	useTauriEvent<McpTunnelStatus>("mcp:tunnel-status", (payload) => {
+	useTauriEvent(events.mcpTunnelStatus, (payload) => {
 		setStatus(payload);
 	});
 

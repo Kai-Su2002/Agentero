@@ -98,6 +98,7 @@ const onDiscoverCiting = () => void discoverCitingPapers();
 
 export function VaultSidebar() {
 	const fileTreeRef = useRef<FileTreeHandle>(null);
+	const [treeSelectionCount, setTreeSelectionCount] = useState(0);
 	useEffect(() => {
 		registerFileTreeHandle(fileTreeRef.current);
 		return () => registerFileTreeHandle(null);
@@ -150,6 +151,38 @@ export function VaultSidebar() {
 		() => resolvePapersParentDir(vaultPath, treeSelectedPath, tree),
 		[vaultPath, treeSelectedPath, tree],
 	);
+	const clearTreeSelection = useCallback(
+		() => fileTreeRef.current?.clearSelection(),
+		[],
+	);
+	const moveTreeSelection = useCallback(
+		(anchor: { x: number; y: number }) =>
+			fileTreeRef.current?.moveSelected(anchor),
+		[],
+	);
+	const deleteTreeSelection = useCallback(
+		() => fileTreeRef.current?.deleteSelected(),
+		[],
+	);
+	const treeSelectionHeader = useMemo(
+		() =>
+			treeSelectionCount > 0
+				? {
+						count: treeSelectionCount,
+						disabled: busy,
+						onClear: clearTreeSelection,
+						onMove: moveTreeSelection,
+						onDelete: deleteTreeSelection,
+					}
+				: undefined,
+		[
+			busy,
+			clearTreeSelection,
+			deleteTreeSelection,
+			moveTreeSelection,
+			treeSelectionCount,
+		],
+	);
 
 	return (
 		<>
@@ -160,6 +193,7 @@ export function VaultSidebar() {
 							? `${vaultDisplayName(vaultPath)} · ${t("app:vault.remoteBadge")}`
 							: vaultDisplayName(vaultPath)
 					}
+					selection={treeSelectionHeader}
 					lookupParentDir={lookupParentDir}
 					onLookupSubmit={onLookupSubmit}
 					onImportBibliography={onImportBibliography}
@@ -200,6 +234,7 @@ export function VaultSidebar() {
 					onDropMove={onDropMove}
 					onCutPaths={cutSelectedPaths}
 					onPasteInto={(target) => void pasteCutPaths(target)}
+					onSelectionChange={setTreeSelectionCount}
 					cutPaths={cutPaths}
 					onDropLocalPdfs={dropLocalPdfs}
 					onSelectFile={selectFileNode}

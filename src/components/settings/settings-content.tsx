@@ -405,7 +405,12 @@ export function SettingsContent({
 					{visitedSections.includes("layout") && (
 						<div hidden={section !== "layout"}>
 							<Suspense fallback={<PaneFallback />}>
-								<LayoutPane settings={settings} patch={patch} />
+								<LayoutPane
+									settings={settings}
+									patch={patch}
+									vaultPath={vaultPath}
+									hostContext={hostContext}
+								/>
 							</Suspense>
 						</div>
 					)}

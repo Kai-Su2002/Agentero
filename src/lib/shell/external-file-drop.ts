@@ -9,12 +9,13 @@
  * native viewer and freeze the SPA.
  */
 
+import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
 import {
 	dataTransferLooksLikeOsFiles,
 	hasPdfExtension,
 } from "@/lib/core/file-accept";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApi } from "@/lib/core/ipc";
 import { basenameOf } from "@/lib/core/path";
 import { isTauri } from "@/lib/core/tauri";
 
@@ -289,12 +290,12 @@ async function stageImportBytes(
 	bytes: Uint8Array,
 ): Promise<string> {
 	const contentBase64 = uint8ToBase64(bytes);
-	const result = await invokeApi<{ path: string }>("paper_stage_import_file", {
-		args: {
+	const result = await callApi(() =>
+		commands.paperStageImportFile({
 			fileName: fileName || "drop.pdf",
 			contentBase64,
-		},
-	});
+		}),
+	);
 	if (!result.path) {
 		throw new Error("stage import failed");
 	}

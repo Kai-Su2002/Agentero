@@ -4,7 +4,7 @@ use crate::error::{CliError, ExitCode};
 use crate::output::{to_value, OutputFormat};
 use crate::prompt;
 use crate::resolve::{resolve_vault, GlobalOpts};
-use agentero_lib::features::doctor::{
+use agentero_core::features::doctor::{
     apply_alias_repairs, apply_catalog_duplicate_repairs, apply_visual_mark_repairs, diagnose,
     AliasRepairCandidate, AliasRepairChange, DoctorReport, VisualMarkRepairChange,
 };

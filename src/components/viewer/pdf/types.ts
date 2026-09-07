@@ -54,10 +54,25 @@ export type PdfViewerProps = {
 	/** Called whenever visual agent-trace marks change (for the annotations panel) */
 	onVisualTracesChange?: (traces: PdfVisualSessionTrace[]) => void;
 	/**
+	 * Open a rendered-translation workspace tab split to the right.
+	 * Used when Settings → Translate → dualPaneTranslate is enabled.
+	 */
+	onOpenTranslationTab?: (
+		paperTabId: string,
+		paperAbsPath: string | null,
+		paperTitle?: string | null,
+	) => void;
+	/**
 	 * Workspace active tab. Dock may keep inactive PDFs mounted (`keepMounted`);
 	 * only the active viewer should refresh marks/ (expensive base64 JSON list).
 	 */
 	isActive?: boolean;
+	/**
+	 * When true, this viewer is the right-hand translation pane of a dual-pane
+	 * layout. It always paints layout-translate overlays and never hides them
+	 * behind the dual-pane setting.
+	 */
+	translationPane?: boolean;
 	/**
 	 * True for remote papers (e.g. arXiv Daily preview) that have no local
 	 * sidecar. Hides mark-persisting UI (highlight / note / translate); Ask /

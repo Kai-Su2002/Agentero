@@ -5,8 +5,23 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
 ## 协议与运行时
 
 - Crate：`agent-client-protocol`（及 Codex 的 npm ACP 适配器进程）。
-- 会话 `cwd` = 当前 Vault 根（远程则为远端 Vault 根）。
-- 统一接口：OpenCode、OpenClaw、Hermes、Gemini、Claude ACP、Codex ACP、Qoder、Grok、Pi、Dsh（DeepSeek Harness）、Kimi Code、自定义 `command`/`args`/`env`。
+- ACP `initialize` 在 run / warm / 历史 list / load 四处统一最多等待 30 秒（设置页
+  探针同样保留 30 秒总预算），覆盖 BYOA 冷启动；其余 session RPC 保持 15 秒预算。
+- 会话 `cwd` = 当前 Vault 根（远程则为远端 Vault 根），下发给 Agent 前经
+  `simplified_agent_cwd` 归一一次（run / warm / list / load 四处入口）：Windows 把
+  canonicalize 出的 `\?\D:\...` 还原为 `D:\...`，否则 Agent 把该路径转交给 MSYS2
+  shell（Git Bash）时无法 `cd`，POSIX cwd 也会初始化错误，`mktemp`/`cd` 报 ENOENT；
+  扩展 UNC（`\?\UNC\...`）与 POSIX 路径保持不变，远程历史入口不做本地路径转换。详见
+  [bug_fix/hermes-terminal-pending-msys2-hang.md](../bug_fix/hermes-terminal-pending-msys2-hang.md)。
+- 本地 Pi / 自定义 Agent 仍先经 shell 切到 Vault，其 `cmd.exe` 包装对同一前缀再剥一次
+  （幂等），避免 CMD 把 `\?\D:\...` 误判为 UNC（#458）。
+- Windows 的 cwd 与完整 Agent 命令通过环境变量展开，避免 Rust argv 转义破坏 CMD 内层引号；
+  cwd 环境变量始终携带双引号，防止无空格路径中的括号等 CMD 元字符被当作语法（#458）。
+- **Login-shell 环境注入**：本地 ACP agent 启动时会合并当前进程环境变量、用户 login-shell
+  环境变量（`SHELL -lic 'env -0'`）以及 `AgentDescriptor.env`。这样 macOS/Linux 上从
+  GUI 启动 Agentero 也能读到 `.zshrc` / `.bashrc` 里 `export` 的 `OPENAI_API_KEY`、
+  `OPENAI_BASE_URL` 等变量；`AgentDescriptor.env` 优先级最高，可覆盖 shell 值（#478）。
+- 统一接口：OpenCode、OpenClaw、Hermes、Antigravity、Claude ACP、Codex ACP、Qoder、Grok、Pi、Dsh（DeepSeek Harness）、Kimi Code、自定义 `command`/`args`/`env`。
 - Dsh：ACP 服务端是 `@deepseek-ai/dsh-acp-demo`（npm 包），与依赖插件一起固定
   `0.1.1-rc.2`。安装/启动三处入口，检测按序回退：
   1. App 管理目录 `~/.agentero/dsh-acp/node_modules/.bin/dsh-acp-demo`（设置页「安装」按钮，
@@ -38,8 +53,9 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
   `## Context` / `## Skills` / `## Extensions` 清单）当作普通 agent message 推送。Host
   在本轮首个 message chunk 上识别该横幅并丢弃，不写入内容缓冲、不发 `agent:stream`，
   避免它出现在回答之前。
-- Gemini：spawn 时注入 `NO_BROWSER=true`（用户显式配置则不覆盖），避免未登录时
+- Antigravity（`agy-acp`）：spawn 时注入 `NO_BROWSER=true`（用户显式配置则不覆盖），避免未登录时
   `new_session` 反复拉起浏览器 OAuth；登录须在终端完成（BYOA）。
+- Gemini CLI 与旧版 `agy --acp` 调用已被 Google Antigravity CLI 的社区 ACP 适配器 `agy-acp` 取代；Agentero 在启动时会将旧版 Gemini / `agy --acp` 注册项迁移为 `agy-acp`。
 - 设置页会将 ACP 探测中的认证错误（如 `invalid_grant` / `failed to authenticate` /
   `authentication required` / `not logged in`）
   显示为「未登录」，其他握手或进程错误仍显示为「ACP 失败」。
@@ -59,7 +75,7 @@ spawn 用户配置的 agent
   → 完成（含 providerSessionId）/ 失败
 ```
 
-流式 chunk 合并（`stream_coalesce.rs`）：agent 通常每秒推 20–100 个小 chunk，
+流式 chunk 合并（`runtime/stream.rs`）：agent 通常每秒推 20–100 个小 chunk，
 逐条 emit 会让 webview 每 token 重渲染一次（Windows 卡顿主因）。Host 用
 ~40ms 窗口合并连续同 kind 的文本 chunk 再发 `agent:stream`；kind 切换
 （message ↔ thought）、tool/plan 等有序事件、`agent:completed` / `agent:failed`
@@ -69,13 +85,19 @@ spawn 用户配置的 agent
 ACP `terminal` 能力：Host 在 initialize 时声明 `terminal: true`，并本地实现
 `terminal/create`、`terminal/output`、`terminal/release`、`terminal/wait_for_exit`、
 `terminal/kill`。每个 ACP 连接持有独立的 `AcpTerminalManager`，按 `TerminalId`
-管理子进程；输出按 `outputByteLimit` 从头部截断并保证 UTF-8 字符边界。该能力
+管理子进程；每个 terminal 由单独任务独占 `Child`，`wait_for_exit` 不占 manager
+锁，`kill` / `release` 通过控制通道保持可用。ACP 消息分发本身是串行的，因此
+wait / kill / release 在分发时先获取或移除句柄，再经 `connection.spawn` 完成响应，
+避免等待退出时堵住同连接后续请求。`terminal/output` 只快照当前缓冲区，
+不会等待进程退出；输出按 `outputByteLimit` 从头部截断并保证 UTF-8 字符边界。该能力
 让 Kimi Code 等需要执行 shell 命令的 Agent 可以在 Vault 工作目录下运行命令并
 读取结果。
 
-Kimi Code ACP 会把 `Bash`/`Glob`/`Grep` 等工具实现为 `terminal/create`：它发送
-`/bin/bash -c "cd '<cwd>' && <cmd>"`，Host 按收到的 `cwd` 直接 spawn 该 bash
-进程即可。若 Host 没有声明 `terminal` 能力，或 Kimi Code 版本过旧，这些工具会
+Kimi Code ACP 会把 `Bash`/`Glob`/`Grep` 等工具实现为 `terminal/create`。[当前实现](https://github.com/MoonshotAI/kimi-cli/blob/main/src/kimi_cli/acp/tools.py)
+会把完整 shell 文本放进 `command`；Host 对可解析的可执行文件继续按 `command + args`
+直接 spawn，对无法解析且没有 `args` 的命令在 Windows 用 PowerShell、Unix 用
+`/bin/sh -c` 执行，以兼容 `pwd`、`echo ...` 等 shell 命令；请求没有显式 `cwd`
+时使用当前 ACP session 的 Vault cwd。若 Host 没有声明 `terminal` 能力，或 Kimi Code 版本过旧，这些工具会
 直接失败并报 `ACP runtime only supports interactive Bash tool processes`。
 此外 Kimi Code 的权限请求目前只返回通用 `"bash"` 字符串（[MoonshotAI/kimi-code#800](https://github.com/MoonshotAI/kimi-code/issues/800)），不会给出具体命令，因此 Agentero 默认的 Restricted 策略会拒绝、Ask 模式也只能看到 `bash`，需要用户在 Kimi 侧或 Agentero 侧开启自动批准（YOLO）才能静默执行。
 
@@ -149,7 +171,7 @@ ACP **没有**统一的 ask-user tool 规范：各 harness 的字段名、挂载
 
 1. **打开交互能力**：`initialize` 声明 `elicitation.form`（依赖 crate feature `unstable_elicitation`）；否则 Codex 等对 `request_user_input` 会直接空答。
 2. **Client adapter 归一**：把不同 rawInput / 事件解析成同一套 `AskUserQuestion` 页（`parseAskUserQuestions` 等），前端只渲染一张表。
-3. **Harness 特例**：OpenCode spawn 时注入 `OPENCODE_ENABLE_QUESTION_TOOL=1`；Grok 的 `_x.ai/ask_user_question` 由 Host JSON-RPC 处理（`ask_user.rs`），再经 `agent:ask-user-request` / `agent_respond_ask_user` 与前端对齐；tool 镜像与 ext 去重。
+3. **Harness 特例**：OpenCode spawn 时注入 `OPENCODE_ENABLE_QUESTION_TOOL=1`；Grok 的 `_x.ai/ask_user_question` 由 Host JSON-RPC 处理（`acp/ask_user.rs`），再经 `agent:ask-user-request` / `agent_respond_ask_user` 与前端对齐；tool 镜像与 ext 去重。
 
 | Harness | 形态 | 回答通路 |
 |---|---|---|
@@ -178,6 +200,7 @@ ACP **没有**统一的 ask-user tool 规范：各 harness 的字段名、挂载
 - 若 `current_value` 不在 selector 选项中（第三方网关 / cc-switch 等只改默认 model、目录仍是官方列表），Host **注入**该 current id，避免 UI 丢失。
 - `preferred_model_id`（warm / run_once）在与 current 不同时 **始终尝试** `session/set_config_option`，不要求 id 已在上报列表中；失败仅 debug 日志，不阻断会话。
 - Codex `collaboration_mode`（Default / Plan 等）解析为 `agent:collaboration`；`collaboration_mode_id` 在选项内且与 current 不同时尝试 `session/set_config_option`。UI 称「模式」。Plan 才能用 `request_user_input`。不解析 / 不暴露 ACP `category: mode` 沙箱档。
+- 推理强度：识别 `category: thought_level`（兼容 id `reasoning_effort` / `effort`），转为 `agent:effort`。默认值和支持的档位由 Agent/适配器决定，ACP 不规定 low/high 枚举或跨会话持久化；前端保存用户选择；面板无已存选择时传 `preferHighestReasoningEffort: true`，Host 在模型和模式协商完成后选择最高可识别档位，覆盖 warm 未完成就发送的首轮。显式 `reasoningEffort` 优先；未知档位无法排序时不覆盖 Agent 当前值，其他调用者缺省不开启此策略。`run_once` 在 new/resume/load 后、prompt 前应用 `reasoningEffort`。先完成模型和模式切换、读取完整 `configOptions`，再仅对仍在列表中且与 current 不同的档位调用 `session/set_config_option`；不支持时沿用 Agent 当前值。参见 [ACP Session Config Options](https://agentclientprotocol.com/protocol/v1/session-config-options)。
 - Fast 开关（`fast-mode` model_config 选项）与上述一致：仅当会话当前值与请求值不同时才发 `session/set_config_option`，未变化的配置不再每轮重复下发（#271）。
 
 ## User-Agent（中转站亲和）
@@ -195,7 +218,7 @@ Agentero 是 ACP **Client**：模型 HTTP **不**经 Host 转发，因此只能�
 - 远程 SSH 转发：`AGENTERO_USER_AGENT` / `CODEX_CONFIG` / `MODEL_PROVIDER` / `ANTHROPIC_CUSTOM_HEADERS`。
 - 命令：`agent_set_user_agent`；`agent_scan_catalog` 回传当前值。
 
-说明：是否生效取决于底层 Agent 是否认上述 env/config；OpenCode/Gemini/Grok 目前仅带 `AGENTERO_USER_AGENT`（多数忽略）。
+说明：是否生效取决于底层 Agent 是否认上述 env/config；OpenCode/Antigravity/Grok 目前仅带 `AGENTERO_USER_AGENT`（多数忽略）。
 
 **new-api 侧（源码）在做什么：**
 
@@ -213,7 +236,7 @@ Agentero 是 ACP **Client**：模型 HTTP **不**经 Host 转发，因此只能�
 
 ## 远程
 
-远程 Vault 时在 **SSH 远端** 启动 Agent。见 [remote.md](remote.md)。远程 agent catalog 的扫描/探测/安装命令属 agent 域（`remote_catalog.rs` + `remote_catalog_commands.rs`），复用 `agent::models` / `probe_agent` / `templates`，通过 remote 域的 `RemoteRegistry` / `agent_exec` 走 SSH。
+远程 Vault 时在 **SSH 远端** 启动 Agent。见 [remote.md](remote.md)。远程 agent catalog 的扫描/探测/安装命令属 agent 域（`registry/remote.rs` + `commands/remote.rs`），复用 `agent::models` / `probe_agent` / `templates`；agent 域不直接依赖 `integration::remote`，而是经反转 trait `agent::remote_host::{RemoteAgentHosts, RemoteAgentLaunch}`（由 remote 域 `RemoteRegistry` / `RemoteSession` 实现，app 启动时注册为 State）走 SSH。命令壳与 bridge RPC 共用 `agent::service` 门面。
 
 ## 代码
 

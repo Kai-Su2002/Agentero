@@ -8,7 +8,6 @@
  * prompt can disagree about whether `$` / `/` activates anything.
  */
 
-import { invoke } from "@tauri-apps/api/core";
 import i18n from "@/i18n";
 import {
 	type AgentFailedEvent,
@@ -23,11 +22,10 @@ import {
 	type RunOnceAccepted,
 	runOnce,
 } from "@/lib/agent";
-import {
-	enqueueBackgroundTask,
-	updateBackgroundTask,
-} from "@/lib/core/background-tasks";
+import { updateBackgroundTask } from "@/lib/core/background-tasks";
+import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
+import { runLocalActivity } from "@/lib/core/tasks";
 import { isTauri } from "@/lib/core/tauri";
 import { setPaperIsRead } from "@/lib/paper/api";
 import { loadPaperMetadata } from "@/lib/paper/load-meta";
@@ -185,7 +183,7 @@ export async function runPaperReaderWorkflow(opts: {
 	inflightReads.add(paperRel);
 
 	try {
-		await enqueueBackgroundTask(
+		await runLocalActivity(
 			{
 				kind: "paperRead",
 				title: i18n.t("app:tasks.paperRead"),
@@ -207,7 +205,7 @@ export async function runPaperReaderWorkflow(opts: {
 					hideFromChatHistory: true,
 				});
 				const cancelAgent = () => {
-					void invoke("agent_cancel_run", { sessionId: accepted.sessionId });
+					void commands.agentCancelRun(accepted.sessionId);
 				};
 				if (signal.aborted) {
 					cancelAgent();

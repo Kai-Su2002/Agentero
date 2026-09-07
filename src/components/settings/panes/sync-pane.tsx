@@ -31,16 +31,16 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { formatBytes } from "@/lib/core/background-tasks";
+import { events } from "@/lib/core/bindings";
 import { errorMessage, notifyError, notifySuccess } from "@/lib/core/notify";
 import { openExternalUrl } from "@/lib/core/open-external";
 import { isTauri } from "@/lib/core/tauri";
-import { listenSafe } from "@/lib/core/tauri-events";
+import { toSafeDisposer } from "@/lib/core/tauri-events";
 import { cn } from "@/lib/core/utils";
 import {
 	emptySyncConfig,
+	isSyncProgressPhase,
 	SYNC_INTERVAL_CHOICES,
-	SYNC_PROGRESS_EVENT,
-	SYNC_STATE_EVENT,
 	type SyncBackendConfig,
 	type SyncProgressEvent,
 	type SyncScopeSizes,
@@ -144,22 +144,30 @@ export function SyncPane({ vaultPath }: { vaultPath: string | null }) {
 	useEffect(() => {
 		if (!localVault) return;
 		const offs = [
-			listenSafe<SyncStateEvent>(SYNC_STATE_EVENT, (payload) => {
-				if (payload.vaultPath !== localVault) return;
-				setSyncing(payload.status === "syncing");
-				setSyncError(
-					payload.status === "error"
-						? (payload.error ?? t("sync.statusError"))
-						: null,
-				);
-				if (payload.status !== "syncing") {
-					setProgress(null);
-					void refresh().catch(() => undefined);
-				}
-			}),
-			listenSafe<SyncProgressEvent>(SYNC_PROGRESS_EVENT, (payload) => {
-				if (payload.vaultPath === localVault) setProgress(payload);
-			}),
+			toSafeDisposer(
+				events.syncState.listen((event) => {
+					const payload: SyncStateEvent = event.payload;
+					if (payload.vaultPath !== localVault) return;
+					setSyncing(payload.status === "syncing");
+					setSyncError(
+						payload.status === "error"
+							? (payload.error ?? t("sync.statusError"))
+							: null,
+					);
+					if (payload.status !== "syncing") {
+						setProgress(null);
+						void refresh().catch(() => undefined);
+					}
+				}),
+			),
+			toSafeDisposer(
+				events.syncProgress.listen((event) => {
+					const { vaultPath, phase, current, total } = event.payload;
+					if (vaultPath === localVault && isSyncProgressPhase(phase)) {
+						setProgress({ vaultPath, phase, current, total });
+					}
+				}),
+			),
 		];
 		return () => {
 			for (const off of offs) off();

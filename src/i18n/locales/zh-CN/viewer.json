@@ -19,8 +19,13 @@
 		"zoomFitPage": "适应整页",
 		"outline": "目录",
 		"linkAria": "PDF 链接",
-		"useDarkMode": "使用暗色模式",
-		"useLightMode": "使用亮色模式",
+		"paperTone": "页面背景",
+		"paperToneOption": {
+			"white": "白纸",
+			"sepia": "米色",
+			"green": "护眼绿",
+			"dark": "暗色"
+		},
 		"remoteMode": "远程模式",
 		"importToLibrary": "导入本地库",
 		"findPlaceholder": "在文档中查找",
@@ -61,6 +66,12 @@
 			"needLayout": "请先运行版面分析（Figures 面板）。",
 			"noText": "没有可提取文字的版面区域可翻译。",
 			"failed": "全文翻译失败"
+		},
+		"translation": {
+			"title": "翻译",
+			"tabTitle": "译文 – {{title}}",
+			"noPaper": "打开一篇论文以查看渲染好的译文。",
+			"empty": "还没有渲染好的译文。请先在 PDF 阅读器中运行全文翻译。"
 		}
 	},
 	"pdfAsk": {

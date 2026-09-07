@@ -86,6 +86,8 @@ export type DockWorkspaceHandle = {
 	cycleActive: (delta: number) => void;
 	/** Activate an existing panel by id. */
 	activatePanel: (panelId: string) => void;
+	/** True when the panel is registered in this dock and can be activated. */
+	canActivatePanel: (panelId: string) => boolean;
 	/** Make all visible Dockview grid groups equal width. */
 	equalizeGridGroups: () => void;
 };
@@ -299,7 +301,9 @@ function resolveReferencePanel(
  * when not shown.
  */
 function rendererForMode(mode: CenterViewMode): DockviewPanelRenderer {
-	return mode === "pdf" || mode === "markdown" ? "always" : "onlyWhenVisible";
+	return mode === "pdf" || mode === "markdown" || mode === "translation"
+		? "always"
+		: "onlyWhenVisible";
 }
 
 function applyPanelRenderer(panel: IDockviewPanel, mode: CenterViewMode): void {
@@ -654,6 +658,9 @@ export const DockWorkspace = memo(
 				},
 				activatePanel(panelId) {
 					apiRef.current?.getPanel(panelId)?.api.setActive();
+				},
+				canActivatePanel(panelId) {
+					return Boolean(apiRef.current?.getPanel(panelId));
 				},
 				equalizeGridGroups() {
 					const api = apiRef.current;

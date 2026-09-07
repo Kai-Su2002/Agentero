@@ -1,8 +1,14 @@
-import { Moon, MoveHorizontal, MoveVertical, Sun } from "lucide-react";
+import { MoveHorizontal, MoveVertical, Palette } from "lucide-react";
 import type { RefObject } from "react";
+import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { SiArxiv } from "react-icons/si";
 import { Button } from "@/components/ui/button";
+import {
+	Popover,
+	PopoverContent,
+	PopoverTrigger,
+} from "@/components/ui/popover";
 import {
 	Tooltip,
 	TooltipContent,
@@ -10,6 +16,11 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/core/utils";
+import {
+	PDF_PAPER_SWATCH_CLASS,
+	PDF_PAPER_TONES,
+	type PdfPaperTone,
+} from "@/lib/pdf/page-theme";
 
 type PdfBottomBarProps = {
 	/** Hidden until the document reports its page count. */
@@ -20,8 +31,8 @@ type PdfBottomBarProps = {
 	/** True while the field owns focus, so scrolling does not clobber typing. */
 	pageFocusedRef: RefObject<boolean>;
 	onCommitPageField: () => void;
-	pdfDark: boolean;
-	onTogglePdfColorScheme: () => void;
+	pdfTone: PdfPaperTone;
+	onSetPdfTone: (tone: PdfPaperTone) => void;
 	/** Request the fit-width zoom mode. */
 	onFitWidth: () => void;
 	/** Request the fit-page zoom mode. */
@@ -30,26 +41,24 @@ type PdfBottomBarProps = {
 	isRemotePaper?: boolean;
 };
 
-/** Bottom bar: page nav + PDF color scheme. */
+/** Bottom bar: page nav + PDF paper tone. */
 export function PdfBottomBar({
 	totalPages,
 	pageField,
 	onPageFieldChange,
 	pageFocusedRef,
 	onCommitPageField,
-	pdfDark,
-	onTogglePdfColorScheme,
+	pdfTone,
+	onSetPdfTone,
 	onFitWidth,
 	onFitPage,
 	isRemotePaper = false,
 }: PdfBottomBarProps) {
 	const { t } = useTranslation("viewer");
+	const [tonePickerOpen, setTonePickerOpen] = useState(false);
 
 	if (totalPages <= 0) return null;
 
-	const pdfColorSchemeLabel = pdfDark
-		? t("pdf.useLightMode")
-		: t("pdf.useDarkMode");
 	const pageDigits = Math.max(2, String(totalPages).length, pageField.length);
 
 	return (
@@ -109,25 +118,54 @@ export function PdfBottomBar({
 						</span>
 					</div>
 					<span aria-hidden className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								size="icon-xs"
-								variant="ghost"
-								aria-label={pdfColorSchemeLabel}
-								aria-pressed={pdfDark}
-								onClick={onTogglePdfColorScheme}
-							>
-								{pdfDark ? (
-									<Sun className="size-3.5" />
-								) : (
-									<Moon className="size-3.5" />
-								)}
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="top">{pdfColorSchemeLabel}</TooltipContent>
-					</Tooltip>
+					<Popover open={tonePickerOpen} onOpenChange={setTonePickerOpen}>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<PopoverTrigger asChild>
+									<Button
+										type="button"
+										size="icon-xs"
+										variant="ghost"
+										aria-label={t("pdf.paperTone")}
+									>
+										<Palette className="size-3.5" />
+									</Button>
+								</PopoverTrigger>
+							</TooltipTrigger>
+							<TooltipContent side="top">{t("pdf.paperTone")}</TooltipContent>
+						</Tooltip>
+						<PopoverContent
+							side="top"
+							align="center"
+							className="w-auto flex-row items-center gap-1.5 p-1.5"
+						>
+							{PDF_PAPER_TONES.map((tone) => {
+								const label = t(`pdf.paperToneOption.${tone}`);
+								return (
+									<Tooltip key={tone}>
+										<TooltipTrigger asChild>
+											<button
+												type="button"
+												aria-label={label}
+												aria-pressed={pdfTone === tone}
+												className={cn(
+													"size-5 shrink-0 rounded-full ring-1 ring-black/15 transition hover:scale-110 dark:ring-white/25",
+													PDF_PAPER_SWATCH_CLASS[tone],
+													pdfTone === tone &&
+														"ring-2 ring-foreground/70 ring-offset-1 ring-offset-popover",
+												)}
+												onClick={() => {
+													onSetPdfTone(tone);
+													setTonePickerOpen(false);
+												}}
+											/>
+										</TooltipTrigger>
+										<TooltipContent side="top">{label}</TooltipContent>
+									</Tooltip>
+								);
+							})}
+						</PopoverContent>
+					</Popover>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<Button

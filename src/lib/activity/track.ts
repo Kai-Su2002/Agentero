@@ -5,6 +5,7 @@
 
 import { type ActivityRecord, recordActivityEvents } from "@/lib/activity/api";
 import { type ActivityKind, isActivityKind } from "@/lib/activity/kinds";
+import type { Json } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
 import { logger } from "@/lib/core/logger";
 import { toVaultRelative } from "@/lib/core/path";
@@ -21,7 +22,7 @@ type TrackPayload = {
 	path?: string;
 	mode?: string;
 	durMs?: number;
-	extra?: Record<string, unknown>;
+	extra?: Json;
 };
 
 type Buffered = ActivityRecord & { _key: string; _at: number };

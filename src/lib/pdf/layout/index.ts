@@ -108,7 +108,7 @@ export {
 	runLayoutRegionTranslate,
 	toLayoutTranslateItems,
 	writeLayoutTranslateSidecar,
-} from "@/lib/pdf/layout/layout-translate";
+} from "@/lib/pdf/layout/layout-translate-reliable";
 export {
 	buildLayoutTranslateChains,
 	isLayoutParagraphContinuation,
@@ -154,10 +154,8 @@ export {
 	verticalCeilingForTitle,
 } from "@/lib/pdf/layout/merge-captions";
 export {
-	attachLayoutModelTaskListener,
 	ensureLayoutModel,
 	getLayoutModelStatus,
-	LAYOUT_MODEL_TASK_ID,
 	type LayoutModelStatus,
 	layoutModelLocalUrl,
 	prefetchLayoutModel,

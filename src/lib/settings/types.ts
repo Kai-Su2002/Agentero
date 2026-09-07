@@ -38,7 +38,8 @@ export type LibraryColumnKey =
 	| "year"
 	| "publication"
 	| "tags"
-	| "id";
+	| "id"
+	| "citations";
 
 /** Per-column display preference: order comes from array position. */
 export type LibraryColumnPref = {
@@ -54,6 +55,7 @@ export const LIBRARY_COLUMN_KEYS: LibraryColumnKey[] = [
 	"publication",
 	"tags",
 	"id",
+	"citations",
 ];
 
 /** Default: every column visible, in canonical order. */
@@ -111,6 +113,8 @@ export type AppSettings = {
 	 * Default: hosted poco-ai service.
 	 */
 	translatorBaseUrl: string;
+	/** EasyScholar key for journal ranking and impact-factor lookups. */
+	easyScholarKey: string;
 	/** Process-wide HTTP(S)/SOCKS proxy for Host requests and Agent traffic. */
 	networkProxyEnabled: boolean;
 	networkProxyUrl: string;

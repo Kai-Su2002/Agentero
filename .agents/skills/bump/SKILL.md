@@ -21,6 +21,7 @@ description: >-
    - `package.json` 的 `version`。
    - `src-tauri/tauri.conf.json` 的 `version`。
    - `src-tauri/Cargo.toml` 的 package `version`。
+   - `crates/agentero-core/Cargo.toml` 的 package `version`（`agentero_core::http` 用 `CARGO_PKG_VERSION` 拼 User-Agent，必须与主 crate 锁步）。
    - `cli/Cargo.toml` 的 package `version`。
    - `src-tauri/ios-project.yml` 的 `CFBundleShortVersionString` 与 `CFBundleVersion`。
 

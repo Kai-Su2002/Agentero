@@ -33,9 +33,9 @@ import {
 } from "@/components/ui/select";
 import { useOverlayRegistration } from "@/hooks/use-overlay-registration";
 import i18n from "@/i18n";
-import { enqueueBackgroundTask } from "@/lib/core/background-tasks";
 import { errorText } from "@/lib/core/error";
 import { readJsonStorage, writeJsonStorage } from "@/lib/core/storage";
+import { runLocalActivity } from "@/lib/core/tasks";
 import { isTauri } from "@/lib/core/tauri";
 import {
 	isSqliteMissingError,
@@ -303,9 +303,9 @@ export function ZoteroMigrateDialog({
 		setError(null);
 		setProgress({ current: 0, total: selectedItems.size });
 		try {
-			const res = await enqueueBackgroundTask(
+			const res = await runLocalActivity(
 				{
-					kind: "import",
+					kind: "zoteroMigrate",
 					title: t("sidebar:zoteroMigrate.task"),
 					detail: dir,
 				},

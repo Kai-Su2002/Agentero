@@ -3,7 +3,8 @@
  * @see docs/backend/mcp.md
  */
 
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi, callApiResult } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
 export type McpTunnelPhase =
@@ -33,15 +34,15 @@ const idle = (): McpTunnelStatus => ({
 
 export async function mcpTunnelStatus(): Promise<McpTunnelStatus> {
 	if (!isTauri()) return idle();
-	return invokeApi<McpTunnelStatus>("mcp_tunnel_status");
+	return callApi(() => commands.mcpTunnelStatus());
 }
 
 export async function mcpTunnelStart(mcpUrl: string): Promise<McpTunnelStatus> {
 	if (!isTauri()) return idle();
-	return invokeApi<McpTunnelStatus>("mcp_tunnel_start", { args: { mcpUrl } });
+	return callApiResult(() => commands.mcpTunnelStart({ mcpUrl }));
 }
 
 export async function mcpTunnelStop(): Promise<McpTunnelStatus> {
 	if (!isTauri()) return idle();
-	return invokeApi<McpTunnelStatus>("mcp_tunnel_stop");
+	return callApi(() => commands.mcpTunnelStop());
 }

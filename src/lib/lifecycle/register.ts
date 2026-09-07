@@ -5,7 +5,8 @@
 
 import i18n from "@/i18n";
 import { clearAgentVaultState } from "@/lib/agent/agent-session-store";
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi, callApiResult } from "@/lib/core/ipc";
 import { notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { lifecycle } from "@/lib/lifecycle";
@@ -69,9 +70,8 @@ export function registerLifecycleHandlers(): () => void {
 			if (isTauri()) {
 				// T2 reconcile: backfill PAPER.md for catalog papers missing it. Fire
 				// & forget; jobs are idempotent and throttled (ParseBody cap = 1).
-				void invokeApi(
-					"job_reconcile_vault",
-					{ args: { vaultPath: vaultId } },
+				void callApiResult(
+					() => commands.jobReconcileVault({ vaultPath: vaultId }),
 					{ fallback: "vault reconcile failed" },
 				).catch(() => undefined);
 			}
@@ -93,11 +93,9 @@ export function registerLifecycleHandlers(): () => void {
 				clearLayoutVaultState();
 				clearUiVaultState();
 				if (isTauri() && !isRemoteVaultHandle(vaultId)) {
-					void invokeApi(
-						"vault_release",
-						{ path: vaultId },
-						{ fallback: "vault release failed" },
-					).catch(() => undefined);
+					void callApi(() => commands.vaultRelease(vaultId), {
+						fallback: "vault release failed",
+					}).catch(() => undefined);
 				}
 			};
 		}),

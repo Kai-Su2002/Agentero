@@ -5,7 +5,7 @@ import type { PdfViewerHandle } from "@/components/viewer";
 import { HtmlViewer, ImageViewer } from "@/components/viewer";
 import { RecycleBinView } from "@/components/workspace/recycle-bin-view";
 import { useSettings } from "@/hooks/use-app-stores";
-import type { PaperMetadata } from "@/lib/paper";
+import type { PaperLibraryRow, PaperMetadata } from "@/lib/paper";
 import { isRemoteArxivPath } from "@/lib/paper";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace/types";
 import type { PdfAskThread } from "@/lib/pdf/ask/types";
@@ -35,7 +35,7 @@ const PlazaView = lazy(() =>
 
 /** Library-tab-only props (ignored by PDF / editor / trash). */
 export type DocViewLibraryProps = {
-	papers: PaperMetadata[];
+	papers: PaperLibraryRow[];
 	loading: boolean;
 	query: string;
 	onQueryChange: (query: string) => void;
@@ -78,6 +78,15 @@ export type DocViewPdfProps = {
 	onHighlightsChange: (tabId: string, list: PdfHighlight[]) => void;
 	onAsksChange: (tabId: string, list: PdfAskThread[]) => void;
 	onVisualTracesChange: (tabId: string, list: PdfVisualSessionTrace[]) => void;
+	/**
+	 * Open a rendered-translation tab split to the right of the current PDF panel.
+	 * Called by the full-document translate button when dual-pane mode is on.
+	 */
+	onOpenTranslationTab?: (
+		paperTabId: string,
+		paperAbsPath: string | null,
+		paperTitle?: string | null,
+	) => void;
 };
 
 export type DocViewProps = {
@@ -150,7 +159,8 @@ function docViewPropsEqual(prev: DocViewProps, next: DocViewProps): boolean {
 	}
 	if (tab.kind === "plaza") return true;
 	if (tab.mode === "markdown") return prev.editor === next.editor;
-	if (tab.mode === "pdf") return prev.pdf === next.pdf;
+	if (tab.mode === "pdf" || tab.mode === "translation")
+		return prev.pdf === next.pdf;
 	return true;
 }
 
@@ -310,6 +320,43 @@ export const DocView = memo(function DocView({
 						onHighlightsChange={handlePdfHighlightsChange}
 						onAsksChange={handlePdfAsksChange}
 						onVisualTracesChange={handlePdfVisualTracesChange}
+						onOpenTranslationTab={pdf.onOpenTranslationTab}
+					/>
+				</Suspense>
+			</div>
+		);
+	}
+	if (tab.mode === "translation") {
+		// Right-hand pane of a dual-pane translation layout: render the same
+		// PDF viewer as the source pane, but force translation overlays on.
+		if (!active && !keepMounted) return null;
+		return (
+			<div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+				<Suspense fallback={<TabLoadingSkeleton />}>
+					<PdfViewer
+						source={tab.pdfUrl}
+						sourceBytes={tab.pdfBytes}
+						docId={tab.id}
+						paperAbsPath={
+							tab.notesPath
+								? tab.notesPath.replace(/[\\/]NOTES\.md$/i, "")
+								: null
+						}
+						paperRelPath={
+							tab.paperMeta?.path ?? paperRelFromNotes(tab.notesPath, vaultPath)
+						}
+						vaultPath={vaultPath}
+						paperMeta={tab.paperMeta}
+						isActive={active}
+						isRemotePaper={isRemoteArxivPath(tab.path)}
+						importIdentifier={tab.paperMeta?.source_url ?? undefined}
+						onOpenSettings={pdf.onOpenSettings}
+						className="h-full w-full"
+						onHandle={handlePdfHandle}
+						onHighlightsChange={handlePdfHighlightsChange}
+						onAsksChange={handlePdfAsksChange}
+						onVisualTracesChange={handlePdfVisualTracesChange}
+						translationPane
 					/>
 				</Suspense>
 			</div>

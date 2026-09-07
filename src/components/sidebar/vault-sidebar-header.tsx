@@ -7,11 +7,13 @@ import {
 	Check,
 	ChevronsUpDown,
 	FileUp,
+	FolderInput,
 	FolderOpen,
 	FolderPlus,
 	Loader2,
 	RefreshCw,
 	Server,
+	Trash2,
 	Upload,
 	WandSparkles,
 	X,
@@ -59,6 +61,14 @@ import {
 
 export type VaultSidebarHeaderProps = {
 	title: string;
+	/** Transient tree multi-selection mode; replaces, never stacks on, this header. */
+	selection?: {
+		count: number;
+		disabled?: boolean;
+		onClear: () => void;
+		onMove?: (anchor: { x: number; y: number }) => void;
+		onDelete: () => void;
+	};
 	/** Vault-relative papers parent, e.g. `papers` or `papers/nlp` */
 	lookupParentDir: string;
 	onLookupSubmit: (texts: string[]) => Promise<void>;
@@ -91,6 +101,7 @@ export type VaultSidebarHeaderProps = {
 
 export const VaultSidebarHeader = memo(function VaultSidebarHeader({
 	title,
+	selection,
 	lookupParentDir,
 	onLookupSubmit,
 	onImportBibliography,
@@ -146,6 +157,11 @@ export const VaultSidebarHeader = memo(function VaultSidebarHeader({
 		busy || isDemo || Boolean(importBusy) || Boolean(importPdfBusy);
 	const lookupDisabled = busy || isDemo;
 	const magicWandShortcut = formatShortcutById("magicWand");
+	const selectionActive = Boolean(selection && selection.count > 0);
+
+	useEffect(() => {
+		if (selectionActive) setWandOpen(false);
+	}, [selectionActive]);
 
 	useEffect(() => {
 		if (lookupOpenSignal <= 0 || isDemo || busy) return;
@@ -178,6 +194,93 @@ export const VaultSidebarHeader = memo(function VaultSidebarHeader({
 			setLookupBusy(false);
 		}
 	};
+
+	if (selection && selection.count > 0) {
+		return (
+			<TooltipProvider delayDuration={300}>
+				<div className="shrink-0">
+					<PaneHeader
+						className="relative z-10 border-b-0"
+						trailing={
+							<>
+								{selection.onMove ? (
+									<Tooltip>
+										<TooltipTrigger asChild>
+											<Button
+												type="button"
+												variant="ghost"
+												size="icon-xs"
+												disabled={selection.disabled}
+												aria-label={t("sidebar:fileTree.moveSelected", {
+													count: selection.count,
+												})}
+												onClick={(event) => {
+													const rect =
+														event.currentTarget.getBoundingClientRect();
+													selection.onMove?.({ x: rect.left, y: rect.top });
+												}}
+											>
+												<FolderInput className="size-3.5" />
+											</Button>
+										</TooltipTrigger>
+										<TooltipContent side="bottom">
+											{t("sidebar:fileTree.moveSelected", {
+												count: selection.count,
+											})}
+										</TooltipContent>
+									</Tooltip>
+								) : null}
+								<Tooltip>
+									<TooltipTrigger asChild>
+										<Button
+											type="button"
+											variant="ghost"
+											size="icon-xs"
+											className="text-destructive"
+											disabled={selection.disabled}
+											aria-label={t("sidebar:fileTree.deleteSelected", {
+												count: selection.count,
+											})}
+											onClick={selection.onDelete}
+										>
+											<Trash2 className="size-3.5" />
+										</Button>
+									</TooltipTrigger>
+									<TooltipContent side="bottom">
+										{t("sidebar:fileTree.deleteSelected", {
+											count: selection.count,
+										})}
+									</TooltipContent>
+								</Tooltip>
+							</>
+						}
+					>
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-xs"
+									aria-label={t("sidebar:fileTree.clearSelection")}
+									onClick={selection.onClear}
+								>
+									<X className="size-3.5" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent side="bottom">
+								{t("sidebar:fileTree.clearSelection")}
+							</TooltipContent>
+						</Tooltip>
+						<span className="min-w-0 truncate font-medium text-sm">
+							{t("sidebar:fileTree.selectedCount", {
+								count: selection.count,
+							})}
+						</span>
+					</PaneHeader>
+				</div>
+			</TooltipProvider>
+		);
+	}
 
 	return (
 		<TooltipProvider delayDuration={300}>

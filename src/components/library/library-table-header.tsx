@@ -7,7 +7,7 @@
  * parent only receives committed reorder events. Memoized so scrolling the
  * virtualized body does not re-render the header.
  */
-import { ListFilter, RefreshCw, Search, X } from "lucide-react";
+import { Award, ListFilter, RefreshCw, Search, X } from "lucide-react";
 import { memo, useState } from "react";
 import { COLUMN_META, SortIcon } from "@/components/library/library-columns";
 import type {
@@ -36,8 +36,16 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { errorMessage, notifyError, notifySuccess } from "@/lib/core/notify";
 import { cn } from "@/lib/core/utils";
-import type { PaperTag } from "@/lib/paper/tags";
+import {
+	buildEasyScholarTags,
+	fetchEasyScholarRank,
+	isEasyScholarTag,
+} from "@/lib/easyscholar";
+import type { PaperMetadata } from "@/lib/paper";
+import { setLibraryPaperTags } from "@/lib/paper/library-store";
+import { coercePaperTags, type PaperTag } from "@/lib/paper/tags";
 import type { LibraryColumnPref } from "@/lib/settings";
 
 type LibraryTableHeaderProps = {
@@ -67,6 +75,10 @@ type LibraryTableHeaderProps = {
 	onToggleColumn: (key: SortKey) => void;
 	onResetColumns: () => void;
 	onColumnReorder: (fromKey: SortKey, toKey: SortKey) => void;
+	/** Vault path for EasyScholar batch tag fetch. */
+	vaultPath?: string | null;
+	/** Papers currently visible in the library scope. */
+	papers: PaperMetadata[];
 };
 
 export const LibraryTableHeader = memo(function LibraryTableHeader({
@@ -90,11 +102,58 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 	onToggleColumn,
 	onResetColumns,
 	onColumnReorder,
+	vaultPath,
+	papers,
 }: LibraryTableHeaderProps) {
 	// --- Column customization (order + visibility) ---
 	const [dragKey, setDragKey] = useState<SortKey | null>(null);
 	const [dragOverKey, setDragOverKey] = useState<SortKey | null>(null);
 	const [tagFilterOpen, setTagFilterOpen] = useState(false);
+	const [rankBusy, setRankBusy] = useState(false);
+
+	const canFetchRanks = Boolean(vaultPath) && !rankBusy && papers.length > 0;
+
+	const fetchAllRanks = async () => {
+		if (!vaultPath || rankBusy) return;
+		setRankBusy(true);
+		let updated = 0;
+		let failed = 0;
+		let empty = 0;
+		try {
+			for (const paper of papers) {
+				const title = paper.publication?.trim();
+				if (!title || !paper.path) continue;
+				try {
+					const response = await fetchEasyScholarRank(title);
+					const data = response.data?.officialRank?.all;
+					if (!data || Object.keys(data).length === 0) {
+						empty += 1;
+						continue;
+					}
+					const newTags = buildEasyScholarTags(title, data);
+					const allTags = coercePaperTags(paper.tags);
+					const base = allTags.filter((tag) => !isEasyScholarTag(tag.name));
+					await setLibraryPaperTags(vaultPath, paper.path, [
+						...base,
+						...newTags,
+					]);
+					updated += 1;
+				} catch {
+					failed += 1;
+					// Continue with the next paper; summarize at the end.
+				}
+			}
+			notifySuccess(
+				t("papersLibrary.easyScholar.batchDone", { updated, failed, empty }),
+			);
+		} catch (err) {
+			notifyError(t("papersLibrary.easyScholar.fetchFailed"), {
+				description: errorMessage(err),
+			});
+		} finally {
+			setRankBusy(false);
+		}
+	};
 
 	return (
 		<ContextMenu>
@@ -218,97 +277,136 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 											</Tooltip>
 										) : null}
 										{isTags ? (
-											<Popover
-												open={tagFilterOpen}
-												onOpenChange={setTagFilterOpen}
-											>
+											<>
 												<Tooltip>
 													<TooltipTrigger asChild>
-														<PopoverTrigger asChild>
-															<button
-																type="button"
-																data-library-header-action
-																className={cn(
-																	"ml-auto flex size-6 shrink-0 items-center justify-center rounded-sm",
-																	"hover:bg-muted/60 hover:text-foreground",
-																	"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-																	tagFilterActive &&
-																		"bg-muted/60 text-foreground",
-																)}
-																aria-label={t("papersLibrary.filterTags")}
-																aria-pressed={tagFilterActive}
-																onClick={(e) => e.stopPropagation()}
-																onMouseDown={(e) => e.stopPropagation()}
-															>
-																<ListFilter className="size-3.5" aria-hidden />
-															</button>
-														</PopoverTrigger>
+														<button
+															type="button"
+															data-library-header-action
+															disabled={!canFetchRanks}
+															className={cn(
+																"ml-1 flex size-6 shrink-0 items-center justify-center rounded-sm",
+																"hover:bg-muted/60 hover:text-foreground",
+																"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+																"disabled:pointer-events-none disabled:opacity-50",
+															)}
+															aria-label={t(
+																"papersLibrary.easyScholar.fetchRank",
+															)}
+															title={t("papersLibrary.easyScholar.fetchRank")}
+															onClick={(e) => {
+																e.stopPropagation();
+																void fetchAllRanks();
+															}}
+															onMouseDown={(e) => e.stopPropagation()}
+														>
+															<Award
+																className="size-3.5 text-amber-500"
+																aria-hidden
+															/>
+														</button>
 													</TooltipTrigger>
 													<TooltipContent side="bottom">
-														{t("papersLibrary.filterTags")}
+														{t("papersLibrary.easyScholar.fetchRank")}
 													</TooltipContent>
 												</Tooltip>
-												<PopoverContent
-													align="start"
-													className="w-56 p-2"
-													onOpenAutoFocus={(e) => e.preventDefault()}
+												<Popover
+													open={tagFilterOpen}
+													onOpenChange={setTagFilterOpen}
 												>
-													{availableTags.length === 0 ? (
-														<p className="px-1 py-2 text-muted-foreground text-xs">
-															{t("papersLibrary.filterTagsEmpty")}
-														</p>
-													) : (
-														<div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto">
-															{availableTags.map((tag) => {
-																const selected = tagFilterSet.has(tag.name);
-																return (
-																	<button
-																		key={tag.name}
-																		type="button"
-																		className={cn(
-																			"flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs",
-																			"hover:bg-muted/60",
-																			selected && "bg-muted/50",
-																		)}
-																		aria-pressed={selected}
-																		onClick={() => onToggleTagFilter(tag.name)}
-																	>
-																		<span
+													<Tooltip>
+														<TooltipTrigger asChild>
+															<PopoverTrigger asChild>
+																<button
+																	type="button"
+																	data-library-header-action
+																	className={cn(
+																		"ml-auto flex size-6 shrink-0 items-center justify-center rounded-sm",
+																		"hover:bg-muted/60 hover:text-foreground",
+																		"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+																		tagFilterActive &&
+																			"bg-muted/60 text-foreground",
+																	)}
+																	aria-label={t("papersLibrary.filterTags")}
+																	aria-pressed={tagFilterActive}
+																	onClick={(e) => e.stopPropagation()}
+																	onMouseDown={(e) => e.stopPropagation()}
+																>
+																	<ListFilter
+																		className="size-3.5"
+																		aria-hidden
+																	/>
+																</button>
+															</PopoverTrigger>
+														</TooltipTrigger>
+														<TooltipContent side="bottom">
+															{t("papersLibrary.filterTags")}
+														</TooltipContent>
+													</Tooltip>
+													<PopoverContent
+														align="start"
+														className="w-56 p-2"
+														onOpenAutoFocus={(e) => e.preventDefault()}
+													>
+														{availableTags.length === 0 ? (
+															<p className="px-1 py-2 text-muted-foreground text-xs">
+																{t("papersLibrary.filterTagsEmpty")}
+															</p>
+														) : (
+															<div className="flex max-h-56 flex-col gap-0.5 overflow-y-auto">
+																{availableTags.map((tag) => {
+																	const selected = tagFilterSet.has(tag.name);
+																	return (
+																		<button
+																			key={tag.name}
+																			type="button"
 																			className={cn(
-																				"flex size-3.5 shrink-0 items-center justify-center rounded-sm border",
-																				selected
-																					? "border-primary bg-primary text-primary-foreground"
-																					: "border-muted-foreground/40",
+																				"flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs",
+																				"hover:bg-muted/60",
+																				selected && "bg-muted/50",
 																			)}
-																			aria-hidden
+																			aria-pressed={selected}
+																			onClick={() =>
+																				onToggleTagFilter(tag.name)
+																			}
 																		>
-																			{selected ? (
-																				<span className="text-[9px] leading-none">
-																					✓
-																				</span>
-																			) : null}
-																		</span>
-																		<PaperTagChip tag={tag} />
-																	</button>
-																);
-															})}
-														</div>
-													)}
-													{tagFilterActive ? (
-														<>
-															<div className="my-1.5 h-px bg-border" />
-															<button
-																type="button"
-																className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground text-xs hover:bg-muted/60 hover:text-foreground"
-																onClick={onClearTagFilter}
-															>
-																<X className="size-3" aria-hidden />
-																{t("papersLibrary.clearTagFilter")}
-															</button>
-														</>
-													) : null}
-												</PopoverContent>
-											</Popover>
+																			<span
+																				className={cn(
+																					"flex size-3.5 shrink-0 items-center justify-center rounded-sm border",
+																					selected
+																						? "border-primary bg-primary text-primary-foreground"
+																						: "border-muted-foreground/40",
+																				)}
+																				aria-hidden
+																			>
+																				{selected ? (
+																					<span className="text-[9px] leading-none">
+																						✓
+																					</span>
+																				) : null}
+																			</span>
+																			<PaperTagChip tag={tag} />
+																		</button>
+																	);
+																})}
+															</div>
+														)}
+														{tagFilterActive ? (
+															<>
+																<div className="my-1.5 h-px bg-border" />
+																<button
+																	type="button"
+																	className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-1 text-muted-foreground text-xs hover:bg-muted/60 hover:text-foreground"
+																	onClick={onClearTagFilter}
+																>
+																	<X className="size-3" aria-hidden />
+																	{t("papersLibrary.clearTagFilter")}
+																</button>
+															</>
+														) : null}
+													</PopoverContent>
+												</Popover>
+											</>
 										) : null}
 									</div>
 								</th>

@@ -1,0 +1,31 @@
+//! Tauri command shells for the Agent feature.
+//!
+//! Keep handlers thin: extract params / State, call services, map errors.
+//! Command paths stay `features::agent::commands::*` for `app/handlers.rs`.
+//! Shared logic lives in `features::agent::service` (also consumed by the
+//! desktop bridge RPC).
+
+mod interaction;
+mod registry;
+mod remote;
+mod session;
+
+use serde::Serialize;
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct EnabledResponse {
+    pub enabled: bool,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentUserAgentResponse {
+    pub user_agent: String,
+    pub user_agent_provider_ids: String,
+}
+
+pub use interaction::*;
+pub use registry::*;
+pub use remote::*;
+pub use session::*;

@@ -4,12 +4,11 @@
 
 import { useEffect } from "react";
 import { takePendingVaultOpen } from "@/lib/cli/api";
+import { events } from "@/lib/core/bindings";
 import { notifyError } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
-import { listenSafe } from "@/lib/core/tauri-events";
+import { listenEventSafe } from "@/lib/core/tauri-events";
 import { openLocalVaultPath } from "@/lib/vault/actions";
-
-type OpenPayload = { path: string };
 
 export function useVaultOpenRequest(): void {
 	useEffect(() => {
@@ -41,15 +40,12 @@ export function useVaultOpenRequest(): void {
 			}
 		};
 
-		const offOpen = listenSafe<OpenPayload>("vault:open-request", (payload) => {
+		const offOpen = listenEventSafe(events.vaultOpenRequest, (payload) => {
 			void handlePath(payload?.path);
 		});
-		const offError = listenSafe<{ message?: string }>(
-			"vault:open-error",
-			(payload) => {
-				if (payload?.message) notifyError(payload.message);
-			},
-		);
+		const offError = listenEventSafe(events.vaultOpenError, (payload) => {
+			if (payload?.message) notifyError(payload.message);
+		});
 
 		// Startup race: Host may have queued a path before the listener attached.
 		void (async () => {

@@ -1,8 +1,10 @@
-//! Headless `AppHandle` shim.
+//! Host handle bridge: re-exports the tauri-free [`AppHandle`] /
+//! [`HostHooks`] from `agentero-core` so `crate::core::app_handle::X`
+//! paths stay stable for the migrated domain services.
 //!
-//! Headless (CLI) builds keep emit-style function signatures aligned with the
-//! desktop shape by pointing them at this empty stand-in; every event the
-//! callers would emit is simply a no-op.
+//! The desktop implementation of [`HostHooks`] (event emit + JobCenter
+//! spawns) lives in `features::host_hooks` — `core/` must not depend on
+//! `features/` — and headless (CLI) callers pass `None` /
+//! [`AppHandle::headless`], where every hook is a no-op.
 
-#[cfg(not(feature = "desktop"))]
-pub struct AppHandle;
+pub use agentero_core::app_handle::{AppHandle, HostHooks};

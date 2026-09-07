@@ -3,7 +3,8 @@
  * Used by the `custom` paperNoteMode; seeded on demand from Settings → General.
  */
 
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 
 export type NotesTemplateSeedResult = {
 	/** `false` when `.agentero/templates/NOTES.md` already exists. */
@@ -14,7 +15,5 @@ export type NotesTemplateSeedResult = {
 export async function notesTemplateSeed(
 	vaultPath: string,
 ): Promise<NotesTemplateSeedResult> {
-	return invokeApi<NotesTemplateSeedResult>("notes_template_seed", {
-		vaultPath,
-	});
+	return callApi(() => commands.notesTemplateSeed(vaultPath));
 }

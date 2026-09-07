@@ -3,9 +3,9 @@
 use crate::error::{CliError, ExitCode};
 use crate::output::to_value;
 use crate::resolve::{resolve_vault, GlobalOpts};
-use agentero_lib::core::fs::sanitize_vault_rel;
-use agentero_lib::features::wiki::index::WikiIndex;
-use agentero_lib::features::wiki::models::LinkResolutionStatus;
+use agentero_core::features::wiki::index::WikiIndex;
+use agentero_core::features::wiki::models::LinkResolutionStatus;
+use agentero_core::fs::sanitize_vault_rel;
 use clap::{Subcommand, ValueHint};
 use serde_json::{json, Value};
 use std::path::Path;
@@ -96,7 +96,7 @@ fn is_markdown(path: &Path) -> bool {
         })
 }
 
-fn issue_lines(issues: &[agentero_lib::features::wiki::models::WikiCheckIssue]) -> Vec<String> {
+fn issue_lines(issues: &[agentero_core::features::wiki::models::WikiCheckIssue]) -> Vec<String> {
     issues
         .iter()
         .map(|issue| {

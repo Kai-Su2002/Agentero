@@ -1,7 +1,7 @@
 {
 	"name": "agentero",
 	"private": true,
-	"version": "0.9.4",
+	"version": "0.9.5",
 	"type": "module",
 	"packageManager": "pnpm@11.5.3",
 	"scripts": {
@@ -94,7 +94,7 @@
 		"cmdk": "^1.1.1",
 		"dockview": "7.0.4",
 		"dockview-react": "^7.0.4",
-		"dompurify": "3.4.12",
+		"dompurify": "3.4.13",
 		"driver.js": "^1.8.0",
 		"embla-carousel-react": "^8.6.0",
 		"html-to-image": "^1.11.13",

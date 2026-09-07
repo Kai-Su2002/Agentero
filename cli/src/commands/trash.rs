@@ -2,7 +2,7 @@
 
 use crate::error::CliError;
 use crate::resolve::{resolve_vault, GlobalOpts};
-use agentero_lib::features::trash;
+use agentero_core::features::trash;
 use clap::Subcommand;
 use serde_json::{json, Value};
 

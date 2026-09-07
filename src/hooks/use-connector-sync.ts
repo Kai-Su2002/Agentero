@@ -1,29 +1,22 @@
 /**
  * Zotero Connector server sync: bind the active vault + Library folder scope,
- * honor the settings toggle, and surface save/progress events as background
- * tasks. Extracted from App so connector traffic never re-renders the shell.
+ * honor the settings toggle, and react to save/error events. Attachment
+ * progress rows come from the JobCenter relay (`lib/paper/import/connector-tasks`).
+ * Extracted from App so connector traffic never re-renders the shell.
  */
 
-import { useEffect, useRef } from "react";
-import { useTranslation } from "react-i18next";
+import { useEffect } from "react";
 import {
 	useLibraryStore,
 	useSettings,
 	useVaultStore,
 } from "@/hooks/use-app-stores";
-import {
-	completeBackgroundTask,
-	failBackgroundTask,
-	startBackgroundTask,
-	updateBackgroundTask,
-} from "@/lib/core/background-tasks";
+import { events } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
 import { notifyError } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
-import { listenSafe } from "@/lib/core/tauri-events";
+import { listenEventSafe } from "@/lib/core/tauri-events";
 import {
-	type ConnectorItemSaved,
-	type ConnectorProgress,
 	connectorSetEnabled,
 	connectorSetParentDir,
 	connectorSetVault,
@@ -34,11 +27,9 @@ import { getVaultPath, scheduleTreeRefresh } from "@/lib/vault/store";
 import { openPaper } from "@/lib/workspace/actions";
 
 export function useConnectorSync(): void {
-	const { t } = useTranslation(["app", "sidebar"]);
 	const vaultPath = useVaultStore((s) => s.vaultPath);
 	const libraryScopePath = useLibraryStore((s) => s.scopePath);
 	const connectorEnabled = useSettings((s) => s.connectorEnabled);
-	const progressTasksRef = useRef(new Map<string, string>());
 
 	// Sync active vault into the Connector server (save target).
 	useEffect(() => {
@@ -89,7 +80,7 @@ export function useConnectorSync(): void {
 	// paper tab (same as magic-wand import).
 	useEffect(() => {
 		const offs = [
-			listenSafe<ConnectorItemSaved>("connector:item-saved", (p) => {
+			listenEventSafe(events.connectorItemSaved, (p) => {
 				const vault = getVaultPath();
 				if (vault) {
 					// Debounced: import saves coalesce with the paper:imported
@@ -105,38 +96,7 @@ export function useConnectorSync(): void {
 					openPaper(joinVaultPath(vault, rel));
 				}
 			}),
-			listenSafe<ConnectorProgress>("connector:progress", (p) => {
-				if (!p?.key) return;
-				let taskId = progressTasksRef.current.get(p.key);
-				if (!taskId) {
-					taskId = startBackgroundTask({
-						kind: "connector",
-						title: p.title || t("app:tasks.connector"),
-						detail: p.detail ?? undefined,
-						progress: p.progress ?? null,
-					});
-					progressTasksRef.current.set(p.key, taskId);
-				} else {
-					updateBackgroundTask(taskId, {
-						detail: p.detail ?? undefined,
-						progress: p.progress ?? null,
-					});
-				}
-				if (p.status === "completed") {
-					completeBackgroundTask(
-						taskId,
-						p.detail ?? t("app:tasks.connectorComplete"),
-					);
-					progressTasksRef.current.delete(p.key);
-				} else if (p.status === "failed") {
-					failBackgroundTask(
-						taskId,
-						p.error ?? p.detail ?? t("app:tasks.connectorFailed"),
-					);
-					progressTasksRef.current.delete(p.key);
-				}
-			}),
-			listenSafe<{ message?: string }>("connector:error", (payload) => {
+			listenEventSafe(events.connectorError, (payload) => {
 				const msg = payload?.message?.trim();
 				if (msg) notifyError(msg);
 			}),
@@ -144,5 +104,5 @@ export function useConnectorSync(): void {
 		return () => {
 			for (const off of offs) off();
 		};
-	}, [t]);
+	}, []);
 }

@@ -1,4 +1,11 @@
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	type BacklinksResponse_Serialize,
+	commands,
+	type ResolvedLink_Serialize,
+	type WikiEmbedResponse_Serialize,
+	type WikiSearchCandidate_Serialize,
+} from "@/lib/core/bindings";
+import { callApiResult } from "@/lib/core/ipc";
 import { normalizeRelPath, toVaultRelative } from "@/lib/core/path";
 import { isTauri } from "@/lib/core/tauri";
 
@@ -276,13 +283,61 @@ export function externalRenameRepairHadZeroWrites(error: unknown): boolean {
 	return wikiRenameFailure(error)?.rollback === "not-needed";
 }
 
-async function invokeWikiApi<T>(
-	cmd: string,
-	args?: Record<string, unknown>,
-): Promise<T> {
-	return invokeApi<T>(cmd, args, {
-		desktopOnly: "Wiki index requires the Tauri desktop app.",
-	});
+/** Shared non-Tauri guard message for every wiki Host call. */
+const WIKI_CALL_OPTS = {
+	desktopOnly: "Wiki index requires the Tauri desktop app.",
+};
+
+/**
+ * The generated wire types keep `null` on optional fields where the frontend
+ * domain model uses absent optionals; fold them once at the boundary.
+ */
+function resolvedLinkFromWire(link: ResolvedLink_Serialize): ResolvedLink {
+	return {
+		occurrence: {
+			...link.occurrence,
+			displayText: link.occurrence.displayText ?? undefined,
+			fragment: link.occurrence.fragment ?? undefined,
+			fragmentRange: link.occurrence.fragmentRange ?? undefined,
+			context: link.occurrence.context ?? undefined,
+		},
+		status: link.status,
+		targetPath: link.targetPath ?? undefined,
+		candidates: link.candidates,
+	};
+}
+
+function searchCandidateFromWire(
+	candidate: WikiSearchCandidate_Serialize,
+): WikiSearchCandidate {
+	return {
+		kind: candidate.kind,
+		path: candidate.path,
+		insertText: candidate.insertText,
+		label: candidate.label,
+		detail: candidate.detail ?? undefined,
+		alias: candidate.alias ?? undefined,
+		fragment: candidate.fragment ?? undefined,
+	};
+}
+
+function embedResponseFromWire(
+	response: WikiEmbedResponse_Serialize,
+): WikiEmbedResponse {
+	return {
+		link: resolvedLinkFromWire(response.link),
+		contentKind: response.contentKind ?? undefined,
+		content: response.content ?? undefined,
+	};
+}
+
+function backlinksFromWire(
+	response: BacklinksResponse_Serialize,
+): BacklinksResponse {
+	return {
+		path: response.path,
+		backlinks: response.backlinks.map(resolvedLinkFromWire),
+	};
 }
 
 /** Rename or move a local Vault path and repair resolved internal links. */
@@ -292,9 +347,10 @@ export async function moveVaultPath(
 	toRel: string,
 	dirtyPaths: string[],
 ): Promise<WikiRenameResult> {
-	return invokeWikiApi<WikiRenameResult>("wiki_move", {
-		args: { vaultPath, fromRel, toRel, dirtyPaths },
-	});
+	return callApiResult(
+		() => commands.wikiMove({ vaultPath, fromRel, toRel, dirtyPaths }),
+		WIKI_CALL_OPTS,
+	);
 }
 
 /** Explicitly rename one saved heading and repair resolved heading fragments. */
@@ -303,9 +359,10 @@ export async function renameWikiHeading(
 	request: WikiRenameHeadingRequest,
 	dirtyPaths: string[],
 ): Promise<WikiRenameHeadingResult> {
-	return invokeWikiApi<WikiRenameHeadingResult>("wiki_rename_heading", {
-		args: { vaultPath, ...request, dirtyPaths },
-	});
+	return callApiResult(
+		() => commands.wikiRenameHeading({ vaultPath, ...request, dirtyPaths }),
+		WIKI_CALL_OPTS,
+	);
 }
 
 /** Create a no-write repair candidate from a trustworthy external rename pair. */
@@ -315,11 +372,15 @@ export async function previewExternalRenameRepair(
 	toRel: string,
 	dirtyPaths: string[],
 ): Promise<WikiExternalRenamePreview> {
-	return invokeWikiApi<WikiExternalRenamePreview>(
-		"wiki_external_rename_preview",
-		{
-			args: { vaultPath, fromRel, toRel, dirtyPaths },
-		},
+	return callApiResult(
+		() =>
+			commands.wikiExternalRenamePreview({
+				vaultPath,
+				fromRel,
+				toRel,
+				dirtyPaths,
+			}),
+		WIKI_CALL_OPTS,
 	);
 }
 
@@ -329,9 +390,15 @@ export async function applyExternalRenameRepair(
 	candidateId: string,
 	dirtyPaths: string[],
 ): Promise<WikiRenameResult> {
-	return invokeWikiApi<WikiRenameResult>("wiki_apply_external_rename_repair", {
-		args: { vaultPath, candidateId, dirtyPaths },
-	});
+	return callApiResult(
+		() =>
+			commands.wikiApplyExternalRenameRepair({
+				vaultPath,
+				candidateId,
+				dirtyPaths,
+			}),
+		WIKI_CALL_OPTS,
+	);
 }
 
 /** Whether a Markdown destination can be resolved inside the active Vault. */
@@ -947,10 +1014,11 @@ export async function getBacklinks(
 	if (!vaultPath || !isTauri()) {
 		return { path: toVaultRelative(vaultPath, path), backlinks: [] };
 	}
-	return invokeWikiApi<BacklinksResponse>("graph_get_backlinks", {
-		vaultPath,
-		path,
-	});
+	const response = await callApiResult(
+		() => commands.graphGetBacklinks(vaultPath, path),
+		WIKI_CALL_OPTS,
+	);
+	return backlinksFromWire(response);
 }
 
 export async function resolveWikiReference(
@@ -960,13 +1028,11 @@ export async function resolveWikiReference(
 	syntax: InternalLinkSyntax = "wikilink",
 ): Promise<ResolvedLink | null> {
 	if (!vaultPath || !isTauri()) return null;
-	const response = await invokeWikiApi<{ link: ResolvedLink }>("wiki_resolve", {
-		vaultPath,
-		sourcePath,
-		linkText,
-		syntax,
-	});
-	return response.link;
+	const response = await callApiResult(
+		() => commands.wikiResolve(vaultPath, sourcePath, linkText, syntax),
+		WIKI_CALL_OPTS,
+	);
+	return resolvedLinkFromWire(response.link);
 }
 
 export async function readWikiEmbed(
@@ -974,32 +1040,43 @@ export async function readWikiEmbed(
 	sourcePath: string,
 	linkText: string,
 ): Promise<WikiEmbedResponse> {
-	return invokeWikiApi<WikiEmbedResponse>("wiki_embed_read", {
-		vaultPath,
-		sourcePath,
-		linkText,
-	});
+	if (!vaultPath) {
+		throw new Error(WIKI_CALL_OPTS.desktopOnly);
+	}
+	const response = await callApiResult(
+		() => commands.wikiEmbedRead(vaultPath, sourcePath, linkText),
+		WIKI_CALL_OPTS,
+	);
+	return embedResponseFromWire(response);
 }
+
+/** Host-side `wiki_search` kinds; alias/annotation candidates stay client-side. */
+export type WikiSearchScopeKind = "file" | "heading" | "block";
 
 export async function searchWikiLinks(
 	vaultPath: string | null,
 	query: string,
 	scope?: {
 		path?: string | null;
-		kind?: WikiSearchCandidate["kind"] | null;
+		kind?: WikiSearchScopeKind | null;
 	},
 ): Promise<WikiSearchCandidate[]> {
 	if (!vaultPath || !isTauri()) return [];
-	return invokeWikiApi<WikiSearchCandidate[]>("wiki_search", {
-		vaultPath,
-		query,
-		path: scope?.path ?? null,
-		kind: scope?.kind ?? null,
-	});
+	const results = await callApiResult(
+		() =>
+			commands.wikiSearch(
+				vaultPath,
+				query,
+				scope?.path ?? null,
+				scope?.kind ?? null,
+			),
+		WIKI_CALL_OPTS,
+	);
+	return results.map(searchCandidateFromWire);
 }
 
 export async function rebuildWikiIndex(
 	vaultPath: string,
 ): Promise<RebuildResult> {
-	return invokeWikiApi<RebuildResult>("graph_rebuild", { vaultPath });
+	return callApiResult(() => commands.graphRebuild(vaultPath), WIKI_CALL_OPTS);
 }

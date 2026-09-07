@@ -2,7 +2,7 @@
 
 | 层 | 实现 |
 |---|---|
-| Host | `tauri-plugin-log` + `log`；`src-tauri/src/core/log_util.rs` |
+| Host | `tauri-plugin-log` + `log`；`crates/agentero-core/src/log_util.rs` |
 | 前端 | `src/lib/core/logger.ts` |
 | CLI | `env_logger` |
 

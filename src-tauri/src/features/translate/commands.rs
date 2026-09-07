@@ -1,7 +1,7 @@
 //! Application translation commands (free MT; Agent path stays on the frontend ACP).
 
 use crate::core::error::{map_err, ApiResult};
-use crate::features::settings::{is_translate_api_key_mask, AppSettingsStore};
+use crate::features::system::settings::{is_translate_api_key_mask, AppSettingsStore};
 use crate::features::translate::{self, TranslateTextArgs, TranslateTextResult};
 use tauri::{AppHandle, Manager};
 

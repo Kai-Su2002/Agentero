@@ -62,6 +62,9 @@ import {
 import {
 	PDF_ANNOTATION_DARK_CLASS,
 	PDF_PAGE_RASTER_DARK_CLASS,
+	PDF_PAPER_SHELL_CLASS,
+	PDF_PAPER_TINT,
+	type PdfPaperTone,
 } from "@/lib/pdf/page-theme";
 import type { SelectionPin } from "@/lib/pdf/selection";
 
@@ -179,7 +182,8 @@ export type PdfPageLayersProps = {
 	pageIndex: number;
 	width: number;
 	height: number;
-	pdfDark: boolean;
+	/** Paper tone for this viewer (process-wide preference). */
+	tone: PdfPaperTone;
 	/** Read at render time only; page width/height already track zoom. */
 	zoomRef: RefObject<number>;
 	marks: PdfPageMarksSlice;
@@ -264,7 +268,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 	pageIndex,
 	width,
 	height,
-	pdfDark,
+	tone,
 	zoomRef,
 	marks,
 	layout,
@@ -272,6 +276,8 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 	handlers,
 }: PdfPageLayersProps) {
 	const { t } = useTranslation("viewer");
+	const pdfDark = tone === "dark";
+	const paperTint = PDF_PAPER_TINT[tone];
 	/**
 	 * Pointer position at the last pointerdown on a layout hit target. A click
 	 * that travelled beyond the tolerance was a drag, not an activation.
@@ -315,38 +321,58 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 		!!emphasizedComment && emphasizedComment.id === marks.hoveredCommentId;
 	const isEditingComment =
 		!!emphasizedComment && emphasizedComment.id === marks.editingCommentId;
-	// Page shell: paper-white in light mode; muted dark gray when PDF dark mode
-	// is on so loading gaps match the softer inverted page rasters.
+	// Page shell: matches the finished paper so loading gaps do not flash a
+	// different colour.
 	return (
 		<div
 			className={cn(
 				"relative overflow-visible rounded-sm shadow-sm ring-1",
-				pdfDark ? "bg-zinc-800 ring-white/10" : "bg-white ring-black/5",
+				PDF_PAPER_SHELL_CLASS[tone],
 			)}
 			style={{ width, height }}
 			{...{ [EMBED_PAGE_ATTR]: pageIndex }}
 		>
 			{/*
+			 * Paper group: rasters plus the tint that recolours them, isolated so the
+			 * multiply blend reads only this page's paper and never the viewer
+			 * backdrop. Isolation lives here rather than on the page shell so overlays
+			 * that overflow the page (comment cards, translate tab, highlight menu)
+			 * keep painting across page boundaries.
+			 *
 			 * EmbedPDF has no page color-scheme API yet (UI chrome theme only).
 			 * Invert + hue-rotate only the raster layers so selection / search /
 			 * annotation / pin overlays keep their intended colors. Agent crops
 			 * use engine.renderPageRect and are unaffected.
 			 */}
-			<RenderLayer
-				documentId={docId}
-				pageIndex={pageIndex}
-				scale={Math.min(zoomRef.current, PDF_BASE_LAYER_SCALE_CAP)}
-				dpr={pdfRasterDpr()}
-				className={pdfDark ? PDF_PAGE_RASTER_DARK_CLASS : undefined}
-				style={PAGE_LAYER_STYLE}
-			/>
-			<TilingLayer
-				documentId={docId}
-				pageIndex={pageIndex}
-				dpr={pdfTileDpr()}
-				className={pdfDark ? PDF_PAGE_RASTER_DARK_CLASS : undefined}
-				style={PAGE_LAYER_STYLE}
-			/>
+			<div className="absolute inset-0 isolate">
+				<RenderLayer
+					documentId={docId}
+					pageIndex={pageIndex}
+					scale={Math.min(zoomRef.current, PDF_BASE_LAYER_SCALE_CAP)}
+					dpr={pdfRasterDpr()}
+					className={pdfDark ? PDF_PAGE_RASTER_DARK_CLASS : undefined}
+					style={PAGE_LAYER_STYLE}
+				/>
+				<TilingLayer
+					documentId={docId}
+					pageIndex={pageIndex}
+					dpr={pdfTileDpr()}
+					className={pdfDark ? PDF_PAGE_RASTER_DARK_CLASS : undefined}
+					style={PAGE_LAYER_STYLE}
+				/>
+				{/*
+				 * Tinted paper: multiply over the rasters only, so white paper lands on
+				 * the tone while text stays black and figures keep their saturation.
+				 * Painted below the interaction layers so highlights stay untouched.
+				 */}
+				{paperTint ? (
+					<div
+						aria-hidden
+						className="pointer-events-none absolute inset-0 mix-blend-multiply"
+						style={{ backgroundColor: paperTint }}
+					/>
+				) : null}
+			</div>
 			<SearchLayer
 				documentId={docId}
 				pageIndex={pageIndex}
@@ -462,7 +488,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 						items={layoutTranslateOnPage}
 						pageWidthPx={width}
 						pageHeightPx={height}
-						pdfDark={pdfDark}
+						tone={tone}
 					/>
 				) : null}
 				{/*

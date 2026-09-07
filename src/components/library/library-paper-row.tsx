@@ -17,7 +17,11 @@ import {
 } from "lucide-react";
 import { Fragment, memo } from "react";
 import { COLUMN_META } from "@/components/library/library-columns";
-import type { CellCtx, PaperRow } from "@/components/library/library-row-utils";
+import {
+	type CellCtx,
+	isMissingLocalPdf,
+	type PaperRow,
+} from "@/components/library/library-row-utils";
 import {
 	ContextMenu,
 	ContextMenuContent,
@@ -91,7 +95,7 @@ export const LibraryPaperRow = memo(function LibraryPaperRow({
 					<BookOpen className="size-3.5" />
 					{ctx.t("papersLibrary.rowOpen")}
 				</ContextMenuItem>
-				{canEditMeta && p.has_pdf === false ? (
+				{canEditMeta && isMissingLocalPdf(p) ? (
 					<ContextMenuItem onSelect={() => void downloadLibraryPaper(p)}>
 						<Download className="size-3.5" />
 						{ctx.t("papersLibrary.rowDownloadPdf")}

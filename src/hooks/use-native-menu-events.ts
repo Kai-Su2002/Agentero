@@ -1,4 +1,5 @@
 import { useTauriEvent } from "@/hooks/use-tauri-event";
+import { events } from "@/lib/core/bindings";
 
 type NativeMenuHandlers = {
 	onSettings: () => void;
@@ -16,7 +17,7 @@ type NativeMenuHandlers = {
  * View). No-op outside the Tauri shell. `new_window` is handled natively in Rust.
  */
 export function useNativeMenuEvents(handlers: NativeMenuHandlers): void {
-	useTauriEvent<{ action: string }>("menu:invoked", (payload) => {
+	useTauriEvent(events.menuInvoked, (payload) => {
 		switch (payload?.action) {
 			case "settings":
 				handlers.onSettings();

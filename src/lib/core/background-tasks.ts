@@ -1,30 +1,36 @@
 /**
- * Lightweight background-task store (IDE-style progress / queue).
+ * Background-tasks panel store (IDE-style progress rows).
+ *
+ * Pure view state: row CRUD + panel helpers. Rows are produced by the
+ * JobCenter projection (`job-center.ts`) or by local activities (`tasks.ts`
+ * `runLocalActivity`); execution orchestration lives in those modules.
  * zustand vanilla store — usable from plain modules; React subscribes
  * via `useStore` in `use-background-tasks`.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { createStore } from "zustand/vanilla";
 import i18n from "@/i18n";
-import { errorText } from "@/lib/core/error";
-import { logger } from "@/lib/core/logger";
-import { isTauri } from "@/lib/core/tauri";
+import type { JobKind } from "@/lib/core/bindings";
 
-export type BackgroundTaskKind =
+/** Kinds of pure-frontend rows created by `runLocalActivity`. */
+export type LocalActivityKind = "paperRead" | "zoteroMigrate" | "layoutRun";
+
+/** Panel row identity: a projected JobCenter kind, or a local activity. */
+export type BackgroundTaskKind = JobKind | LocalActivityKind;
+
+/** Ring/row icon facet. Projection rows whose icon depends on job params
+ * (import mode, libraryIo op) carry an explicit hint; the rest derive from
+ * the kind. */
+export type BackgroundTaskIcon =
 	| "download"
-	| "downloadAll"
-	| "lookup"
-	| "import"
-	| "export"
-	| "parse"
-	| "pdfParse"
+	| "search"
+	| "fileUp"
+	| "package"
 	| "layout"
-	| "paperRead"
-	| "connector"
-	| "recognize"
-	| "other";
+	| "read"
+	| "plug"
+	| "scan"
+	| "list";
 
 export type BackgroundTaskStatus =
 	| "queued"
@@ -40,6 +46,8 @@ export type BackgroundTask = {
 	title: string;
 	/** Secondary line (path, phase, …) */
 	detail?: string;
+	/** Params-dependent icon override; defaults derive from `kind`. */
+	icon?: BackgroundTaskIcon;
 	status: BackgroundTaskStatus;
 	/** 0–100; null = indeterminate */
 	progress: number | null;
@@ -55,17 +63,6 @@ type Store = {
 	expanded: boolean;
 };
 
-type BackgroundTaskProgressEvent = {
-	taskId: string;
-	phase: string;
-	downloadedBytes: number;
-	totalBytes?: number;
-	progress: number | null;
-	/** Optional item counters for batch operations (e.g. import 2/5). */
-	currentCount?: number;
-	totalCount?: number;
-};
-
 export function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
 	const units = ["KB", "MB", "GB"];
@@ -78,7 +75,8 @@ export function formatBytes(bytes: number): string {
 	return `${value.toFixed(value >= 10 ? 0 : 1)} ${units[unit]}`;
 }
 
-function phaseLabel(phase: string): string {
+export function phaseLabel(phase: string): string {
+	if (phase === "assets") return i18n.t("app:tasks.downloadPhaseAssets");
 	if (phase === "pdf") return i18n.t("app:tasks.downloadPhasePdf");
 	if (phase === "tex") return i18n.t("app:tasks.downloadPhaseTex");
 	if (phase === "parse") return i18n.t("app:tasks.downloadPhaseParse");
@@ -89,23 +87,18 @@ function phaseLabel(phase: string): string {
 }
 
 /**
- * Map byte progress from one asset phase into the progress of the whole task.
- * PDF and TeX are sequential, so a new phase must not reset the task to 0%.
+ * Byte progress arrives already merged across the streams sharing a row (the
+ * Host downloads PDF and TeX concurrently and sums their bytes), so it only
+ * needs clamping.
  */
 export function mapDownloadProgress(
 	phase: string,
 	progress: number | null,
 ): number | null {
-	const clamped =
-		progress == null ? null : Math.max(0, Math.min(100, progress));
-	if (phase === "pdf") return clamped == null ? 0 : Math.round(clamped * 0.5);
-	if (phase === "tex") {
-		return clamped == null ? 50 : 50 + Math.round(clamped * 0.5);
-	}
-	// Parsing starts after asset downloads. Keep a determinate overall value
-	// until the task can be marked complete at 100%.
+	// Parsing starts after asset downloads and reports no bytes of its own.
+	// Keep a determinate overall value until the task completes at 100%.
 	if (phase === "parse") return 90;
-	return clamped;
+	return progress == null ? null : Math.max(0, Math.min(100, progress));
 }
 
 /** Vanilla store so plain modules can start/patch tasks without React. */
@@ -114,7 +107,6 @@ export const backgroundTasksStore = createStore<Store>(() => ({
 	expanded: false,
 }));
 
-const controllers = new Map<string, AbortController>();
 const cancelHandlers = new Map<string, () => void>();
 
 /** Stable cancel message; keep in sync with {@link notifyError} filter. */
@@ -195,10 +187,11 @@ export function startBackgroundTask(input: {
 	kind: BackgroundTaskKind;
 	title: string;
 	detail?: string;
+	icon?: BackgroundTaskIcon;
 	/** Start as running immediately (default true). */
 	running?: boolean;
 	progress?: number | null;
-	/** Stable id (e.g. Host-driven `layout-model`); default random. */
+	/** Stable id (e.g. the projected JobCenter job id); default random. */
 	id?: string;
 }): string {
 	const now = Date.now();
@@ -215,6 +208,7 @@ export function startBackgroundTask(input: {
 		kind: input.kind,
 		title: input.title,
 		detail: input.detail,
+		icon: input.icon,
 		status: input.running === false ? "queued" : "running",
 		progress: input.progress === undefined ? null : input.progress,
 		queueIndex: 0,
@@ -285,29 +279,14 @@ export function failBackgroundTask(id: string, error: string): void {
 export function cancelBackgroundTask(id: string): void {
 	const task = store().tasks.find((item) => item.id === id);
 	if (!task || (task.status !== "queued" && task.status !== "running")) return;
-	controllers.get(id)?.abort();
-	// JobCenter (and similar) cancel hooks must fire on every click. A once
-	// abort listener is consumed after the first attempt, so a resurrected
-	// row would otherwise only flip the UI and never reach Host.
+	// Cancel hooks must fire on every click: JobCenter rows route to
+	// `job_cancel`, local activities abort their AbortController.
 	cancelHandlers.get(id)?.();
 	updateBackgroundTask(id, {
 		status: "cancelled",
 		detail: i18n.t("app:tasks.cancelled"),
 	});
-	if (isTauri()) {
-		void invoke("background_task_cancel", { taskId: id }).catch((error) =>
-			logger.warn(
-				`background task cancellation signal failed: ${String(error)}`,
-			),
-		);
-	}
 	schedulePrune(id);
-}
-
-export function registerBackgroundTaskCancellation(id: string): AbortSignal {
-	const controller = new AbortController();
-	controllers.set(id, controller);
-	return controller.signal;
 }
 
 export function registerBackgroundTaskCancelHandler(
@@ -317,229 +296,8 @@ export function registerBackgroundTaskCancelHandler(
 	cancelHandlers.set(id, handler);
 }
 
-export function releaseBackgroundTaskCancellation(id: string): void {
-	controllers.delete(id);
+export function releaseBackgroundTaskCancelHandler(id: string): void {
 	cancelHandlers.delete(id);
-}
-
-type BackgroundTaskFn<T> = (ctx: {
-	id: string;
-	signal: AbortSignal;
-	setProgress: (n: number | null) => void;
-	setDetail: (d: string) => void;
-}) => Promise<T>;
-
-type BackgroundTaskInput = {
-	kind: BackgroundTaskKind;
-	title: string;
-	detail?: string;
-};
-
-function isTaskCancelled(id: string, signal: AbortSignal): boolean {
-	return (
-		signal.aborted ||
-		getBackgroundTasksSnapshot().tasks.find((t) => t.id === id)?.status ===
-			"cancelled"
-	);
-}
-
-function throwIfTaskCancelled(id: string, signal: AbortSignal): void {
-	if (isTaskCancelled(id, signal)) {
-		throw new BackgroundTaskCancelledError();
-	}
-}
-
-/**
- * Single global `background-task:progress` listener, routed by `taskId`.
- * Previously each enqueued task attached its own listener (N tasks → N
- * listeners all receiving every event); see §7.6 detail 3.
- */
-let globalProgressUnlisten: UnlistenFn | null = null;
-let globalProgressAttachPromise: Promise<void> | null = null;
-
-function ensureGlobalProgressListener(): void {
-	if (!isTauri() || globalProgressUnlisten || globalProgressAttachPromise) {
-		return;
-	}
-	globalProgressAttachPromise = (async () => {
-		try {
-			globalProgressUnlisten = await listen<BackgroundTaskProgressEvent>(
-				"background-task:progress",
-				(event) => handleBackgroundTaskProgress(event.payload),
-			);
-		} finally {
-			globalProgressAttachPromise = null;
-		}
-	})();
-}
-
-function handleBackgroundTaskProgress(
-	payload: BackgroundTaskProgressEvent,
-): void {
-	const id = payload.taskId;
-	const task = getBackgroundTasksSnapshot().tasks.find((t) => t.id === id);
-	if (!task) return;
-	const { downloadedBytes, totalBytes, currentCount, totalCount } = payload;
-	if (
-		task.kind === "downloadAll" &&
-		currentCount == null &&
-		totalCount == null
-	) {
-		return;
-	}
-	if (payload.phase === "parse") {
-		updateBackgroundTask(id, {
-			progress: mapDownloadProgress(payload.phase, payload.progress),
-			detail: phaseLabel(payload.phase),
-		});
-		return;
-	}
-	if (currentCount != null && totalCount != null) {
-		updateBackgroundTask(id, {
-			progress: payload.progress,
-			detail: i18n.t("app:tasks.batchProgress", {
-				phase: phaseLabel(payload.phase),
-				current: currentCount,
-				total: totalCount,
-			}),
-		});
-		return;
-	}
-	updateBackgroundTask(id, {
-		progress: mapDownloadProgress(payload.phase, payload.progress),
-		detail:
-			totalBytes == null
-				? i18n.t("app:tasks.downloadBytesUnknown", {
-						phase: phaseLabel(payload.phase),
-						downloaded: formatBytes(downloadedBytes),
-					})
-				: i18n.t("app:tasks.downloadBytes", {
-						phase: phaseLabel(payload.phase),
-						downloaded: formatBytes(downloadedBytes),
-						total: formatBytes(totalBytes),
-					}),
-	});
-}
-
-class Semaphore {
-	private running = 0;
-	private queue: Array<() => void> = [];
-
-	constructor(private max: number) {}
-
-	setMax(max: number): void {
-		this.max = Math.max(1, Math.floor(max));
-		this.drain();
-	}
-
-	private drain(): void {
-		while (this.queue.length > 0 && this.running < this.max) {
-			this.running++;
-			this.queue.shift()?.();
-		}
-	}
-
-	async acquire(): Promise<void> {
-		if (this.running < this.max) {
-			this.running++;
-			return;
-		}
-		await new Promise<void>((resolve) => this.queue.push(resolve));
-	}
-
-	release(): void {
-		this.running = Math.max(0, this.running - 1);
-		this.drain();
-	}
-}
-
-const semaphores = new Map<BackgroundTaskKind, Semaphore>();
-
-function getSemaphore(
-	kind: BackgroundTaskKind,
-	concurrency: number,
-): Semaphore {
-	let sem = semaphores.get(kind);
-	if (!sem) {
-		sem = new Semaphore(concurrency);
-		semaphores.set(kind, sem);
-	} else {
-		sem.setMax(concurrency);
-	}
-	return sem;
-}
-
-/**
- * Enqueue an async job as a background task.
- *
- * With `concurrency`, tasks of the same kind share a semaphore and are shown
- * immediately as queued/running. Without it, the task starts immediately.
- * `onTaskId` fires synchronously with the new id before any queueing, so the
- * caller can cancel the task later even while it is still queued.
- */
-export async function enqueueBackgroundTask<T>(
-	input: BackgroundTaskInput,
-	fn: BackgroundTaskFn<T>,
-	options?: { concurrency?: number; onTaskId?: (id: string) => void },
-): Promise<T> {
-	const concurrency = options?.concurrency;
-	const id = startBackgroundTask({
-		kind: input.kind,
-		title: input.title,
-		detail: input.detail,
-		running: concurrency == null,
-	});
-	const controller = new AbortController();
-	controllers.set(id, controller);
-	options?.onTaskId?.(id);
-	ensureGlobalProgressListener();
-	logger.info(
-		`op enqueue background_task kind=${input.kind} task_id=${id} title=${input.title} concurrency=${concurrency ?? "unlimited"}`,
-	);
-	let acquired = false;
-	try {
-		throwIfTaskCancelled(id, controller.signal);
-		if (concurrency != null) {
-			await getSemaphore(input.kind, concurrency).acquire();
-			acquired = true;
-		}
-		throwIfTaskCancelled(id, controller.signal);
-		if (concurrency != null) {
-			updateBackgroundTask(id, { status: "running" });
-		}
-		const result = await fn({
-			id,
-			signal: controller.signal,
-			// Absolute: callers (e.g. layout analysis) publish overall document %.
-			setProgress: (n) =>
-				updateBackgroundTask(id, { progress: n }, { absoluteProgress: true }),
-			setDetail: (d) => updateBackgroundTask(id, { detail: d }),
-		});
-		throwIfTaskCancelled(id, controller.signal);
-		completeBackgroundTask(id);
-		return result;
-	} catch (e) {
-		if (
-			isTaskCancelled(id, controller.signal) ||
-			isBackgroundTaskCancelledError(e)
-		) {
-			if (
-				getBackgroundTasksSnapshot().tasks.find((t) => t.id === id)?.status !==
-				"cancelled"
-			) {
-				cancelBackgroundTask(id);
-			}
-			throw new BackgroundTaskCancelledError();
-		}
-		const msg = errorText(e);
-		failBackgroundTask(id, msg);
-		throw e;
-	} finally {
-		if (acquired) {
-			getSemaphore(input.kind, concurrency as number).release();
-		}
-		controllers.delete(id);
-	}
 }
 
 export function setBackgroundTasksExpanded(expanded: boolean): void {

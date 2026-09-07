@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { SettingsSection } from "@/components/settings/types";
 import { applyLocale } from "@/i18n";
+import { commands } from "@/lib/core/bindings";
 import { isMacOS, isTauri } from "@/lib/core/tauri";
 import {
 	applyDocumentChrome,
@@ -73,8 +74,7 @@ export function SettingsNativeRoot() {
 		if (!isTauri()) return;
 		void (async () => {
 			try {
-				const { invoke } = await import("@tauri-apps/api/core");
-				await invoke("set_locale", { locale: resolved });
+				await commands.setLocale(resolved);
 			} catch {
 				// Native menu keeps its previous locale; non-fatal.
 			}

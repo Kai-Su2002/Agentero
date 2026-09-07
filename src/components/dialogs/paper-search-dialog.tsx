@@ -125,7 +125,7 @@ export function PaperSearchDialog({
 														? `arXiv:${candidate.arxivId}`
 														: candidate.doi}
 												</span>
-												{candidate.citationCount !== undefined ? (
+												{candidate.citationCount != null ? (
 													<span>
 														{t("lookup.searchCitations", {
 															count: candidate.citationCount,

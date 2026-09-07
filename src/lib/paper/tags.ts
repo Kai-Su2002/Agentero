@@ -2,7 +2,7 @@
  * Paper tag semantics (P2-18b: moved down from `lib/ui/tag-colors.ts`,
  * which keeps only the color-token mapping).
  */
-import type { PaperMetadata, PaperTag, PaperTagInput } from "@/lib/paper/types";
+import type { PaperTag, PaperTagInput } from "@/lib/paper/types";
 import { isTagColorId, type TagColorId } from "@/lib/ui/tag-colors";
 
 export type { PaperTag, PaperTagInput } from "@/lib/paper/types";
@@ -106,12 +106,4 @@ export function tagColorOf(t: PaperTagInput): TagColorId | undefined {
 export function coercePaperTags(tags: unknown): PaperTag[] {
 	if (!Array.isArray(tags)) return [];
 	return normalizePaperTags(tags as PaperTagInput[]);
-}
-
-/** Ensure `tags` is a normalized `PaperTag[]`. */
-export function withNormalizedTags(meta: PaperMetadata): PaperMetadata {
-	return {
-		...meta,
-		tags: coercePaperTags(meta.tags),
-	};
 }

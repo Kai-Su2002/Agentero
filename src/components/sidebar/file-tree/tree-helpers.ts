@@ -45,6 +45,34 @@ export function pathKey(path: string): string {
 }
 
 /**
+ * Keep only top-level semantic targets from a tree selection.
+ *
+ * Selecting a folder already includes everything below it. Passing both the
+ * folder and one of its descendants to move/delete would execute the same
+ * intent twice and can leave the second operation targeting a path that no
+ * longer exists. Input order is preserved for stable UI/action ordering.
+ */
+export function normalizeTreeSelection(paths: Iterable<string>): string[] {
+	const entries: Array<{ path: string; key: string }> = [];
+	const seen = new Set<string>();
+	for (const path of paths) {
+		const key = pathKey(path);
+		if (!key || seen.has(key)) continue;
+		seen.add(key);
+		entries.push({ path, key });
+	}
+	return entries
+		.filter(
+			(entry) =>
+				!entries.some(
+					(other) =>
+						other.key !== entry.key && entry.key.startsWith(`${other.key}/`),
+				),
+		)
+		.map((entry) => entry.path);
+}
+
+/**
  * Default open folders when a Vault is first opened:
  * expand `papers/` only so its first-level children (org folders) are listed,
  * but keep those subfolders collapsed. Deeper nesting, `notes/`, etc. stay

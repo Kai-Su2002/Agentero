@@ -102,6 +102,8 @@ function viewTitleKey(
 			return "labels.agent";
 		case "annotations":
 			return "titlebar.annotationsPanel";
+		default:
+			return "labels.agent";
 	}
 }
 

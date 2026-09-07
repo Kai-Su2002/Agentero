@@ -27,8 +27,8 @@
 | 入库 | `src/lib/plaza/import.ts`（论文 + Skill 仓库） |
 | 侧栏行 | `src/components/sidebar/file-tree/tree-rows.tsx`（`PlazaRow` / `PlazaSourceRow`） |
 | Tab kind | `src/lib/workspace/tabs/types.ts` 的 `"plaza"` + `doc-view.tsx` 分支 |
-| 站点代理（共享管道） | `src-tauri/src/features/site_proxy.rs` |
-| 站点代理（各站改写 + 注入） | `src-tauri/src/features/coolpapers/proxy.rs`、`src-tauri/src/features/modelscope_proxy.rs` |
+| 站点代理（共享管道） | `src-tauri/src/features/paper/discovery/proxy/mod.rs` |
+| 站点代理（各站改写 + 注入） | `src-tauri/src/features/paper/discovery/coolpapers/proxy.rs`、`src-tauri/src/features/paper/discovery/proxy/modelscope.rs` |
 
 > Kimi 解析没有走广场入库，而是作为论文侧的独立能力落在 Markdown 工具栏的
 > 「获取 Cool Paper 笔记」按钮上（`paper_coolpapers_notes` → 追加 `NOTES.md`）。
@@ -126,7 +126,7 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 - 链接要么弹出独立窗口、要么静默失效——**点了没反应**；
 - 跨源 iframe 的 `location` / `history` 都读不到，**无法实现后退**。
 
-因此改为在 Host 侧以自有 scheme 转发（沿用 `arxiv_proxy.rs` 的既有模式），同源后即可改写与观测：
+因此改为在 Host 侧以自有 scheme 转发（沿用 `discovery/proxy/arxiv.rs` 的既有模式），同源后即可改写与观测：
 
 - `target="_blank"` → `_self`，站内链接原地跳转；
 - **同时改写 `window.open`**。仅改 HTML 不够：cool.js 的所有脚本式跳转都走 `window.open`（搜索、`[REL]` 相关论文、排序、feed、导出收藏、arXiv 日历共 7 处），且多数传 `_blank`；sandbox 去掉 `allow-popups` 后这些调用会被**静默丢弃**，表现为「搜索点了没反应」。补丁在 `<head>` 安装，早于 body 末尾的 cool.js。
@@ -173,8 +173,8 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 **其它约定**
 
 - 复用共享的 `paper_commit`：catalog 插入、NOTES.md 播种、PDF 下载、去重全部沿用，不新增管线。
-- `paper_type` 不是 Zotero itemType，取值只有 `arxiv` / `doi` / `html` / `other`；无 DOI 时为 `other`。
-- 元数据解析复用 `map_zotero_item`（先拼一个 Zotero 形状的值），避免第二套字段映射。
+- `paper_type` 不是 Zotero itemType，取值是 `PaperKind` 枚举（`arxiv` / `pdf` / `html` / `doi` / `other`）；无 DOI 时为 `other`。
+- 元数据解析复用 `map_zotero_item_to_record`（先拼一个 Zotero 形状的值），避免第二套字段映射。
 - 注入的 `[入库]` **不带 href**，否则会被跨源链接拦截器当外链送去系统浏览器。
 - 行是滚动加载的（`loadMorePapers` 追加 `.panel.paper`），除首屏遍历外挂 `MutationObserver`。
 - 只做**单条入库**，不提供批量。
@@ -241,7 +241,7 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 
 | 差异 | 后果 |
 |---|---|
-| 列表走 `PUT /api/v1/dolphin/papers`（JSON body，匿名可用） | 代理原本只发 GET 且丢 body，页面会渲染成空壳。请求管道抽到 `site_proxy.rs` 并**转发 method + body**（顺带修好 papers.cool 的 `POST /star`）。只转发 `Content-Type` / `Accept` / `Accept-Language`——`Cookie`、`Origin`、`Referer` 一律不带 |
+| 列表走 `PUT /api/v1/dolphin/papers`（JSON body，匿名可用） | 代理原本只发 GET 且丢 body，页面会渲染成空壳。请求管道抽到 `discovery/proxy/mod.rs` 并**转发 method + body**（顺带修好 papers.cool 的 `POST /star`）。只转发 `Content-Type` / `Accept` / `Accept-Language`——`Cookie`、`Origin`、`Referer` 一律不带 |
 | 外壳资源全是协议相对 `//g.alicdn.com/…`，含 `window.publicPath` | 在自有 scheme 下会解析成 `agentero-modelscope://g.alicdn.com/…`，应用根本不启动。`rewrite_html` 把 `="//` / `='//` / `= "//` 一律改成 `https://`。CDN 资源**不经代理**，否则等于给代理开一批额外上游主机（SSRF 面） |
 | 路由是 `history.pushState`，点卡片不产生真实导航 | 桥接必须包装 `pushState` / `replaceState` 并监听 `popstate` 才能上报路径，否则顶条路径和 Back / Forward 永远不动 |
 | 页面是 React，被拒绝的点击不能只 `preventDefault` | umi 的 `Link` 自己就会 `preventDefault` 然后照样路由，必须在捕获阶段 `stopImmediatePropagation`，让事件根本到不了 React 根容器 |
@@ -346,7 +346,7 @@ DocTab：`kind: "plaza"`（或 `file` + mode `plaza` + path 虚拟 URI——实�
 
 *修订：2026-07-25 — 采纳 WebView、不做入库、P0 含推荐 v0、树位置在 Library/Trash 下。*
 *修订：2026-08-14 — 改为代理协议嵌入；壳 + Cool Papers 浏览 + 单条入库已落地；推荐 / 播客未实现。*
-*修订：2026-08-15 — 新增 ModelScope 论文来源；请求管道抽到 `site_proxy.rs` 并转发 method + body。*  
+*修订：2026-08-15 — 新增 ModelScope 论文来源；请求管道抽到 `discovery/proxy/mod.rs` 并转发 method + body。*  
 *修订：2026-08-15 — 订阅列为广场来源，规格拆到 [`plaza-feeds.md`](plaza-feeds.md)。*  
 *修订：2026-08-15 — 订阅 MVP 落地（XDG `feeds.sqlite` + 原生双栏 + 论文入库）。*  
 *修订：2026-08-21 — arXiv 推荐落地（embedding + 时间衰减；缓存进 catalog schema v6；`vault:opened` 预热）。*

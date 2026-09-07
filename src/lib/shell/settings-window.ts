@@ -2,6 +2,7 @@
  * Native settings window control (single instance; `?window=settings` route).
  */
 
+import { commands } from "@/lib/core/bindings";
 import { notifyError } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { getVaultPath } from "@/lib/vault/store";
@@ -11,11 +12,11 @@ export function openSettingsWindow(section: string = "general"): void {
 	if (!isTauri()) return;
 	void (async () => {
 		try {
-			const { invoke } = await import("@tauri-apps/api/core");
-			await invoke("settings_window_open", {
-				section,
-				vaultPath: getVaultPath(),
-			});
+			const res = await commands.settingsWindowOpen(section, getVaultPath());
+			if (res.status === "error") {
+				notifyError(res.error);
+				return;
+			}
 			setSettingsOpenState(true);
 		} catch (e) {
 			notifyError(String(e));

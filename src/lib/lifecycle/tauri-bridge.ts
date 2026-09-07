@@ -1,15 +1,39 @@
+import type { UnlistenFn } from "@tauri-apps/api/event";
+import { events } from "@/lib/core/bindings";
+import type { TypedEventBinding } from "@/lib/core/tauri-events";
 import { emit } from "@/lib/lifecycle/bus";
-import type { LifecycleEvent, LifecycleEventMap } from "@/lib/lifecycle/events";
+import type {
+	FactLifecycleEvent,
+	LifecycleEventMap,
+} from "@/lib/lifecycle/events";
 
-const WIRE_EVENTS = [
-	"window:closed",
-	"paper:imported",
-	"paper:assets-ready",
-	"paper:renamed",
-	"job:completed",
-	"job:failed",
-	"agent:registry-changed",
-] as const satisfies readonly LifecycleEvent[];
+/**
+ * Forward one typed wire event into the frontend lifecycle bus. The bus
+ * contract (`LifecycleEventMap`) predates the specta bindings and some wire
+ * payloads supersede it (e.g. `job:completed` carries the full terminal
+ * snapshot), so the payload crosses the boundary with a cast — the same
+ * unchecked handoff the previous string-based `listen<T>` performed.
+ */
+function forward<E extends FactLifecycleEvent>(
+	wire: TypedEventBinding<unknown>,
+	event: E,
+): Promise<UnlistenFn> {
+	return wire.listen((e) => {
+		void emit(event, e.payload as LifecycleEventMap[E]);
+	});
+}
+
+function wireSubscriptions(): Array<Promise<UnlistenFn>> {
+	return [
+		forward(events.windowClosed, "window:closed"),
+		forward(events.paperImported, "paper:imported"),
+		forward(events.paperAssetsReady, "paper:assets-ready"),
+		forward(events.paperRenamed, "paper:renamed"),
+		forward(events.jobCompleted, "job:completed"),
+		forward(events.jobFailed, "job:failed"),
+		forward(events.agentRegistryChanged, "agent:registry-changed"),
+	];
+}
 
 let bridgePromise: Promise<Array<() => void>> | null = null;
 let consumers = 0;
@@ -19,16 +43,7 @@ let consumers = 0;
 export function initLifecycleBridge(): () => void {
 	consumers += 1;
 	if (!bridgePromise) {
-		bridgePromise = (async () => {
-			const { listen } = await import("@tauri-apps/api/event");
-			return Promise.all(
-				WIRE_EVENTS.map((event) =>
-					listen<LifecycleEventMap[typeof event]>(event, (e) => {
-						void emit(event, e.payload);
-					}),
-				),
-			);
-		})();
+		bridgePromise = Promise.all(wireSubscriptions());
 	}
 	const pending = bridgePromise;
 	let disposed = false;

@@ -61,7 +61,7 @@ Host 通过 Tauri event 向前端推送事件。文件系统、任务和菜单�
 | `agent:permission-request` | 权限「每次询问」档：ACP 权限请求转交用户 | `{ requestId, sessionId, title, kind?, paths, options: { optionId, name, kind }[] }` |
 | `agent:elicitation-request` | form elicitation（Codex request_user_input） | `{ requestId, sessionId, message, toolCallId?, fields: { id, title, description?, required, kind, options[] }[] }` |
 | `agent:ask-user-request` | Grok `_x.ai/ask_user_question` | `{ requestId, sessionId, toolCallId?, mode, questions: { question, options[{label,description?}], multiSelect, allowOther }[] }` |
-| `background-task:progress` | 下载/解析任务进度 | `{ taskId, phase, downloadedBytes, totalBytes?, progress? }`；下载阶段的字节进度由前端聚合为总体进度（PDF 映射到 0–50%，TeX 映射到 50–100%），解析阶段显示为处理中，任务完成时为 100%。Host 对字节级进度做节流：百分比变化 ≥1 个点或距上次 emit ≥100ms 才发事件，下载完成时必发最终值 |
+| `job:progress` | 下载/解析任务字节与计数进度（`taskId` = JobCenter job id，投影行消费） | `{ taskId, phase, downloadedBytes, totalBytes?, progress?, currentCount?, totalCount? }`；PDF 与 TeX 并发下载，Host 把两条流的字节合并成**一个**总体进度后再 emit（两条流同时跑时 `phase` = `assets`，只有一条时为 `pdf` / `tex`），前端只做 clamp 不再按阶段加权；任一流仍在下载且 `Content-Length` 未知时 `totalBytes` / `progress` 为空（面板转不确定态），解析阶段显示为处理中，任务完成时为 100%。Host 对字节级进度做节流：百分比变化 ≥1 个点或距上次 emit ≥100ms 才发事件，流结束时必发最终值 |
 | `paper:imported`（已实现） | `paper_commit` 成功（catalog 已写入、NOTES 已建）；本地与远程导入路径统一发；`paper_download_assets` 为孤儿文件夹补建 catalog 行时也发 | `{ vaultId, paperId, timestamp }`（`vaultId` 为 vault 根路径，远程为 `remote:<sessionId>`） |
 | `paper:assets-ready`（已实现） | 论文资产就绪：同步下载完成 / 本地 PDF 拷贝完成 / `DownloadAssets` job 成功 | `{ vaultId, paperId, timestamp }` |
 | `job:completed`（已实现） | job 状态机真实迁移到 `Succeeded` 时由 `job:changed` 单点派生 | `{ jobId, kind, paperId?, timestamp }` |
@@ -88,9 +88,33 @@ Host 通过 Tauri event 向前端推送事件。文件系统、任务和菜单�
 ### 2.5 执行线程约定（重 IO command 必须 async）
 
 - 同步 `#[tauri::command]` 在主线程内执行；Windows 主线程即 UI 消息泵，重 IO 同步 command 执行期间整窗冻结。
-- **重 IO command（扫盘、SQLite、全库索引、字体/大文件读取等）必须写成 `async fn`**，阻塞体统一用 `core::blocking::run_blocking`（内部 `tauri::async_runtime::spawn_blocking`）移出调用线程；对外返回 JSON 结构不变，前端 invoke 透明。
+- **重 IO command（扫盘、SQLite、全库索引、字体/大文件读取等）必须写成 `async fn`**，阻塞体统一用 `core::blocking::run_blocking`（agentero-core，内部 `tokio::task::spawn_blocking`，与 Tauri 运行时同一 tokio 阻塞池）移出调用线程；对外返回 JSON 结构不变，前端 invoke 透明。
 - 使用 `State<'_, T>` 的 async command 受 Tauri 限制必须返回 `Result`（惯例 `Result<ApiResult<T>, String>`，恒为 `Ok(...)`）。`std::sync::Mutex` guard 不能跨 `await`：把「拿锁 + 干活」整体放进 `run_blocking` 闭包，State 先 clone 出可 `Send + 'static` 的 Arc 句柄（如 `WikiIndexState::handle()`、`CapsCache`、`ExternalRenameRepairStore`）。
 - 已按此约定改造：`vault_*`（create/ensure/tree_build/tree_children）、`wiki_*` 全部、`graph_*`、`vault_search`、`paper_*`（catalog）、`usage_*`/`activity_record_events`、`zotero_sync`/`zotero_scan`、`doctor_*`（除纯内存的 `doctor_set_dirty_paths`）、`list_system_fonts`（另有进程级缓存）、`export_system_cjk_font`、`paper_stage_import_file`、`paper_refs_list`、`connector_set_enabled`/`connector_set_port`（bind 改真 async，不再 `block_on`）。
+
+### 2.6 类型化 IPC 契约（tauri-specta → `src/lib/core/bindings.ts`）
+
+`src/lib/core/bindings.ts` 由 [tauri-specta](https://github.com/specta-rs/specta)（rc.25）从 Rust 签名生成，是 Frontend ↔ Host IPC 的类型化契约。**生成物，不要手改**。
+
+- **覆盖范围**
+  - **命令**：desktop 注册的全部 191 个 `#[tauri::command]`（`app/handlers.rs` 的 `common_commands!` + desktop-only extras）逐一 collect 于 `src-tauri/src/app/bindings_test.rs`。iOS-only 的 5 个 bridge client 命令（`bridge_connect` / `bridge_resume` / `bridge_disconnect` / `bridge_rpc` / client 版 `bridge_status`）不进 desktop bindings。
+  - **事件**：desktop 侧 emit 的 42 个事件（`job:*`（含 `job:progress` 字节/计数进度）、`agent:*`、`vault:file-changed`、`settings:changed`、`bridge:host-status`/`bridge:pair-request`、`connector:*`、`mcp:*`、`sync:*`、`paper:*` 等），声明于 `src-tauri/src/app/events_contract.rs`（wrapper/mirror + `#[tauri_specta(event_name = "…")]`，事件名与 emit 字面量一致，emit 调用点不改造）。iOS-only bridge client 事件（`bridge:status` / `bridge:progress` / `bridge:pair-pending`）不在其中。
+- **再生成 / 防漂移**
+
+  ```bash
+  # 校验 bindings.ts 与 Rust 签名一致（cargo test 默认只比对，不写盘）
+  cargo test -p agentero export_typescript_bindings
+  # 重新生成（覆写 src/lib/core/bindings.ts）
+  AGENTERO_UPDATE_BINDINGS=1 cargo test -p agentero export_typescript_bindings
+  ```
+
+  另有 `event_names_match_emit_literals` 测试断言事件名与 emit 常量一致。改任何命令签名 / 事件 payload 后必须重新生成并提交 bindings.ts。
+- **`_Serialize` / `_Deserialize` 拆分**：specta 对 serde 不对称表示的忠实拆分——`X_Deserialize` 是 **TS→Rust 入参**形态（`#[serde(default)]` 字段可省略），`X_Serialize` 是 **Rust→TS 出参**形态（`skip_serializing_if` 字段可缺省）。二者一致时只生成单一 `X`。命令函数与 `events.*` 的签名已内嵌正确方向的类型，**调用点无需手写这些类型名**。
+- **论文域的派生范式**：`src/lib/paper/types.ts` 不再手写 `PaperRecord` 的孪生类型，而是 `PaperMetadata = Omit<PaperRecord_Serialize, …>`、`PaperLibraryRow = PaperMetadata & { has_pdf }`（源自 `PaperListRow_Serialize`）。只窄化四处：`status` / `body_source` / `body_quality`（Rust 侧仍是 `String` 列）与 `tags`（`PaperTag` 的序列化在无色时是裸字符串）。IPC → 域模型的唯一 unchecked 折叠点是 `src/lib/paper/wire.ts::paperFromWire`。给那三列加 Rust enum（照 `PaperKind` 先例：enum + `From<&str>` + `FromSql` + 未知值兜底）即可去掉窄化，列都是 TEXT，**不需要 schema migration**；代价清单见 [../development/import-api-abstraction.md](../development/import-api-abstraction.md) §11。
+- **前端调用形态（迁移说明）**：bindings 导出 `commands`（camelCase 命令函数）与 `events`（`events.jobChanged.listen(cb)` 等，payload 已按事件名类型化）。返回值有两种信封：
+  - 命令返回 `ApiResult<T>`（如 `commands.settingsGet()`）：Promise 直接 resolve 信封，判错看 `r.ok === false` 时读 `r.error`（`{ code, message, details? }`）；`r.data` 类型为 `T | null`。
+  - 命令返回 `Result<ApiResult<T>, String>`（如 `commands.jobReport(args)`）：bindings 包了一层 `typedError`，resolve 为 `{ status: "ok", data: ApiResult<T> } | { status: "error", error: string }`；先判 `status`（外层 IPC 级错误，对应 Rust `Err(String)`），再判 `data.ok`（业务错误信封）。
+- **前端 helper（`src/lib/core/ipc.ts`）**：`callApi` / `callApiResult` / `callResult` 分别按上述信封形态解包并保留旧的 throw 语义（Host 错误抛出 `Error & { details }`，`fallback` / `desktopOnly` 可定制文案），返回类型由命令函数推断。旧的 `invokeApi` 与 app 命令的裸 `invoke` 已全部迁移删除：新调用点一律 `commands.*` + helper；事件订阅一律 `events.*.listen`（React 侧用 `useTauriEvent(events.x, cb)`，非 UI 模块用 `listenEventSafe(events.x, cb)`）。保留字符串形态的仅限：前端窗口间广播（`workspace:*`、`agent:attach-context` 等）与 iOS bridge client 事件（`bridge:status` / `bridge:progress` / `bridge:pair-pending` / `bridge:event:*`），以及 `src/lib/bridge/client.ts` 中 iOS bridge client **命令**（`bridge_connect` / `bridge_disconnect` / `bridge_resume` / `bridge_status` / `bridge_rpc`，mobile-gated，未进桌面 bindings）的裸 `invoke`。
 
 ## 3. Host 层 Tauri invoke API
 
@@ -803,7 +827,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 **目标**：Host 在本机 `127.0.0.1:23119` 兼容 [Zotero Connector HTTP Server](https://www.zotero.org/support/dev/client_coding/connector_http_server)，使官方浏览器扩展把保存请求写入当前 Vault。
 
 - **HTTP 契约、安全模型、实现 vs 缺口总表**：见 [`connector.md`](connector.md) **§4.5**（权威）。
-- **与魔棒关系**：元数据映射复用 `map_zotero_item`；入口不同（插件 vs ⇧⌘I）。
+- **与魔棒关系**：元数据映射复用 `map_zotero_item_to_record`；入口不同（插件 vs ⇧⌘I）。
 - **设置**：`connectorEnabled` 默认 `false`；与 Zotero 桌面端 **端口互斥**。
 - **实现**：`services/connector/`、`commands/connector.rs`、`src/lib/paper/import/connector.ts`。
 - **已挂 HTTP**：`ping`、`saveItems`、`sessionProgress`、`attachmentProgress`、`getSelectedCollection`（含子文件夹 targets）、`updateSession`、`delaySync`、`saveAttachment`、`saveSnapshot`、`saveSingleFile`；另有 `detect`、`savePage`、`selectItems`、`getTranslators`、`proxies` 的安全降级兼容路由。
@@ -848,7 +872,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 | `connector:status` | `ConnectorStatus` |
 | `connector:item-saved` | `{ path, id, title, deduped, sessionId }` — 新条目在附件成功/失败终结且 latest target 移动完成后仅发一次；`path` 已稳定，前端刷新树/Library 并 `openPaper` |
 | `connector:error` | `{ message, sessionId? }` |
-| `connector:progress` | `{ key, sessionId, path, title, status, progress, detail, error? }` — 映射到左下角后台任务条 |
+| `connector:progress` | `{ key, sessionId, path, title, status, progress, detail, error? }` — 前端按 `key` 中继成 JobCenter `connectorSync` job，任务条行来自 job 投影 |
 
 ### 3.5c 全库搜索
 
@@ -922,7 +946,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 
   其中 `LookupImportResult` 为单条入库结果（含 `paperDir`、`path`、`id`、`title`、`usedTranslator`、`translatorBaseUrl`、`pdf?`、`tex?`、`paperMd?`、`assetMessages?`）。
   `skills` 为魔棒直接安装的 Skill（当前仅当来源含 `--skill` 等明确过滤且候选唯一时可能非空）；`skillCandidates` 为需要前端弹窗确认的候选列表，见下方 `skill_install` / `skill_discard`。
-  `searchCandidates` 为标题/关键词搜索结果（见 [`identifier-lookup.md` § 标题搜索回退](identifier-lookup.md)）；`PaperSearchCandidate` 含 `title`、`authors`、`year?`、`venue?`、`doi?`、`arxivId?`、`citationCount?`、`url?`、`identifier`、`source`（`'s2' | 'arxiv'`）。`identifier` 是用户选中后回填给本命令的文本，因此**不存在**没有 DOI/arXiv ID 的候选。
+  `searchCandidates` 为标题/关键词搜索结果（见 [`identifier-lookup.md` § 标题搜索回退](identifier-lookup.md)）；`PaperSearchCandidate` 含 `title`、`authors`、`year | null`、`venue | null`、`doi | null`、`arxivId | null`、`citationCount | null`、`url | null`、`identifier`、`source`（生成为 `string`，实际取值 `"s2"` / `"arxiv"`）。`identifier` 是用户选中后回填给本命令的文本，因此**不存在**没有 DOI/arXiv ID 的候选。注意 `src/lib/paper/lookup.ts` 仍保留一份手写孪生类型，其 `citationCount?: number` 与 wire 的 `number | null` 不一致（见 [../development/import-api-abstraction.md](../development/import-api-abstraction.md) §11.5）。
 - **单条行为**：Translator 优先；失败且输入为 arXiv 时回退 export.arxiv.org；**catalog upsert**（权威）+ 写 `NOTES.md` 壳（摘要块优先经免费 MT 译为中文，失败则保留原文；catalog 中 `abstract` 仍为原文）；`metadata.json` 为 catalog 投影同步；**始终下载 PDF**；**arXiv 另下载 e-print 并解压 LaTeX** 到 `source/`。导入命令本身**不**再内联生成 `PAPER.md`；前端会在导入完成后对无 TeX 且有 PDF 的 paper 独立入队 `paper_parse_body` 后台任务，生成 `PAPER.md` 并更新 `body_source` / `body_quality`。
   当 `texts` 某条被识别为 Skill 来源（`skill` kind：GitHub URL、`npx skills add …`、`github:`、`skills.sh`）时，该条进入 Skill 解析管线，不写入 catalog/papers。
 - **行为**：
@@ -968,16 +992,12 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
   {
     vaultPath: string;
     path: string; // Vault 相对 paper 文件夹，如 papers/1706.03762
-    taskId?: string; // 前端后台任务 id，用于接收 background-task:progress
+    taskId?: string; // JobCenter job id，用于接收 job:progress 与协作取消
   }
   ```
 
 - **返回**：`{ ok: true; data: { pdf: boolean; tex: boolean; paperMd: boolean; messages: string[] } }`
-- **行为**：读 catalog 取 `pdf_url` / `arxiv_id` / `doi`；已有对应文件则跳过；PDF → `{paper}/{id}.pdf`（论文根目录）；arXiv e-print TeX → 解压进 `source/`；无 TeX + 有 PDF + 无 `PAPER.md` → liteparse → `PAPER.md`。下载客户端使用**浏览器 UA**（绕开部分出版商 403）；若直链/arXiv 候选都失败且有 `doi`，再查 **Crossref** 取直链 / OA PDF 兜底。打开 paper 预览时若无本地 PDF 也会自动调用本命令（失败则回退远程 `pdf_url`）。当传入 `taskId` 时，通过 `background-task:progress` 推送下载字节与 `parse` 阶段；liteparse 在可终止的子进程中运行，任务取消时立即终止，120 秒超时后保留已经下载的 PDF，并在结果 `messages` 中说明未生成 `PAPER.md`。
-
-#### `background_task_cancel`
-
-请求取消一个前端后台任务。参数为 `{ taskId: string }`；下载任务会中止当前读取流，批量任务和 Agent 工作流在协作取消点停止。取消是尽力而为，不回滚已经写入的文件。
+- **行为**：读 catalog 取 `pdf_url` / `arxiv_id` / `doi`；已有对应文件则跳过；PDF → `{paper}/{id}.pdf`（论文根目录）；arXiv e-print TeX → 解压进 `source/`；无 TeX + 有 PDF + 无 `PAPER.md` → liteparse → `PAPER.md`。下载客户端使用**浏览器 UA**（绕开部分出版商 403）；若直链/arXiv 候选都失败且有 `doi`，再查 **Crossref** 取直链 / OA PDF 兜底。打开 paper 预览时若无本地 PDF 也会自动调用本命令（失败则回退远程 `pdf_url`）。当传入 `taskId` 时，通过 `job:progress` 推送下载字节与 `parse` 阶段；liteparse 在可终止的子进程中运行，任务取消时立即终止，120 秒超时后保留已经下载的 PDF，并在结果 `messages` 中说明未生成 `PAPER.md`。取消状态由 JobCenter 按 task id 索引（`features::jobs::is_task_cancelled`，注入为 `agentero_core::cancel` 探针），随 runner 退出自动清理。
 
 #### `paper_stage_import_file`
 
@@ -1010,9 +1030,10 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
       };
     }>;
     taskId?: string;      // 后台任务 id，用于显示 parse 阶段
-    translatorBaseUrl?: string; // 后台识别时的标识符解析
   }
   ```
+
+  > 后台识别阶段的 Translator 地址由 Host 直接读设置 `translatorBaseUrl`（`job_runners.rs`），不经本命令入参传入。
 
 - **返回**：`{ ok: true; data: { papers: LookupImportResult[]; errors: string[] } }`（`errors` 为 `"<文件>: <原因>"`；仅当**全部**失败才整体 `ok:false`）。
 - **行为**：每个 PDF → 标题优先用 `entries` 覆盖，否则文件名 stem；文件夹 id 按 arXiv ID slug → DOI slug → 文件名 stem 派生（与标识符导入命名一致，Host 仍做 `-2`/`-3` 去重）；带 `doi`/`arxivId`/`extra` 的 entries 记 `meta_source=manual`；无覆盖元数据的 entries（UI 默认路径）内联跑识别链路（见 [paper-import.md](paper-import.md) § PDF 元数据识别），命中则用解析出的元数据与标识符 slug 命名（`meta_source=recognize`），失败退回文件名 stem。复制到 `{slug}.pdf`；写 `NOTES.md` 壳 + catalog。导入任务本身**不**再等待 liteparse；前端会在导入完成后独立入队 `paper_parse_body` 后台任务生成 `PAPER.md`（无 TeX 且有 PDF 时）。不覆盖已存在文件夹（slug 去重）。
@@ -1022,7 +1043,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 把 DOI / arXiv id 解析为元数据（不入库）。支撑编辑元数据的刷新按钮。
 
 - **参数**（invoke 字段名 `args`）：`{ text: string; translatorBaseUrl?: string }`
-- **返回**：`{ ok: true; data: PaperMeta }`（snake_case，与 `paper_get` 行同构）。
+- **返回**：`{ ok: true; data: PaperRecord }`（snake_case，与 `paper_get` 行同构）。
 - **链路**：输入是 DOI / arXiv / URL 时先走标识符解析（Translator → Crossref / arXiv Atom），再用 Semantic Scholar `publicationVenue.name` 补空缺或截断的会议名；自由文本才走 title search。仓储名（`arXiv` / `CoRR`）不当作有效 publication。详见 [academic-search-apis.md](academic-search-apis.md) §2.5。
 
 #### `paper_parse_body`
@@ -1100,7 +1121,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
   ```
 
 - **返回**：`{ ok: true; data: { format, content, count, filename } }`
-- **注意**：`/export` **要求 body 为 Zotero items 数组**，不是 Agentero `PaperMetadata` 蛇形字段；转换在 Host `zotero::io::paper_record_to_zotero_item`。
+- **注意**：`/export` **要求 body 为 Zotero items 数组**，不是 Agentero `PaperRecord` 蛇形字段；转换在 Host `zotero::io::paper_record_to_zotero_item`。
 
 #### `paper_import`
 
@@ -1222,7 +1243,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
   - 三层过滤：L0 硬过滤（跳过高被引经典种子；候选按时间窗 / 已入库 / 无可导入标识剔除）→ L1 IDF 加权重叠 → L2 中心化 SPECTER2 max-sim 门槛（阈值由库自身 leave-one-out p10 自校准）。
   - 排序后经 MMR 多样化截到 `budget`，避免结果被单一方向占满。
   - 结果与每个种子的引用页写入 `.agentero/citing-scan.json`；下次扫描只重抓 `citationCount` 变化的种子。
-  - `taskId` 非空时：抓取阶段 emit `background-task:progress`（带 `currentCount`/`totalCount`），并在每个种子请求前检查取消。取消返回 `cancelled: true` 且不写缓存。
+  - `taskId` 非空时：抓取阶段 emit `job:progress`（带 `currentCount`/`totalCount`），并在每个种子请求前检查取消（JobCenter task-id 注册表）。取消返回 `cancelled: true` 且不写缓存。
 
 ### 3.6 论文
 
@@ -1244,7 +1265,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 }
 ```
 
-- **返回**：`{ ok: true; data: PaperMetadata }`（含 `pdf_url` / `html_url` / `arxiv_id` 等）；未找到则 `ok: false`。
+- **返回**：`{ ok: true; data: PaperRecord }`（含 `pdf_url` / `html_url` / `arxiv_id` 等）；未找到则 `ok: false`。
 - **说明**：UI 预览链接从此接口读取；catalog 为唯一权威。
 
 #### `paper:get`（扩展规划）
@@ -1285,7 +1306,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 }
 ```
 
-- **返回**：`{ ok: true; data: PaperMetadata[] }`（数组元素含 `path`、`title`、`authors`、`year`、`type`、标识符与远程 URL 等）。
+- **返回**：`{ ok: true; data: PaperListRow[] }`。`PaperListRow` = 扁平展开的 `PaperRecord`（`path`、`title`、`authors`、`year`、`type`、标识符与远程 URL 等）+ 列表专用的 `has_pdf`（对 `papers/<id>/` 的本地 PDF 探测）。前端 `PaperLibraryRow` 由此派生；`remote_paper_list` 返回裸 `PaperRecord`，故远程行的 `has_pdf` 为 `undefined`（"未探测"，不是"没有 PDF"）。
 - **前端**：`src/lib/paper/api.ts` → `listPapers`；UI 侧本地表头排序（不经由本命令传 sort 参数）。
 - **说明**：当前无 filter/pagination；扩展筛选/FTS 仍可用规划契约 `paper:list`（见下）。
 
@@ -1337,7 +1358,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 }
 ```
 
-- **返回**：`{ ok: true; data: PaperMetadata }`（更新后的整行）。
+- **返回**：`{ ok: true; data: PaperRecord }`（更新后的整行）。
 - **前端**：`src/lib/paper/api.ts` → `setPaperIsRead`；paper-reader 工作流成功结束后置 `true`。
 - **说明**：与 `status`（入库态）无关；默认 `false`。触发路径：
   - **自动**：魔棒 `lookup_import_batch`（单条）/ 单篇 `paper_download_assets` 成功且资源就绪时，前端 `maybeAutoRunPaperReader`（批量导入/批量 Download 不连跑）。
@@ -1365,7 +1386,8 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 }
 ```
 
-- **返回**：`{ ok: true; data: PaperMetadata }`（更新后的整行；`tags` 序列化：无色为字符串，有色为 `{name,color}`）。
+- **返回**：`{ ok: true; data: PaperRecord }`（更新后的整行；`tags` 序列化：无色为字符串，有色为 `{name,color}`）。
+- **契约缺口**：`impl Serialize for PaperTag`（`catalog/papers.rs`）在无色时输出**裸字符串**，而 specta 生成的类型是 `{ name, color }` 对象（`color: string | null`）。生成契约与真实 wire 形态不符，因此前端必须保留 `PaperTagInput[]` + `coercePaperTags`（`src/lib/paper/tags.ts`）而不能直接用生成类型。修法见 [../development/import-api-abstraction.md](../development/import-api-abstraction.md) §11。
 - **规范化**：trim 空白；丢弃空串；大小写不敏感去重（保留首次出现的写法与颜色；同名后续项仅在先无色时补色）；`color` 白名单校验。
 - **前端**：`src/lib/paper/api.ts` → `setPaperTags`；Paper Info 增删 + 色盘；Library 染色 chip + 筛选；`src/lib/ui/tag-colors.ts`。
 - **CLI**：`agentero paper tag set|add|rm <ref> …`（`set` 整表替换，`--clear` 清空；支持 `name:color`，颜色为 Apple 8 色 id）；`paper list --tag` 默认隐藏 `@zotero:` / `@arxiv:` 内部标签，`--all` 包含全部标签；`paper tag list` 同样支持 `--all`。另有 `paper move` 与 `trash list|restore|purge`。见 [`cli.md`](cli.md)。
@@ -1488,7 +1510,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
 - **`hideFromChatHistory`**：为 `true` 时，该次运行不记入会话历史（`agent_list_sessions` 不列出）；前端 Agent 面板也不会把这类流式事件并入对话记录。用于 **paper-reader 精读**、**PDF 划词提问** 等非 Composer 发起的运行。Composer 对话保持默认 `false`。
 
 - **技能上下文**：`agent_list_skills` 列出 `~/.agents/skills`、`${CODEX_HOME:-~/.codex}/skills`、`~/.claude/skills` 和当前 Vault `.agents/skills`。运行时重新解析 id，只读取 `SKILL.md`，单个文件上限 64 KiB，最多加载 5 个。
-- **技能提及按 provider 分流**（`SkillMentionStyle`，见 Host `skills.rs`）：
+- **技能提及按 provider 分流**（`SkillMentionStyle`，见 Host `prompt/skills.rs`）：
   - **Claude ACP** → `/skill-id` 前缀 + 注入正文；
   - **其它（含 Codex）** → 仅注入正文（`skill:id` 标签），prompt 明确写明不要依赖 `$`/`/` 运行时命令。
   - Composer 的 `$` 仅是 Agentero UI 选 skill 的方式，不等于每个 Agent 的运行时语法。
@@ -1498,7 +1520,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
   - `ask`（每次询问）：每个权限请求经 `agent:permission-request` 事件转交前端，用户点选后由 `agent_respond_permission` 回传（超时 5 分钟未应答则取消）；
   - `auto`（自动批准）：选择第一个 AllowOnce 选项（等价旧 `autoApprove: true`）。
 
-- **回答语言**：设置 → Agent 提供全局「回答语言」（自动 / English / 简体中文，独立于界面语言）。前端 `runOnce` 统一读取该设置并透传 `responseLanguage`；Host 在 `build_prompt`（`prompts.rs`）为所有 workflow 追加一句语言指令，`auto` 时不注入。
+- **回答语言**：设置 → Agent 提供全局「回答语言」（自动 / English / 简体中文，独立于界面语言）。前端 `runOnce` 统一读取该设置并透传 `responseLanguage`；Host 在 `build_prompt`（`prompt/envelope.rs`）为所有 workflow 追加一句语言指令，`auto` 时不注入。
 - **个人偏好提示词**：设置 → Agent 多行文本（`agentPersonalPrompt`，默认空）。非空时前端 `runOnce` 透传 `personalPrompt`；Host 在 `build_prompt` system envelope 追加 `User preference instructions` 块（所有 workflow）。留空不注入；Chat 展示剥离 envelope，不出现在对话记录。
 
 - **能力边界**：所有 provider（含 Codex）根据 ACP `SessionConfigOption` 协商模型目录、reasoning effort 与 Fast 等能力。`ProbeResult` 含 `sessionCapabilities` 字段。Composer 只为当前 provider 已声明的能力显示对应控件。
@@ -1563,7 +1585,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
 {
   id?: string; // 省略则新建
   name: string;
-  template?: 'opencode' | 'openclaw' | 'gemini' | 'hermes' | 'claude-acp' | 'codex-acp' | 'qodercli' | 'grok-build' | 'pi' | 'dsh' | 'kimi-code' | 'custom';
+  template?: 'opencode' | 'openclaw' | 'antigravity' | 'hermes' | 'claude-acp' | 'codex-acp' | 'qodercli' | 'grok-build' | 'pi' | 'dsh' | 'kimi-code' | 'custom';
   command: string;
   args?: string[];
   env?: Record<string, string>;
@@ -1612,20 +1634,20 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
 > 已取代旧的 `agent_open_install_terminal`（打开系统终端、Enter 确认后再装）。远端仍用 `remote_agent_open_install_terminal`（SSH 确认安装）。
 
 - **参数**：`{ templateId: string, action: "install" | "update" | "uninstall", taskId?: string }`
-  - 支持的 `templateId`：`opencode` · `openclaw` · `claude-acp` · `codex-acp` · `gemini` · `hermes` · `grok-build` · `pi` · `dsh` · `kimi-code`（不含 `qodercli` / `custom`）
+  - 支持的 `templateId`：`opencode` · `openclaw` · `claude-acp` · `codex-acp` · `antigravity` · `hermes` · `grok-build` · `pi` · `dsh` · `kimi-code`（不含 `qodercli` / `custom`）
   - `taskId` 来自设置页 Agent 行内安装进度条；用于匹配 Host progress tick 与接收协作取消信号。
 - **返回**：`{ ok: true; data: null }` 或错误（stderr/stdout 末尾若干行）
 - **行为**
-  - `install`：未装 host 时走官方 installer（POSIX curl→临时文件再 bash，非 `curl|bash`）或 npm；Claude/Codex/Pi 在 host 已存在但 ACP 缺失时只装适配器；两者都缺则 host && adapter；Hermes 走官方 installer；OpenClaw 走 npm。Pi 无原生 ACP，ACP 入口是社区适配器 `pi-acp`（detect 用 host `pi`）；host 与 adapter 两层都走 npm，因为 `pi.dev/install.sh` 是交互式 TUI installer，不能静默执行。Dsh 是目录级 npm 项目安装：Host 先在 `~/.agentero/dsh-acp` 写入默认 `cordis.yml` 与最小 `package.json`（已存在则不覆盖），再 `npm i` 固定版本的 `dsh-acp-demo` + 插件栈；launcher、home npm 根或 PATH 已有入口时 `install` 跳过下载，`update` 仍刷新 launcher 副本。Kimi Code 优先官方 installer（`code.kimi.com`，单二进制装入 `~/.kimi-code`），失败回退 `npm i -g @moonshot-ai/kimi-code`。
+  - `install`：未装 host 时走官方 installer（POSIX curl→临时文件再 bash，非 `curl|bash`）或 npm；Claude/Codex/Pi 在 host 已存在但 ACP 缺失时只装适配器；两者都缺则 host && adapter；Hermes 走官方 installer；OpenClaw 走 npm。Antigravity 走社区 ACP 适配器 `agy-acp`（npm 包），安装命令为 `npm i -g agy-acp@latest`。Pi 无原生 ACP，ACP 入口是社区适配器 `pi-acp`（detect 用 host `pi`）；host 与 adapter 两层都走 npm，因为 `pi.dev/install.sh` 是交互式 TUI installer，不能静默执行。Dsh 是目录级 npm 项目安装：Host 先在 `~/.agentero/dsh-acp` 写入默认 `cordis.yml` 与最小 `package.json`（已存在则不覆盖），再 `npm i` 固定版本的 `dsh-acp-demo` + 插件栈；launcher、home npm 根或 PATH 已有入口时 `install` 跳过下载，`update` 仍刷新 launcher 副本。Kimi Code 优先官方 installer（`code.kimi.com`，单二进制装入 `~/.kimi-code`），失败回退 `npm i -g @moonshot-ai/kimi-code`。
   - `update`：优先 `tool update` / 官方链，失败再 npm；Codex 固定 npm（避免假成功）；OpenClaw 使用 `openclaw update --yes` 后 fallback npm；Pi 使用 `pi update --self` 后 fallback npm；Windows 上 OpenCode 不用交互式 `upgrade`。Kimi 的 `kimi upgrade` 是交互式，静默 update 直接重跑官方 installer（幂等）。
-  - `uninstall`：镜像安装矩阵做 best-effort 清理（先 `resolve_command("npm")` 预检，缺失即报错而非假成功）——npm 全局包逐个 `npm uninstall -g`（unix 上适配器带 `--prefix "$HOME/.local"`，与安装一致）；dsh 删除受管目录 `~/.agentero/dsh-acp`，kimi-code 在 npm 卸载后删除 `~/.kimi-code`（Windows 为 `%USERPROFILE%\.kimi-code`）；**不改 shell rc**（官方 installer 写入的 PATH 行保留）、不处理官方脚本/brew 安装的 CLI（无法可靠定位）。Hermes 无 npm 包/受管目录 → 仅移除注册项（不跑命令）。成功后同命令联动删除该模板的 catalog 注册项（`catalog-{templateId}`，或 command+args 匹配），避免二进制已删而注册项残留；phase 用 `agent-lifecycle-uninstall` 推送进度。
+  - `uninstall`：镜像安装矩阵做 best-effort 清理（先 `resolve_command("npm")` 预检，缺失即报错而非假成功）——npm 全局包逐个 `npm uninstall -g`（unix 上适配器带 `--prefix "$HOME/.local"`，与安装一致）；antigravity 卸载 `npm uninstall -g agy-acp`；dsh 删除受管目录 `~/.agentero/dsh-acp`，kimi-code 在 npm 卸载后删除 `~/.kimi-code`（Windows 为 `%USERPROFILE%\.kimi-code`）；**不改 shell rc**（官方 installer 写入的 PATH 行保留）、不处理官方脚本/brew 安装的 CLI（无法可靠定位）。Hermes 无 npm 包/受管目录 → 仅移除注册项（不跑命令）。成功后同命令联动删除该模板的 catalog 注册项（`catalog-{templateId}`，或 command+args 匹配），避免二进制已删而注册项残留；phase 用 `agent-lifecycle-uninstall` 推送进度。
   - 本机 lifecycle 全局串行执行，避免多个 npm 全局安装/升级任务并发抢锁或互相覆盖临时脚本；设置页在对应 Agent 卡片内展示安装 / 扫描 / 探测阶段进度（#250）。
   - 安装子进程运行期间，Host 以 `agent-lifecycle:progress` 推送 `agent-lifecycle-*` phase tick，供设置页行内进度条消费，避免快捷下载脚本长时间停在无进度状态。
-  - 若传入 `taskId`，等待 lifecycle 锁和执行安装子进程时会检查 `background_task_cancel`；取消是尽力而为，不回滚已完成的包管理器写入。设置页 Agent 目录行与引导页 Agent 卡片在行内进度条上提供取消（X）按钮，点击即以本次 lifecycle 的 `taskId` 调 `background_task_cancel`；取消为静默处理（不弹错误 toast、不显示错误条）。
+  - 若传入 `taskId`，等待 lifecycle 锁和执行安装子进程时会检查 agent 域内的 lifecycle 取消注册表（`agent_lifecycle_cancel` 写入，命令出口清理）；取消是尽力而为，不回滚已完成的包管理器写入。设置页 Agent 目录行与引导页 Agent 卡片在行内进度条上提供取消（X）按钮，点击即以本次 lifecycle 的 `taskId` 调 `agent_lifecycle_cancel`（参数 `{ taskId: string }`）；取消为静默处理（不弹错误 toast、不显示错误条）。
   - macOS/Linux：注入 login shell 的 `PATH`（GUI 窄 PATH）。
   - Windows：写唯一临时 `.bat` + `CREATE_NO_WINDOW` + `call` 前缀；安装进程 PATH 合并 npm/pnpm/WinGet/Scoop shim；批处理切到 UTF-8，错误输出按 UTF-8 优先、GBK 回退解码。
   - 在 `spawn_blocking` 中执行，避免卡住 async runtime。
-- **实现**：`src-tauri/src/features/agent/tool_lifecycle.rs`
+- **实现**：`src-tauri/src/features/agent/registry/lifecycle.rs`
 - **Catalog 两层检测**（`agent_scan_catalog` / 远端 scan）：
   - **Agent**：`binaryAvailable`（`detect_command`，如 `claude` / `codex` / `opencode` / `openclaw` / `hermes` / `kimi`）
   - **ACP**：`acpCommandAvailable`（`command`，如 `claude-agent-acp`；原生 ACP 时与 Agent 同二进制）
@@ -2161,23 +2183,22 @@ Windows：未设 `XDG_CONFIG_HOME` 时回退 `%APPDATA%/agentero/`。旧版 macO
 ### 3.10.1 版面模型（PP-DocLayoutV3）
 
 - **路径**：`$XDG_CACHE_HOME/agentero/models/pp-doclayoutv3.onnx`
-- **启动**：`setup` 在代理配置后 `spawn_background_download`（固定 task id `layout-model`）
+- **启动**：`setup` 在代理配置后 `spawn_background_download` 入队 JobCenter `modelDownload` job（已有文件则跳过）
 - **下载源**：ModelScope（`greatv/oar-ocr`）优先，失败则 HuggingFace EmbedPDF `model_fp16.onnx`
 - **代理**：走 Host 全局 `core::http::client_builder`（与设置 Network proxy 一致）
 - **协议**：`agentero-model` URI scheme 把本地文件喂给 `onnxruntime-web`
-- **后台任务**：
-  - `emit("layout-model:task", { taskId, status, progress, detail, error, source })`
-  - `emit("background-task:progress", { taskId: "layout-model", phase: "layout-model", … })`
-  - 取消：`background_task_cancel` + task id `layout-model`
+- **后台任务**：Host runner job（全局资源：vault/paper 为空，cap 1；重复触发按 fingerprint 去重合并）
+  - 面板行来自 JobCenter 投影；字节进度 `emit("job:progress", { taskId: <job id>, phase: "layout-model", … })`
+  - 取消：`job_cancel`（job 的 cancel token 按 task id 索引，runner 轮询 `features::jobs::is_task_cancelled(job id)`）
 
 #### `layout_model_status`（已实现）
 
 - **返回** `ApiResult<LayoutModelStatus>`：`{ ready, path, sizeBytes, source, fileName }`
 
-#### `layout_model_ensure`（已实现）
+#### `job_model_download_enqueue`（已实现）
 
-- **参数**：`{ progressTaskId?: string }`（来自 `enqueueBackgroundTask` 的 id）
-- **返回**：`LayoutModelStatus`；未就绪则下载（进程锁；支持取消与字节进度）
+- **参数**：`{ lane?, force? }`（无 vault/paper 目标）
+- **返回**：`ApiResult<JobSnapshot>`；未就绪则由 Host runner 下载（进程锁；支持取消与字节进度），并发触发合并为同一 job
 
 ### 3.10.2 版面解析后端（本地 ONNX / 远程 Provider）
 
@@ -2220,7 +2241,7 @@ Windows：未设 `XDG_CONFIG_HOME` 时回退 `%APPDATA%/agentero/`。旧版 macO
 - **并发**：`settings.layout.backend` 为远程 provider 时 JobCenter `layoutAnalyze` **无并发上限**（远端排队）；本地 ONNX 仍 cap=1。
 - **返回**：`{ pages: [{ boxes: [{ clsId, label, score, coordinate }], widthPx, heightPx }] }`；渲染像素尺寸优先取服务端报告（Paddle：`dataInfo` / `inputImage` JPEG 头；MinerU：中间结果 `middle.json` / `layout.json` 页尺寸），缺失为 `null`（前端按 200 DPI 估算）。
 - **超时 / 代理**：单请求 120s；走 Host 全局代理（`core::http::client_builder`）。
-- 实现：`src-tauri/src/features/layout_remote/`（`commands.rs` 命令壳 + `engine.rs` `RemoteLayoutEngine` trait / 注册 + `paddle.rs` + `mineru.rs`）；前端 `src/lib/pdf/layout/paddle.ts`（IPC 封装）+ `providers.ts`（`LAYOUT_PROVIDERS` 注册表）。
+- 实现：`src-tauri/src/features/paper/analyze/layout/hosted/`（`commands.rs` 命令壳 + `engine.rs` `RemoteLayoutEngine` trait / 注册 + `paddle.rs` + `mineru.rs`）；前端 `src/lib/pdf/layout/paddle.ts`（IPC 封装）+ `providers.ts`（`LAYOUT_PROVIDERS` 注册表）。
 
 #### `layout_remote_probe`（已实现）
 
@@ -2245,7 +2266,7 @@ Windows：未设 `XDG_CONFIG_HOME` 时回退 `%APPDATA%/agentero/`。旧版 macO
 
 UI 入口见 `settings_window_open`：Settings 现为独立原生单例窗口，`?window=settings` 路由由 `src/main.tsx` 分支渲染。
 
-实现：`src-tauri/src/features/settings/`（`mod.rs` + `commands.rs`）、`core/paths.rs`、`src-tauri/src/features/window/commands.rs`。
+实现：`src-tauri/src/features/system/settings/`（`mod.rs` + `commands.rs`）、`core/paths.rs`、`src-tauri/src/app/window/commands.rs`。
 
 ### 3.10.3 使用记录（XDG `usage.sqlite`）
 
@@ -2351,7 +2372,7 @@ CLI 对照：`agentero usage which|timeline|summary|clear`（见 [cli.md](cli.md
 
 ## 3.x Headless CLI（对照）
 
-> 完整语义见 [`cli.md`](cli.md)。CLI **不**走 Tauri invoke，直接 path 依赖 `agentero_lib::services`（无 BYOA）。
+> 完整语义见 [`cli.md`](cli.md)。CLI **不**走 Tauri invoke，直接 path 依赖 `agentero_core::features`（无 BYOA、无 tauri）。
 
 | CLI | Host service / command 锚点 |
 |---|---|
@@ -2381,7 +2402,8 @@ CLI 对照：`agentero usage which|timeline|summary|clear`（见 [cli.md](cli.md
 
 - `VaultInfo` / `RecentVault`
 - `FileNode`
-- `Paper` / `PaperMetadata`
+- `PaperRecord`（唯一论文模型：catalog 行 / `metadata.json` sidecar / IPC 出参）/ `PaperKind`（`type` 列枚举）/ `PaperListRow`（`paper_list` 投影 = `PaperRecord` + `has_pdf`）
+- 前端 `PaperMetadata` 只是 `PaperRecord_Serialize` 的派生别名（`src/lib/paper/types.ts`），**不是** Rust 类型
 - `Highlight`
 - `ArxivCandidate` / `ArxivImportResult`
 - `PdfMetadataDraft` / `PdfImportResult`

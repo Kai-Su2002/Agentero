@@ -42,7 +42,6 @@ import {
 	TrashRow,
 } from "./tree-rows";
 import { TreeRowsViewport } from "./tree-rows-viewport";
-import { TreeSelectionBar } from "./tree-selection-bar";
 import type { TreeCreateDraft, TreeCreateKind, TreeRenameDraft } from "./types";
 
 type FileTreeProps = {
@@ -121,6 +120,8 @@ type FileTreeProps = {
 	onDropMove?: (paths: string[], targetPath: string) => void;
 	onCutPaths?: (paths: string[]) => void;
 	onPasteInto?: (targetPath: string) => void;
+	/** Report the semantic multi-selection count to the fixed sidebar header. */
+	onSelectionChange?: (count: number) => void;
 	/** Absolute paths currently staged by Cut (for row dimming). */
 	cutPaths?: string[];
 	/**
@@ -150,6 +151,12 @@ export type FileTreeHandle = {
 	cutSelected: () => void;
 	/** Paste cut items into the currently selected path. */
 	pasteIntoSelected: () => void;
+	/** Clear the transient multi-selection mode. */
+	clearSelection: () => void;
+	/** Open the move picker for the current multi-selection. */
+	moveSelected: (anchor: { x: number; y: number }) => void;
+	/** Move the current multi-selection to the recycle bin. */
+	deleteSelected: () => void;
 };
 
 /**
@@ -195,6 +202,7 @@ export const FileTree = memo(
 			onDropMove,
 			onCutPaths,
 			onPasteInto,
+			onSelectionChange,
 			cutPaths = [],
 			onDropLocalPdfs,
 			onLoadDirChildren,
@@ -255,6 +263,7 @@ export const FileTree = memo(
 			onDeletePaths,
 			onCutPaths,
 			onPasteInto,
+			onSelectionChange,
 		});
 
 		const { treeScrollRef, rowVirtualizer } = useTreeReveal({
@@ -304,6 +313,7 @@ export const FileTree = memo(
 				libraryExportBusy,
 				citingScanBusy,
 				pathsForAction: selection.pathsForAction,
+				prepareContextSelection: selection.prepareContextSelection,
 				openMovePicker: movePicker.openPicker,
 				onExportLibrary,
 				onDiscoverCiting,
@@ -329,6 +339,12 @@ export const FileTree = memo(
 						: [];
 			collapsePaths(candidates);
 		}, [selection.selected, selectedPath, collapsePaths]);
+		const moveSelected = useCallback(
+			(anchor: { x: number; y: number }) => {
+				movePicker.openPicker(selection.orderedSelected(), anchor);
+			},
+			[movePicker.openPicker, selection.orderedSelected],
+		);
 
 		useImperativeHandle(
 			ref,
@@ -337,12 +353,18 @@ export const FileTree = memo(
 				collapseToDefault,
 				cutSelected: selection.cutSelected,
 				pasteIntoSelected: selection.pasteIntoSelected,
+				clearSelection: selection.clearSelection,
+				moveSelected,
+				deleteSelected: selection.runBatchDelete,
 			}),
 			[
 				collapseSelected,
 				collapseToDefault,
 				selection.cutSelected,
 				selection.pasteIntoSelected,
+				selection.clearSelection,
+				moveSelected,
+				selection.runBatchDelete,
 			],
 		);
 
@@ -387,19 +409,6 @@ export const FileTree = memo(
 						className,
 					)}
 				>
-					{selection.selected.size > 0 ? (
-						<TreeSelectionBar
-							count={selection.selected.size}
-							onMove={
-								onMoveTo
-									? (anchor) =>
-											movePicker.openPicker(selection.orderedSelected(), anchor)
-									: undefined
-							}
-							onDelete={selection.runBatchDelete}
-							onClear={selection.clearSelection}
-						/>
-					) : null}
 					<MovePickerPopover
 						picker={movePicker}
 						vaultPath={vaultPath}

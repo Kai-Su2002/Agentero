@@ -4,36 +4,14 @@
  * @see docs/development/plaza-feeds.md
  */
 
+import { commands, type FeedItem, type FeedSub } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApi } from "@/lib/core/ipc";
 import { notifyError } from "@/lib/core/notify";
 import { lookupSubmit } from "@/lib/paper/import-actions";
 
-export type FeedSub = {
-	id: string;
-	url: string;
-	title: string;
-	addedAt: string;
-	lastFetchedAt: string | null;
-	lastError: string | null;
-	itemCount: number;
-	pinned: boolean;
-	pinnedAt: string | null;
-};
-
-export type FeedItem = {
-	id: string;
-	subscriptionId: string;
-	subscriptionTitle: string;
-	title: string;
-	url: string | null;
-	publishedAt: string | null;
-	summaryText: string;
-	contentHtml: string | null;
-	paperUrl: string | null;
-	importedAt: string | null;
-	bodyMarkdown: string | null;
-};
+/** Wire shapes from the generated bindings (feeds.sqlite rows). */
+export type { FeedItem, FeedSub };
 
 export type FeedFilter = "all" | "paper" | "other";
 
@@ -272,45 +250,40 @@ export function feedDetailMarkdown(item: FeedItem): string {
 const SETTLE_TIMEOUT_MS = 120_000;
 
 export async function feedsList(): Promise<FeedSub[]> {
-	const data = await invokeApi<{ subscriptions: FeedSub[] }>(
-		"feeds_list",
-		undefined,
-		{ fallback: "feeds.listFailed" },
-	);
+	const data = await callApi(() => commands.feedsList(), {
+		fallback: "feeds.listFailed",
+	});
 	return data.subscriptions;
 }
 
 export async function feedsAdd(url: string, title?: string): Promise<FeedSub> {
-	return invokeApi<FeedSub>(
-		"feeds_add",
-		{ args: { url, title } },
-		{ fallback: "feeds.addFailed" },
-	);
+	return callApi(() => commands.feedsAdd({ url, title: title ?? null }), {
+		fallback: "feeds.addFailed",
+	});
 }
 
 export async function feedsRemove(id: string): Promise<void> {
-	await invokeApi(
-		"feeds_remove",
-		{ args: { id } },
-		{ fallback: "feeds.removeFailed", allowVoid: true },
-	);
+	await callApi(() => commands.feedsRemove({ id }), {
+		fallback: "feeds.removeFailed",
+	});
 }
 
 export async function feedsRename(id: string, title: string): Promise<FeedSub> {
-	return invokeApi<FeedSub>(
-		"feeds_rename",
-		{ args: { id, title } },
-		{ fallback: "feeds.renameFailed" },
-	);
+	return callApi(() => commands.feedsRename({ id, title }), {
+		fallback: "feeds.renameFailed",
+	});
 }
 
 export async function feedsRefresh(opts?: {
 	id?: string;
 	staleOnly?: boolean;
 }): Promise<{ subscriptions: FeedSub[]; fetched: number; failed: number }> {
-	return invokeApi(
-		"feeds_refresh",
-		{ args: { id: opts?.id, staleOnly: opts?.staleOnly ?? false } },
+	return callApi(
+		() =>
+			commands.feedsRefresh({
+				id: opts?.id ?? null,
+				staleOnly: opts?.staleOnly ?? false,
+			}),
 		{ fallback: "feeds.refreshFailed" },
 	);
 }
@@ -322,47 +295,39 @@ export async function feedsItems(opts?: {
 	beforePublishedAt?: string;
 	beforeId?: string;
 }): Promise<FeedItem[]> {
-	const data = await invokeApi<{ items: FeedItem[] }>(
-		"feeds_items",
-		{
-			args: {
-				subscriptionId: opts?.subscriptionId,
+	const data = await callApi(
+		() =>
+			commands.feedsItems({
+				subscriptionId: opts?.subscriptionId ?? null,
 				filter: opts?.filter ?? "all",
 				limit: opts?.limit ?? 100,
-				beforePublishedAt: opts?.beforePublishedAt,
-				beforeId: opts?.beforeId,
-			},
-		},
+				beforePublishedAt: opts?.beforePublishedAt ?? null,
+				beforeId: opts?.beforeId ?? null,
+			}),
 		{ fallback: "feeds.itemsFailed" },
 	);
 	return data.items;
 }
 
 export async function feedsMarkImported(id: string): Promise<FeedItem> {
-	return invokeApi<FeedItem>(
-		"feeds_mark_imported",
-		{ args: { id } },
-		{ fallback: "feeds.markFailed" },
-	);
+	return callApi(() => commands.feedsMarkImported({ id }), {
+		fallback: "feeds.markFailed",
+	});
 }
 
 export async function feedsSetPinned(
 	id: string,
 	pinned: boolean,
 ): Promise<FeedSub> {
-	return invokeApi<FeedSub>(
-		"feeds_set_pinned",
-		{ args: { id, pinned } },
-		{ fallback: "feeds.pinFailed" },
-	);
+	return callApi(() => commands.feedsSetPinned({ id, pinned }), {
+		fallback: "feeds.pinFailed",
+	});
 }
 
 export async function feedsResolveBody(id: string): Promise<FeedItem> {
-	return invokeApi<FeedItem>(
-		"feeds_resolve_body",
-		{ args: { id } },
-		{ fallback: "feeds.resolveFailed" },
-	);
+	return callApi(() => commands.feedsResolveBody({ id }), {
+		fallback: "feeds.resolveFailed",
+	});
 }
 
 export function compareFeedSubs(a: FeedSub, b: FeedSub): number {

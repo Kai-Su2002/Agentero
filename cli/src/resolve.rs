@@ -4,7 +4,7 @@ use crate::config;
 use crate::error::CliError;
 use crate::output::OutputFormat;
 use crate::style::Style;
-use agentero_lib::features::catalog::papers::{self, PaperRecord};
+use agentero_core::features::catalog::papers::{self, PaperRecord};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]

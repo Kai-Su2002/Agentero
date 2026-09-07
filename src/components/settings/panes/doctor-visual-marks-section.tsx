@@ -14,7 +14,7 @@ import { DoctorSection } from "./doctor-sections";
 type VisualMarkDraft = VisualMarkCandidate & { selected: boolean };
 
 function toVisualMarkDrafts(
-	visualMarks: DoctorReport["visualMarks"],
+	visualMarks: DoctorReport["visualMarks"] | undefined,
 ): VisualMarkDraft[] {
 	return (visualMarks?.candidates ?? []).map((candidate) => ({
 		...candidate,
@@ -28,7 +28,7 @@ export function DoctorVisualMarksSection({
 	onRefresh,
 }: {
 	vaultPath: string;
-	visualMarks: DoctorReport["visualMarks"];
+	visualMarks: DoctorReport["visualMarks"] | undefined;
 	onRefresh: () => Promise<void>;
 }) {
 	const { t } = useTranslation("settings");

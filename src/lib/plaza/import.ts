@@ -14,10 +14,11 @@
  */
 
 import i18n from "@/i18n";
-import { enqueueBackgroundTask } from "@/lib/core/background-tasks";
+import { commands, type PaperCommitResult } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApiResult } from "@/lib/core/ipc";
 import { notifyError, notifySuccess, notifyWarning } from "@/lib/core/notify";
+import { enqueueTaskSettled, type TaskExecutorContext } from "@/lib/core/tasks";
 import { lookupSubmit } from "@/lib/paper/import-actions";
 import { currentLookupParentDir } from "@/lib/paper/library-actions";
 import { refreshLibrary } from "@/lib/paper/library-store";
@@ -33,19 +34,11 @@ export type PlazaImportRequest = {
 	title: string | null;
 };
 
-type PaperCommitResult = {
-	/** A genuine failure throws through `invokeApi`; these are the only states. */
-	status: "created" | "deduped" | "skipped";
-	id: string;
-	path: string;
-	title: string;
-	pdf: boolean;
-	/** Non-fatal asset problems, e.g. the publisher PDF could not be fetched. */
-	assetMessages: string[];
-};
+/** A genuine failure throws through the IPC helper; `status` covers the rest. */
+export type { PaperCommitResult };
 
 /**
- * The 魔棒 import runs inside a background task that `lookupSubmit` does not
+ * The 魔棒 import settles through `onComplete`, which this frame does not
  * await, so a failure in there never reaches our `catch`. Settle regardless
  * after this long so the row cannot stay stuck pending; the tasks panel still
  * reports the real error. A retry is harmless — the Host dedupes by id.
@@ -86,27 +79,47 @@ async function importViaPage(
 	request: PlazaImportRequest,
 	vaultPath: string,
 ): Promise<boolean> {
-	const label = request.title?.trim() || request.id;
-	const result = await enqueueBackgroundTask(
-		{
-			kind: "lookup",
-			title: i18n.t("app:plazaImport.taskTitle"),
-			detail: label,
+	await enqueueTaskSettled({
+		kind: "import",
+		vaultPath,
+		path: currentLookupParentDir(),
+		lane: "normal",
+		params: {
+			mode: "plaza",
+			id: request.id,
+			title: request.title,
+			branch: request.branch || "venue",
 		},
-		({ id }) =>
-			invokeApi<PaperCommitResult>(
-				"paper_coolpapers_import",
-				{
-					args: {
-						vaultPath,
-						parentDir: currentLookupParentDir(),
-						branch: request.branch || "venue",
-						id: request.id,
-						taskId: id,
-					},
-				},
-				{ fallback: i18n.t("app:plazaImport.failed") },
-			),
+	});
+	return true;
+}
+
+type PlazaJobParams = { id?: string; title?: string | null; branch?: string };
+
+function plazaJobParams(params: unknown): PlazaJobParams {
+	return (params && typeof params === "object" ? params : {}) as PlazaJobParams;
+}
+
+/** Executor body of a 广场 (`mode: "plaza"`) import job. */
+export async function runPlazaImportJob(
+	ctx: TaskExecutorContext,
+): Promise<void> {
+	const vaultPath = ctx.vaultPath;
+	const params = plazaJobParams(ctx.params);
+	const id = params.id?.trim() ?? "";
+	if (!id) throw new Error("plaza import job is missing its source id");
+	const label = params.title?.trim() || id;
+	const result = await callApiResult(
+		() =>
+			commands.paperCoolpapersImport({
+				vaultPath,
+				parentDir: currentLookupParentDir(),
+				branch: params.branch || "venue",
+				id,
+				// The job id doubles as the Host progress + cancel task id.
+				taskId: ctx.jobId,
+			}),
+		{ fallback: i18n.t("app:plazaImport.failed") },
 	);
 
 	await refreshTree(vaultPath);
@@ -118,12 +131,11 @@ async function importViaPage(
 		// The unit is in the library; only the PDF is missing. Say so instead of
 		// reporting a clean success the user would later find untrue.
 		else notifyWarning(i18n.t("app:plazaImport.importedNoPdf", { name }));
-		return true;
+		return;
 	}
 	notifyWarning(
 		i18n.t("app:plazaImport.duplicate", { name: result.title || label }),
 	);
-	return true;
 }
 
 /**

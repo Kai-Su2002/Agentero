@@ -7,7 +7,8 @@
  * - any other string → a system font family name (quoted + role fallback)
  */
 
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
 /** Built-in non-system tokens shown at the top of the font picker. */
@@ -158,7 +159,7 @@ export async function listSystemFonts(): Promise<string[]> {
 async function loadSystemFonts(): Promise<string[]> {
 	if (!isTauri()) return [];
 	try {
-		const fonts = await invokeApi<string[]>("list_system_fonts", undefined, {
+		const fonts = await callApi(() => commands.listSystemFonts(), {
 			fallback: "Failed to list system fonts",
 		});
 		if (!Array.isArray(fonts)) return [];

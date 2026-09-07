@@ -118,6 +118,7 @@
 		"colTags": "标签",
 		"colId": "标识符",
 		"colPublication": "出版物",
+		"colCitations": "被引量",
 		"heatmapTooltip": "{{total}} 次 · 高亮 {{highlights}} · 对话 {{asks}} · 翻译 {{translates}}",
 		"sortBy": "按{{column}}排序",
 		"copyHint": "单击复制{{label}}",
@@ -128,6 +129,11 @@
 		"filterTags": "按标签筛选",
 		"filterTagsEmpty": "当前库中还没有标签。",
 		"clearTagFilter": "清除标签筛选",
+		"easyScholar": {
+			"fetchRank": "为全部论文获取 EasyScholar 分区/影响因子标签",
+			"fetchFailed": "获取 EasyScholar 数据失败。",
+			"batchDone": "已更新 {{updated}} 篇 · 失败 {{failed}} · 无数据 {{empty}}"
+		},
 		"noMatch": "没有匹配的论文。",
 		"columnsMenuLabel": "列",
 		"resetColumns": "重置列",

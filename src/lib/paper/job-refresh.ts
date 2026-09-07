@@ -9,12 +9,9 @@
  * here, and those have no lifecycle event.
  */
 
-import type {
-	JobChangedSnapshot,
-	JobKind,
-	JobState,
-} from "@/lib/core/job-center";
-import { listenSafe } from "@/lib/core/tauri-events";
+import { events } from "@/lib/core/bindings";
+import { isTerminalJobState, type JobKind } from "@/lib/core/tasks";
+import { listenEventSafe } from "@/lib/core/tauri-events";
 import { scheduleLibraryRefresh } from "@/lib/paper/library-store";
 
 const REFRESH_ON_KINDS: ReadonlySet<JobKind> = new Set([
@@ -25,18 +22,9 @@ const REFRESH_ON_KINDS: ReadonlySet<JobKind> = new Set([
 	"recognizeMetadata",
 ]);
 
-function isTerminalJobState(state: JobState): boolean {
-	return (
-		state === "succeeded" ||
-		state === "failed" ||
-		state === "cancelled" ||
-		state === "skipped"
-	);
-}
-
 /** Caller owns the returned disposer. */
 export function startJobCompletionRefresh(): () => void {
-	return listenSafe<{ job: JobChangedSnapshot }>("job:changed", ({ job }) => {
+	return listenEventSafe(events.jobChanged, ({ job }) => {
 		if (!REFRESH_ON_KINDS.has(job.kind)) return;
 		if (!isTerminalJobState(job.state)) return;
 		scheduleLibraryRefresh();

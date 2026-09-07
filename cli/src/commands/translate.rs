@@ -7,7 +7,7 @@
 
 use crate::error::CliError;
 use crate::resolve::GlobalOpts;
-use agentero_lib::features::translate::{
+use agentero_core::features::translate::{
     free_mt_to_zh, translate_text, TranslateTextArgs, FREE_PROVIDERS,
 };
 use serde_json::{json, Value};

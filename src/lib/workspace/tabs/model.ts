@@ -82,13 +82,18 @@ export function remapTabsUnderPath(
 		const notesPath = tab.notesPath
 			? remapPathUnder(tab.notesPath, from, to)
 			: null;
-		const paperPath = tab.paperMeta?.path
-			? remapPathUnder(tab.paperMeta.path, fromRel, toRel)
-			: tab.paperMeta?.path;
+		const paperMeta = tab.paperMeta;
+		let nextPaperMeta = paperMeta;
+		if (paperMeta) {
+			const remappedPaperPath = remapPathUnder(paperMeta.path, fromRel, toRel);
+			if (remappedPaperPath !== paperMeta.path) {
+				nextPaperMeta = { ...paperMeta, path: remappedPaperPath };
+			}
+		}
 		if (
 			path === tab.path &&
 			notesPath === tab.notesPath &&
-			paperPath === tab.paperMeta?.path
+			nextPaperMeta === paperMeta
 		) {
 			return tab;
 		}
@@ -97,10 +102,7 @@ export function remapTabsUnderPath(
 			id: remapTabIdForPath(tab.id, tab.path, path),
 			path,
 			notesPath,
-			paperMeta:
-				tab.paperMeta && paperPath !== tab.paperMeta.path
-					? { ...tab.paperMeta, path: paperPath }
-					: tab.paperMeta,
+			paperMeta: nextPaperMeta,
 		};
 	});
 }

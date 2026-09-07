@@ -6,7 +6,6 @@ export {
 	cancelBackgroundTask,
 	clearFinishedBackgroundTasks,
 	completeBackgroundTask,
-	enqueueBackgroundTask,
 	failBackgroundTask,
 	formatBytes,
 	getActiveBackgroundTasks,
@@ -43,19 +42,14 @@ export {
 	IME_COMPOSITION_END_GRACE_MS,
 	isImeKeyboardEvent,
 } from "@/lib/core/ime";
-export { type ApiResult, invokeApi } from "@/lib/core/ipc";
 export {
-	type JobChangedSnapshot,
-	type JobKind,
-	type JobOfferPayload,
-	type JobState,
-	jobReport,
-	registerJobExecutor,
-	startJobCenterExecutorListener,
-	startJobTaskProjection,
-	stopJobCenterExecutorListener,
-	stopJobTaskProjection,
-} from "@/lib/core/job-center";
+	type ApiError,
+	type CallApiOptions,
+	callApi,
+	callApiResult,
+	callResult,
+	type TypedResult,
+} from "@/lib/core/ipc";
 export { createKeyedCache } from "@/lib/core/keyed-cache";
 export { initLogger, logger } from "@/lib/core/logger";
 export { clamp, clamp01 } from "@/lib/core/math";
@@ -92,6 +86,25 @@ export {
 	writeJsonStorage,
 } from "@/lib/core/storage";
 export {
+	awaitTaskSettled,
+	cancelTask,
+	enqueueTask,
+	enqueueTaskSettled,
+	isTerminalJobState,
+	type JobKind,
+	type JobSnapshot,
+	type JobState,
+	registerTaskExecutor,
+	reportTaskPhase,
+	runLocalActivity,
+	startTaskRuntime,
+	type TaskExecutor,
+	type TaskExecutorContext,
+	type TaskReportArgs,
+	type TaskSpec,
+	throwIfTaskCancelled,
+} from "@/lib/core/tasks";
+export {
 	getPlatformOS,
 	isMacOS,
 	isMobileApp,
@@ -100,8 +113,9 @@ export {
 } from "@/lib/core/tauri";
 export {
 	broadcastSafe,
-	listenSafe,
+	listenEventSafe,
 	type TauriEventHandler,
+	type TypedEventBinding,
 	toSafeDisposer,
 } from "@/lib/core/tauri-events";
 export { cn, mapLimit } from "@/lib/core/utils";

@@ -1,33 +1,15 @@
 /**
- * Attach Host layout-model download to the IDE background-tasks panel.
- * Host may already be downloading on startup (`layout-model` task id).
+ * Kick the Host layout-model download job when the model is still missing.
+ * The JobCenter dedupes with the startup-enqueued `modelDownload` job; the
+ * tasks-panel projection shows progress and cancellation.
  */
 import { useEffect } from "react";
 import { isTauri } from "@/lib/core/tauri";
-import {
-	attachLayoutModelTaskListener,
-	prefetchLayoutModel,
-} from "@/lib/pdf/layout/model";
+import { prefetchLayoutModel } from "@/lib/pdf/layout/model";
 
 export function useLayoutModelPrefetch(): void {
 	useEffect(() => {
 		if (!isTauri()) return;
-		let disposed = false;
-		let unlisten: (() => void) | undefined;
-
-		void (async () => {
-			const u = await attachLayoutModelTaskListener();
-			if (disposed) {
-				u();
-				return;
-			}
-			unlisten = u;
-			prefetchLayoutModel();
-		})();
-
-		return () => {
-			disposed = true;
-			unlisten?.();
-		};
+		prefetchLayoutModel();
 	}, []);
 }

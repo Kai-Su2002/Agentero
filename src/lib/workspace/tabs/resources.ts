@@ -1,8 +1,9 @@
 import i18n from "@/i18n";
-import { enqueueBackgroundTask } from "@/lib/core/background-tasks";
+import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApiResult } from "@/lib/core/ipc";
 import { toVaultRelative } from "@/lib/core/path";
+import { enqueueTaskSettled } from "@/lib/core/tasks";
 import { isTauri } from "@/lib/core/tauri";
 import {
 	canAttemptPdfDownload,
@@ -23,9 +24,6 @@ import {
 	revokePdfViewerSource,
 } from "@/lib/paper";
 import { isLibraryVirtualPath, isTrashVirtualPath } from "@/lib/paper/api";
-import { enqueuePaperPdfParse } from "@/lib/paper/enqueue-paper-pdf-parse";
-import { downloadPaperAssets } from "@/lib/paper/lookup";
-import { enqueuePaperLayoutAnalysis } from "@/lib/pdf/layout";
 import {
 	isPlazaVirtualPath,
 	plazaSourceForPath,
@@ -35,7 +33,6 @@ import {
 	ensureLocalFsScope,
 	type FileNode,
 	isTextOpenable,
-	joinVaultPath,
 	readVaultFile,
 } from "@/lib/vault";
 import { basenameOf, normalizePathKey, treeFindNode } from "@/lib/vault/path";
@@ -74,9 +71,8 @@ function reconcilePaperOnOpen(
 		.replace(/\\/g, "/")
 		.replace(/^\/+|\/+$/g, "");
 	if (!rel) return;
-	void invokeApi(
-		"job_reconcile_paper",
-		{ args: { vaultPath, path: rel } },
+	void callApiResult(
+		() => commands.jobReconcilePaper({ vaultPath, path: rel }),
 		{ fallback: "paper reconcile failed" },
 	).catch(() => undefined);
 }
@@ -116,31 +112,9 @@ async function resolvePaperPdfSource(
 
 	let didDownload = false;
 	try {
-		await enqueueBackgroundTask(
-			{
-				kind: "download",
-				title: i18n.t("app:tasks.downloadPaper"),
-				detail: rel,
-			},
-			async ({ id, setDetail }) => {
-				setDetail(rel);
-				const r = await downloadPaperAssets({
-					vaultRoot: vaultPath,
-					paperPath: rel,
-					progressTaskId: id,
-				});
-				enqueuePaperLayoutAnalysis({
-					paperAbsPath: joinVaultPath(vaultPath, rel),
-					paperLabel: meta?.title?.trim(),
-				});
-				enqueuePaperPdfParse({
-					vaultPath,
-					paperRelPath: rel,
-					paperLabel: meta?.title?.trim(),
-				});
-				return r;
-			},
-		);
+		// JobCenter `downloadAssets`: the Host runner downloads PDF/TeX and chains
+		// the PAPER.md + layout follow-ups; progress/cancel ride the job contract.
+		await enqueueTaskSettled({ kind: "downloadAssets", vaultPath, path: rel });
 		didDownload = true;
 	} catch {
 		// fall through to remote

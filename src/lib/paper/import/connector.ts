@@ -3,37 +3,17 @@
  * @see docs/backend/connector.md
  */
 
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	type ConnectorItemSaved,
+	type ConnectorProgress,
+	type ConnectorStatus,
+	commands,
+} from "@/lib/core/bindings";
+import { callApi, callApiResult } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
-export type ConnectorStatus = {
-	enabled: boolean;
-	listening: boolean;
-	port: number;
-	boundAddress: string | null;
-	lastError: string | null;
-	vaultPath: string | null;
-	parentDir: string;
-};
-
-export type ConnectorItemSaved = {
-	path: string;
-	id: string;
-	title: string;
-	deduped: boolean;
-	sessionId: string;
-};
-
-export type ConnectorProgress = {
-	key: string;
-	sessionId: string;
-	path: string;
-	title: string;
-	status: "running" | "completed" | "failed";
-	progress: number | null;
-	detail: string | null;
-	error: string | null;
-};
+/** Wire shapes from the generated bindings (also the event payloads). */
+export type { ConnectorItemSaved, ConnectorProgress, ConnectorStatus };
 
 export async function connectorGetStatus(): Promise<ConnectorStatus> {
 	if (!isTauri()) {
@@ -47,7 +27,7 @@ export async function connectorGetStatus(): Promise<ConnectorStatus> {
 			parentDir: "papers",
 		};
 	}
-	return invokeApi<ConnectorStatus>("connector_get_status");
+	return callApi(() => commands.connectorGetStatus());
 }
 
 export async function connectorSetEnabled(
@@ -56,27 +36,19 @@ export async function connectorSetEnabled(
 	if (!isTauri()) {
 		return connectorGetStatus();
 	}
-	return invokeApi<ConnectorStatus>("connector_set_enabled", {
-		args: { enabled },
-	});
+	return callApiResult(() => commands.connectorSetEnabled({ enabled }));
 }
 
 export async function connectorSetPort(port: number): Promise<ConnectorStatus> {
 	if (!isTauri()) return connectorGetStatus();
-	return invokeApi<ConnectorStatus>("connector_set_port", {
-		args: { port },
-	});
+	return callApiResult(() => commands.connectorSetPort({ port }));
 }
 
 export async function connectorSetVault(
 	vaultPath: string | null,
 ): Promise<void> {
 	if (!isTauri()) return;
-	await invokeApi<null>(
-		"connector_set_vault",
-		{ args: { vaultPath } },
-		{ allowVoid: true },
-	);
+	await callApi(() => commands.connectorSetVault({ vaultPath }));
 }
 
 /** Default save parent for Connector (`papers` or `papers/…` org folder). */
@@ -87,9 +59,5 @@ export async function connectorSetParentDir(parentDir: string): Promise<void> {
 		.replace(/\\/g, "/")
 		.replace(/^\/+|\/+$/g, "");
 	if (!dir) return;
-	await invokeApi<null>(
-		"connector_set_parent_dir",
-		{ args: { parentDir: dir } },
-		{ allowVoid: true },
-	);
+	await callApi(() => commands.connectorSetParentDir({ parentDir: dir }));
 }

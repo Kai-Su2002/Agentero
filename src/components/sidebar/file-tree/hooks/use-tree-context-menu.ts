@@ -52,6 +52,7 @@ export function useTreeContextMenu({
 	libraryExportBusy,
 	citingScanBusy,
 	pathsForAction,
+	prepareContextSelection,
 	openMovePicker,
 	onExportLibrary,
 	onDiscoverCiting,
@@ -76,6 +77,8 @@ export function useTreeContextMenu({
 	libraryExportBusy: boolean;
 	citingScanBusy: boolean;
 	pathsForAction: (path: string) => string[];
+	/** Right-click keeps an existing group, otherwise makes this the sole target. */
+	prepareContextSelection: (path: string) => void;
 	openMovePicker: (paths: string[], anchor?: { x: number; y: number }) => void;
 	onExportLibrary?: () => void | Promise<void>;
 	onDiscoverCiting?: () => void | Promise<void>;
@@ -120,10 +123,17 @@ export function useTreeContextMenu({
 			}
 			event.preventDefault();
 			event.stopPropagation();
+			prepareContextSelection(path);
 			setRevealError(null);
 			setMenu({ path, x: event.clientX, y: event.clientY });
 		},
-		[createDraft, renameDraft, onExportLibrary, onDiscoverCiting],
+		[
+			createDraft,
+			renameDraft,
+			onExportLibrary,
+			onDiscoverCiting,
+			prepareContextSelection,
+		],
 	);
 
 	const reveal = useCallback(

@@ -2,24 +2,38 @@
 
 #[cfg(test)]
 mod bindings_test;
+// `pub(crate)`: the mirror-shape anti-drift tests live in the owning modules
+// of the private payload structs and reference the mirrors from here. Test
+// builds only — the module does not exist otherwise.
+#[cfg(test)]
+pub(crate) mod events_contract;
 mod handlers;
 mod logging;
 pub mod menu;
+pub mod vault_session;
+
+#[cfg(not(target_os = "ios"))]
+pub mod finder_service;
+pub use crate::features::open_request;
+#[cfg(not(target_os = "ios"))]
+pub mod terminal;
+#[cfg(not(target_os = "ios"))]
+pub mod window;
 
 use crate::features::agent::{AgentRegistry, AgentRunController};
+use crate::features::markdown::wiki::WikiIndexState;
+use crate::features::system::settings::AppSettingsStore;
+use crate::features::vault::rename::ExternalRenameRepairStore;
 #[cfg(not(target_os = "ios"))]
-use crate::features::connector::ConnectorController;
+use crate::features::vault::watcher::FsWatchController;
 #[cfg(not(target_os = "ios"))]
-use crate::features::mcp::tunnel::McpTunnelController;
+use crate::integration::connector::ConnectorController;
 #[cfg(not(target_os = "ios"))]
-use crate::features::mcp::McpController;
+use crate::integration::mcp::tunnel::McpTunnelController;
 #[cfg(not(target_os = "ios"))]
-use crate::features::remote::RemoteRegistry;
-use crate::features::rename::ExternalRenameRepairStore;
-use crate::features::settings::AppSettingsStore;
+use crate::integration::mcp::McpController;
 #[cfg(not(target_os = "ios"))]
-use crate::features::watcher::FsWatchController;
-use crate::features::wiki::WikiIndexState;
+use crate::integration::remote::RemoteRegistry;
 #[cfg(not(target_os = "ios"))]
 use std::sync::Arc;
 #[cfg(not(target_os = "ios"))]
@@ -38,7 +52,7 @@ pub fn run() {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, _cwd| {
-            crate::features::open_request::handle_argv_urls(app, &argv);
+            crate::app::open_request::handle_argv_urls(app, &argv);
             if let Some(win) = app.get_webview_window("main") {
                 let _ = win.show();
                 let _ = win.unminimize();
@@ -49,21 +63,23 @@ pub fn run() {
 
     builder = builder
         .register_asynchronous_uri_scheme_protocol("agentero-arxiv", |_ctx, request, responder| {
-            crate::features::arxiv_proxy::handle(request, responder);
+            crate::features::paper::discovery::proxy::arxiv::handle(request, responder);
         })
         .register_asynchronous_uri_scheme_protocol("agentero-model", |_ctx, request, responder| {
-            crate::features::layout_model::handle_model_uri(request, responder);
+            crate::features::paper::analyze::layout::model_assets::handle_model_uri(
+                request, responder,
+            );
         })
         .register_asynchronous_uri_scheme_protocol(
             "agentero-coolpapers",
             |_ctx, request, responder| {
-                crate::features::coolpapers::proxy::handle(request, responder);
+                crate::features::paper::discovery::coolpapers::proxy::handle(request, responder);
             },
         )
         .register_asynchronous_uri_scheme_protocol(
             "agentero-modelscope",
             |_ctx, request, responder| {
-                crate::features::modelscope_proxy::handle(request, responder);
+                crate::features::paper::discovery::proxy::modelscope::handle(request, responder);
             },
         )
         .plugin(tauri_plugin_opener::init())
@@ -87,6 +103,7 @@ pub fn run() {
 
     let settings_store = AppSettingsStore::load();
     let layout_backend = settings_store.layout_backend();
+    let import_concurrency = settings_store.batch_import_concurrency();
     builder = builder
         .manage(settings_store)
         .manage(AgentRegistry::load())
@@ -95,31 +112,45 @@ pub fn run() {
         .manage(crate::features::agent::PermissionGate::new())
         .manage(crate::features::agent::ElicitationGate::new())
         .manage(crate::features::agent::AskUserGate::new())
-        .manage(crate::features::bridge::BridgeController::new())
-        .manage(crate::features::bridge::BridgeClientController::new())
-        .manage(crate::features::jobs::JobCenter::with_layout_backend(
-            &layout_backend,
-        ))
-        .manage(crate::features::catalog::CapsCache::new())
+        .manage(crate::integration::bridge::BridgeController::new())
+        .manage(crate::integration::bridge::BridgeClientController::new())
+        .manage(
+            crate::features::jobs::JobCenter::with_layout_backend(&layout_backend)
+                .with_import_concurrency(import_concurrency),
+        )
+        .manage(crate::features::paper::catalog::CapsCache::new())
         .manage(WikiIndexState::new())
-        .manage(crate::features::doctor::DoctorDirtyPathsState::default())
+        .manage(crate::features::vault::doctor::DoctorDirtyPathsState::default())
         .manage(ExternalRenameRepairStore::new())
-        .manage(crate::features::sync::SyncService::default())
-        .manage(crate::features::open_request::PendingVaultOpen::new());
+        .manage(crate::integration::sync::SyncService::default())
+        .manage(crate::app::open_request::PendingVaultOpen::new());
 
     #[cfg(not(target_os = "ios"))]
     {
+        // Remote vault sessions are consumed by features (agent / import /
+        // trash) through inversion traits defined in the features themselves;
+        // register the registry both concretely (integration commands) and as
+        // each trait object (feature commands).
+        let remote_registry = Arc::new(RemoteRegistry::new());
         builder = builder
             .manage(FsWatchController::new())
             .manage(Arc::new(ConnectorController::new()))
             .manage(Arc::new(McpController::new()))
             .manage(Arc::new(McpTunnelController::new()))
-            .manage(Arc::new(RemoteRegistry::new()));
+            .manage(remote_registry.clone())
+            .manage(remote_registry.clone() as Arc<dyn crate::features::agent::RemoteAgentHosts>)
+            .manage(
+                remote_registry.clone() as Arc<dyn crate::features::paper::import::RemoteImportOps>
+            )
+            .manage(
+                remote_registry
+                    as Arc<dyn crate::features::vault::trash::remote_ops::RemoteTrashOps>,
+            );
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     {
-        builder = builder.manage(Arc::new(crate::features::telemetry::Telemetry::new()));
+        builder = builder.manage(Arc::new(crate::core::telemetry::Telemetry::new()));
     }
 
     builder = handlers::attach_handlers(builder);
@@ -142,16 +173,21 @@ pub fn run() {
 
     builder = builder.setup(|app| {
         // JobCenter runner registry: business domains own their executors and
-        // register them here, so jobs stays a pure scheduler with no edges
-        // into import/refs/settings/agent (P2 runner-registry refactor).
+        // register them here at assembly time (P2 runner-registry refactor).
+        // JobCenter itself lives in features/jobs, alongside the domains it
+        // schedules.
         {
             let center = app.state::<crate::features::jobs::JobCenter>();
-            crate::features::refs::register_job_runners(&center);
-            crate::features::import::job_runners::register_job_runners(&center);
+            crate::features::paper::analyze::refs::register_job_runners(&center);
+            crate::features::paper::import::job_runners::register_job_runners(&center);
+            crate::features::paper::analyze::layout::model_assets::register_job_runners(&center);
             let handle = app.handle().clone();
             center.set_layout_backend_source(move || {
                 handle.state::<AppSettingsStore>().layout_backend()
             });
+            // Deep agentero-core pollers (pdf parse, asset downloads, citing
+            // scans) check cancellation through the JobCenter task-id registry.
+            crate::core::cancel::install_cancel_probe(crate::features::jobs::is_task_cancelled);
         }
         let settings_store = app.state::<AppSettingsStore>();
         let agents = app.state::<AgentRegistry>();
@@ -186,7 +222,7 @@ pub fn run() {
             {
                 let handle = app.handle().clone();
                 settings_store.subscribe(move |_s| {
-                    crate::features::import::refresh_parser_config(
+                    crate::features::paper::import::refresh_parser_config(
                         &handle.state::<AppSettingsStore>(),
                     );
                 });
@@ -245,9 +281,11 @@ pub fn run() {
                         .inner()
                         .clone();
                     let backend = s.layout.backend.clone();
+                    let import_cap = s.batch_import_concurrency.max(1) as usize;
                     let app = handle.clone();
                     tauri::async_runtime::spawn(async move {
                         center.apply_layout_backend(&backend).await;
+                        center.apply_import_concurrency(import_cap).await;
                         center.drain_and_spawn(&app).await;
                     });
                 });
@@ -258,14 +296,16 @@ pub fn run() {
             &settings.network_proxy_url,
         )?;
         #[cfg(not(any(target_os = "ios", target_os = "android")))]
-        crate::features::import::refresh_parser_config(&settings_store);
+        crate::features::paper::import::refresh_parser_config(&settings_store);
         let _ = agents.set_proxy(
             settings.network_proxy_enabled,
             settings.network_proxy_url.clone(),
         );
-        // Prefetch PP-DocLayoutV3 into XDG as fixed background-task id
-        // (`layout-model`); frontend maps `layout-model:task` into the panel.
-        crate::features::layout_model::spawn_background_download(app.handle().clone());
+        // Prefetch PP-DocLayoutV3 into XDG as a JobCenter `modelDownload` job;
+        // the tasks-panel projection shows progress, concurrent triggers dedupe.
+        crate::features::paper::analyze::layout::model_assets::spawn_background_download(
+            app.handle().clone(),
+        );
         // Native menu is macOS-only; the renderer re-syncs the locale on mount.
         #[cfg(target_os = "macos")]
         {
@@ -275,7 +315,7 @@ pub fn run() {
         // Ensure registry is loaded early.
         let _ = app.state::<AgentRegistry>();
         let _ = app.state::<WikiIndexState>();
-        let _ = app.state::<crate::features::doctor::DoctorDirtyPathsState>();
+        let _ = app.state::<crate::features::vault::doctor::DoctorDirtyPathsState>();
         let _ = app.state::<ExternalRenameRepairStore>();
         #[cfg(not(target_os = "ios"))]
         {
@@ -305,14 +345,21 @@ pub fn run() {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
             let telemetry = Arc::clone(
-                app.state::<Arc<crate::features::telemetry::Telemetry>>()
+                app.state::<Arc<crate::core::telemetry::Telemetry>>()
                     .inner(),
             );
-            let telemetry_settings = settings.clone();
             // Registry-only read (no PATH probing), safe on the setup path.
             let agent_summary = agents.telemetry_summary();
+            // Assemble the start context here so core::telemetry stays free
+            // of upward edges into features (settings / agent).
+            let start_ctx = crate::core::telemetry::TelemetryStartContext {
+                telemetry_enabled: settings.telemetry_enabled,
+                locale: settings.locale.clone(),
+                installed_agents: agent_summary.templates,
+                custom_agent_count: agent_summary.custom_count,
+            };
             tauri::async_runtime::spawn_blocking(move || {
-                telemetry.start(&telemetry_settings, agent_summary);
+                telemetry.start(start_ctx);
             });
         }
 
@@ -329,21 +376,21 @@ pub fn run() {
             }
             if let Ok(Some(urls)) = app.deep_link().get_current() {
                 let list: Vec<String> = urls.into_iter().map(|u| u.to_string()).collect();
-                crate::features::open_request::handle_deep_link_urls(app.handle(), &list);
+                crate::app::open_request::handle_deep_link_urls(app.handle(), &list);
             }
             // Dev / direct spawn: CLI may pass agentero://… as argv when the
             // OS scheme is not registered (common with `tauri dev`).
             let argv: Vec<String> = std::env::args().collect();
-            crate::features::open_request::handle_argv_urls(app.handle(), &argv);
+            crate::app::open_request::handle_argv_urls(app.handle(), &argv);
             // Consume a request file left by `agentero open` before we listened.
-            if let Some(path) = crate::features::open_request::take_cli_open_request_file() {
-                let _ = crate::features::open_request::handle_open_path(app.handle(), &path);
+            if let Some(path) = crate::app::open_request::take_cli_open_request_file() {
+                let _ = crate::app::open_request::handle_open_path(app.handle(), &path);
             }
-            crate::features::open_request::spawn_cli_open_request_watcher(app.handle().clone());
+            crate::app::open_request::spawn_cli_open_request_watcher(app.handle().clone());
             let handle = app.handle().clone();
             app.deep_link().on_open_url(move |event| {
                 let list: Vec<String> = event.urls().into_iter().map(|u| u.to_string()).collect();
-                crate::features::open_request::handle_deep_link_urls(&handle, &list);
+                crate::app::open_request::handle_deep_link_urls(&handle, &list);
             });
         }
 
@@ -352,12 +399,12 @@ pub fn run() {
         #[cfg(target_os = "macos")]
         {
             tauri::async_runtime::spawn_blocking(|| {
-                crate::features::finder_service::ensure_installed();
+                crate::app::finder_service::ensure_installed();
             });
         }
 
         // Auto sync: resume background schedulers for configured vaults.
-        app.state::<crate::features::sync::SyncService>()
+        app.state::<crate::integration::sync::SyncService>()
             .start_all(app.handle());
 
         Ok(())
@@ -372,7 +419,7 @@ pub fn run() {
                 // that native window instead of forwarding the command to the
                 // main renderer, where it would close the active document tab.
                 if let Some(settings) =
-                    app.get_webview_window(crate::features::window::commands::SETTINGS_WINDOW_LABEL)
+                    app.get_webview_window(crate::app::window::commands::SETTINGS_WINDOW_LABEL)
                 {
                     if settings.is_focused().unwrap_or(false) {
                         let _ = settings.close();
@@ -385,7 +432,7 @@ pub fn run() {
                 // main-thread menu callback (see its doc comment).
                 let app = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    if let Err(e) = crate::features::window::commands::window_new(app).await {
+                    if let Err(e) = crate::app::window::commands::window_new(app).await {
                         log::error!(target: "agentero::op", "op end window_new ok=false error={e}");
                     }
                 });
@@ -406,17 +453,17 @@ pub fn run() {
         builder = builder.on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 window.state::<FsWatchController>().stop(window.label());
-                if window.label() == crate::features::window::commands::SETTINGS_WINDOW_LABEL {
-                    crate::features::window::commands::emit_window_closed(
+                if window.label() == crate::app::window::commands::SETTINGS_WINDOW_LABEL {
+                    crate::app::window::commands::emit_window_closed(
                         window.app_handle(),
                         "settings",
                         None,
                     );
                 }
                 if let Some(view) =
-                    crate::features::window::commands::feature_view_from_label(window.label())
+                    crate::app::window::commands::feature_view_from_label(window.label())
                 {
-                    crate::features::window::commands::emit_window_closed(
+                    crate::app::window::commands::emit_window_closed(
                         window.app_handle(),
                         "feature",
                         Some(view),
@@ -449,15 +496,15 @@ pub fn run() {
                 // the process, so paired clients see a clean shutdown. `stop`
                 // takes the runtime, so the second call in this arm is a no-op.
                 let _ = app
-                    .state::<crate::features::bridge::BridgeController>()
+                    .state::<crate::integration::bridge::BridgeController>()
                     .stop();
                 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                app.state::<Arc<crate::features::telemetry::Telemetry>>()
+                app.state::<Arc<crate::core::telemetry::Telemetry>>()
                     .shutdown();
             }
             // Best-effort final push (bounded); only on Exit so it runs once.
             if matches!(event, tauri::RunEvent::Exit) {
-                app.state::<crate::features::sync::SyncService>()
+                app.state::<crate::integration::sync::SyncService>()
                     .flush_on_exit();
             }
         });

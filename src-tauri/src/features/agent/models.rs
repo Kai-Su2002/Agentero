@@ -1,14 +1,16 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum AgentTemplate {
     Opencode,
     /// OpenClaw native ACP (`openclaw acp`).
     /// Docs: https://docs.openclaw.ai/cli/acp
     OpenClaw,
-    Gemini,
+    /// Google Antigravity CLI with native ACP (`agy --acp`).
+    /// Replaces the previous Google Gemini CLI template.
+    Antigravity,
     /// Hermes Agent native ACP (`hermes acp`).
     /// Docs: https://github.com/NousResearch/hermes-agent
     Hermes,
@@ -33,12 +35,41 @@ pub enum AgentTemplate {
     Custom,
 }
 
+impl<'de> serde::Deserialize<'de> for AgentTemplate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "opencode" => Self::Opencode,
+            "openclaw" => Self::OpenClaw,
+            // Backward compatibility: old Gemini registrations deserialize as Antigravity.
+            "antigravity" | "gemini" => Self::Antigravity,
+            "hermes" => Self::Hermes,
+            "claude-acp" => Self::ClaudeAcp,
+            "codex-acp" => Self::CodexAcp,
+            "qodercli" => Self::QoderCli,
+            "grok-build" => Self::GrokBuild,
+            "pi" => Self::Pi,
+            "dsh" => Self::Dsh,
+            "kimi-code" => Self::KimiCode,
+            "custom" => Self::Custom,
+            other => {
+                return Err(serde::de::Error::custom(format!(
+                    "unknown agent template: {other}"
+                )))
+            }
+        })
+    }
+}
+
 impl AgentTemplate {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Opencode => "opencode",
             Self::OpenClaw => "openclaw",
-            Self::Gemini => "gemini",
+            Self::Antigravity => "antigravity",
             Self::Hermes => "hermes",
             Self::ClaudeAcp => "claude-acp",
             Self::CodexAcp => "codex-acp",
@@ -64,7 +95,7 @@ impl AgentTemplate {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentDescriptor {
     pub id: String,
@@ -143,7 +174,7 @@ pub fn default_agent_proxy_url() -> String {
     DEFAULT_AGENT_PROXY_URL.to_string()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentListResponse {
     pub agents: Vec<AgentDescriptor>,
@@ -171,7 +202,7 @@ pub struct AgentTemplateInfo {
 }
 
 /// Status for a common agent row in Settings.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, specta::Type)]
 #[serde(rename_all = "kebab-case")]
 pub enum CatalogAcpStatus {
     /// Detect binary missing.
@@ -184,7 +215,7 @@ pub enum CatalogAcpStatus {
     Failed,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogEntry {
     pub template_id: String,
@@ -223,7 +254,7 @@ pub struct CatalogEntry {
     pub last_probed_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CatalogScanResponse {
     pub entries: Vec<CatalogEntry>,
@@ -240,7 +271,7 @@ pub struct CatalogScanResponse {
     pub user_agent_provider_ids: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UpsertAgentRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -257,7 +288,7 @@ pub struct UpsertAgentRequest {
     pub set_default: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProbeResult {
     pub agent_id: String,
@@ -273,7 +304,7 @@ pub struct ProbeResult {
 }
 
 /// Base64 image payload for multimodal ACP prompts (PDF region crops, etc.).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PromptImage {
     /// Raw base64 (no data: URL prefix).
@@ -281,7 +312,7 @@ pub struct PromptImage {
     pub mime_type: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RunOnceRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -315,6 +346,9 @@ pub struct RunOnceRequest {
     /// Preferred ACP reasoning effort (category: thought_level). Applied after session/new.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
+    /// Choose the highest recognized ACP effort when no explicit effort is supplied.
+    #[serde(default)]
+    pub prefer_highest_reasoning_effort: bool,
     /// Preferred ACP fast mode (category: model_config). Applied after session/new.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fast_mode: Option<bool>,
@@ -342,7 +376,7 @@ pub struct RunOnceRequest {
     pub hide_from_chat_history: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSkill {
     pub id: String,
@@ -351,7 +385,7 @@ pub struct AgentSkill {
     pub description: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct RunOnceAccepted {
     pub session_id: String,
@@ -359,7 +393,7 @@ pub struct RunOnceAccepted {
     pub agent_id: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentResultPayload {
     pub session_id: String,
@@ -379,14 +413,14 @@ pub struct AgentResultPayload {
 }
 
 /// Stream chunk kind: assistant message body vs internal thought/reasoning.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(specta::Type, Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub enum AgentStreamKind {
     Message,
     Thought,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentStreamEvent {
     pub session_id: String,
@@ -394,7 +428,7 @@ pub struct AgentStreamEvent {
     pub kind: AgentStreamKind,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEffortChoice {
     pub id: String,
@@ -404,7 +438,7 @@ pub struct AgentEffortChoice {
 }
 
 /// ACP reasoning-effort selector advertised for the current session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentEffortEvent {
     pub session_id: String,
@@ -415,7 +449,7 @@ pub struct AgentEffortEvent {
 }
 
 /// ACP fast-mode toggle advertised for the current session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentFastModeEvent {
     pub session_id: String,
@@ -425,7 +459,7 @@ pub struct AgentFastModeEvent {
 }
 
 /// One value from an ACP select-style session config option.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentModeChoice {
     pub id: String,
@@ -435,7 +469,7 @@ pub struct AgentModeChoice {
 }
 
 /// Collaboration mode selector (Codex `collaboration_mode`: Default / Plan).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCollaborationEvent {
     pub session_id: String,
@@ -446,7 +480,7 @@ pub struct AgentCollaborationEvent {
 }
 
 /// ACP tool call create/update for UI (`Tool` element).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentToolEvent {
     pub session_id: String,
@@ -459,15 +493,17 @@ pub struct AgentToolEvent {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<crate::core::json::Json>)]
     pub input: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<crate::core::json::Json>)]
     pub output: Option<serde_json::Value>,
     /// When true, fields are a full snapshot (ToolCall); false = patch (ToolCallUpdate).
     #[serde(default)]
     pub full: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPlanEntry {
     pub content: String,
@@ -477,14 +513,14 @@ pub struct AgentPlanEntry {
     pub priority: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentPlanEvent {
     pub session_id: String,
     pub entries: Vec<AgentPlanEntry>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentUsageEvent {
     pub session_id: String,
@@ -492,7 +528,7 @@ pub struct AgentUsageEvent {
     pub size: u64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentSessionInfoEvent {
     pub session_id: String,
@@ -505,13 +541,13 @@ pub struct AgentSessionInfoEvent {
     pub updated_at: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCommandInput {
     pub hint: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCommand {
     pub name: String,
@@ -520,7 +556,7 @@ pub struct AgentCommand {
     pub input: Option<AgentCommandInput>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentCommandsEvent {
     pub session_id: String,
@@ -528,7 +564,7 @@ pub struct AgentCommandsEvent {
     pub commands: Vec<AgentCommand>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentModelChoice {
     pub id: String,
@@ -538,7 +574,7 @@ pub struct AgentModelChoice {
 }
 
 /// Models advertised by the ACP agent via session config options (category: model).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentModelsEvent {
     pub session_id: String,
@@ -550,7 +586,7 @@ pub struct AgentModelsEvent {
 }
 
 /// Background ACP warm-up (no user prompt) so Chat can show models/context early.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WarmRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -564,7 +600,7 @@ pub struct WarmRequest {
     pub collaboration_mode_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct WarmResult {
     pub agent_id: String,
@@ -579,7 +615,7 @@ pub struct WarmResult {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(specta::Type, Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AgentFailedEvent {
     pub session_id: String,
@@ -587,7 +623,7 @@ pub struct AgentFailedEvent {
 }
 
 /// A single session entry from ACP `session/list`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpSessionInfo {
     pub session_id: String,
@@ -599,7 +635,7 @@ pub struct AcpSessionInfo {
 }
 
 /// Response for `agent_list_sessions`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpListSessionsResult {
     pub sessions: Vec<AcpSessionInfo>,
@@ -610,7 +646,7 @@ pub struct AcpListSessionsResult {
 }
 
 /// Tool call snapshot rebuilt from ACP `session/load` replay.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpHistoryTool {
     pub id: String,
@@ -619,13 +655,15 @@ pub struct AcpHistoryTool {
     /// pending | in_progress | completed | failed
     pub status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<crate::core::json::Json>)]
     pub input: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[specta(type = Option<crate::core::json::Json>)]
     pub output: Option<serde_json::Value>,
 }
 
 /// Ordered slice of a replayed agent turn (mirrors the frontend `AgentPart`).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum AcpHistoryPart {
     Reasoning { text: String },
@@ -635,7 +673,7 @@ pub enum AcpHistoryPart {
 }
 
 /// A single history line reconstructed from ACP `session/load` replay.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpHistoryLine {
     pub id: String,
@@ -652,7 +690,7 @@ pub struct AcpHistoryLine {
 }
 
 /// Response for `agent_load_session`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpLoadSessionResult {
     pub session_id: String,
@@ -662,11 +700,59 @@ pub struct AcpLoadSessionResult {
 }
 
 /// Session capabilities advertised by an ACP agent during initialize.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct AcpSessionCapabilities {
     pub list: bool,
     pub resume: bool,
     pub load: bool,
     pub delete: bool,
+}
+
+/// Wrapper response for commands that return a single agent.
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentOnly {
+    pub agent: AgentDescriptor,
+}
+
+/// Request payload for `agent_respond_permission`.
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionResponseRequest {
+    pub request_id: String,
+    /// Chosen option id; `None` cancels the request.
+    #[serde(default)]
+    pub option_id: Option<String>,
+}
+
+/// Shared response for the permission / elicitation / ask-user gates.
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PermissionResponded {
+    pub resolved: bool,
+}
+
+/// Request payload for `agent_respond_elicitation`.
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ElicitationResponseRequest {
+    pub request_id: String,
+    /// accept | decline | cancel
+    pub action: String,
+    /// Field id → string value (accept only).
+    #[serde(default)]
+    pub content: Option<std::collections::BTreeMap<String, String>>,
+}
+
+/// Request payload for `agent_respond_ask_user`.
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct AskUserResponseRequest {
+    pub request_id: String,
+    /// accept | cancel
+    pub action: String,
+    /// Parallel answer strings (multi-select joined with ", ").
+    #[serde(default)]
+    pub answers: Option<Vec<String>>,
 }

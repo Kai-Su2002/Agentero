@@ -5,11 +5,24 @@
 import { open, save } from "@tauri-apps/plugin-dialog";
 import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import i18n from "@/i18n";
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	commands,
+	type PaperMetaPatch as PaperMetaPatchWire,
+	type PaperRecord_Serialize as PaperRecordWire,
+	type PaperRescanResult,
+	type PaperTag as PaperTagWire,
+	type TrashEntry,
+	type TrashResult,
+} from "@/lib/core/bindings";
+import { callApi, callApiResult } from "@/lib/core/ipc";
 import { normalizeRelPath } from "@/lib/core/path";
 import { isTauri } from "@/lib/core/tauri";
-import { withNormalizedTags } from "@/lib/paper/tags";
-import type { PaperMetadata, PaperTagInput } from "@/lib/paper/types";
+import type {
+	PaperLibraryRow,
+	PaperMetadata,
+	PaperTagInput,
+} from "@/lib/paper/types";
+import { paperFromWire } from "@/lib/paper/wire";
 import { type AppSettings, DEFAULT_TRANSLATOR_BASE_URL } from "@/lib/settings";
 import type { WikiRenameResult } from "@/lib/wiki";
 
@@ -98,10 +111,10 @@ export function paperInLibraryScope(
 }
 
 /** Filter catalog rows to those under a vault-relative folder (recursive). */
-export function filterPapersByScope(
-	papers: PaperMetadata[],
+export function filterPapersByScope<T extends PaperMetadata>(
+	papers: T[],
 	scopeRel: string | null | undefined,
-): PaperMetadata[] {
+): T[] {
 	if (scopeRel == null || scopeRel === "") return papers;
 	if (!isPapersLibraryScope(scopeRel)) return papers;
 	const s = normalizeLibraryScope(scopeRel);
@@ -109,29 +122,27 @@ export function filterPapersByScope(
 	return papers.filter((p) => paperInLibraryScope(p.path, s));
 }
 
-export async function listPapers(vaultPath: string): Promise<PaperMetadata[]> {
+export async function listPapers(
+	vaultPath: string,
+): Promise<PaperLibraryRow[]> {
 	if (!isTauri()) return [];
 	const { isRemoteVaultHandle, remotePaperList, remoteSessionIdFromHandle } =
 		await import("@/lib/vault/remote/remote-vault");
 	if (isRemoteVaultHandle(vaultPath)) {
 		const sessionId = remoteSessionIdFromHandle(vaultPath);
 		if (!sessionId) return [];
-		const rows = (await remotePaperList(sessionId)) as PaperMetadata[];
-		return rows.map(withNormalizedTags);
+		// Remote listings are bare records: nothing probes the remote host for
+		// a local PDF, so the row says "unknown" rather than "missing".
+		const rows = (await remotePaperList(sessionId)) as PaperRecordWire[];
+		return rows.map((row) => ({ ...paperFromWire(row), has_pdf: undefined }));
 	}
-	const rows = await invokeApi<PaperMetadata[]>(
-		"paper_list",
-		{
-			args: { vaultPath },
-		},
-		{
-			fallback: "paper_list failed",
-		},
-	);
-	return rows.map(withNormalizedTags);
+	const rows = await callApiResult(() => commands.paperList({ vaultPath }), {
+		fallback: "paper_list failed",
+	});
+	return rows.map(paperFromWire);
 }
 
-export type PaperRescanResult = { count: number };
+export type { PaperRescanResult };
 
 /** Rebuild catalog rows from papers/ on disk (recover disk-only papers). */
 export async function rescanPapers(vaultPath: string): Promise<number> {
@@ -144,15 +155,9 @@ export async function rescanPapers(vaultPath: string): Promise<number> {
 		const r = await remotePaperRescan(sessionId);
 		return r.count;
 	}
-	const r = await invokeApi<PaperRescanResult>(
-		"paper_rescan",
-		{
-			args: { vaultPath },
-		},
-		{
-			fallback: i18n.t("sidebar:papersLibrary.rescanFailed"),
-		},
-	);
+	const r = await callApi(() => commands.paperRescan({ vaultPath }), {
+		fallback: i18n.t("sidebar:papersLibrary.rescanFailed"),
+	});
 	return r.count;
 }
 
@@ -170,9 +175,8 @@ export async function listPaperPageCounts(
 	);
 	if (isRemoteVaultHandle(vaultPath)) return new Map();
 	try {
-		const counts = await invokeApi<Record<string, number>>(
-			"paper_page_counts",
-			{ args: { vaultPath } },
+		const counts = await callApi(
+			() => commands.paperPageCounts({ vaultPath }),
 			{ fallback: "paper_page_counts failed" },
 		);
 		return new Map(Object.entries(counts ?? {}));
@@ -192,22 +196,20 @@ export async function savePaperPageCounts(
 	);
 	if (isRemoteVaultHandle(vaultPath)) return;
 	try {
-		await invokeApi<null>(
-			"paper_set_page_counts",
-			{ args: { vaultPath, counts: Object.fromEntries(counts) } },
-			{ fallback: "paper_set_page_counts failed", allowVoid: true },
+		await callApi(
+			() =>
+				commands.paperSetPageCounts({
+					vaultPath,
+					counts: Object.fromEntries(counts),
+				}),
+			{ fallback: "paper_set_page_counts failed" },
 		);
 	} catch {
 		// Cache write failure is invisible by design; next load retries.
 	}
 }
 
-export type TrashResult = {
-	batchId: string;
-	count: number;
-	/** Vault-relative paths actually moved (subset of the requested rels). */
-	rels: string[];
-};
+export type { TrashResult };
 
 /**
  * Move vault-relative paths into the recycle bin (`.agentero/.trash/`).
@@ -220,39 +222,19 @@ export async function trashPaths(
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:fileTree.deleteDesktopOnly"));
 	}
-	return invokeApi<TrashResult>(
-		"path_trash",
-		{
-			args: { vaultPath, rels },
-		},
-		{
-			fallback: i18n.t("sidebar:fileTree.deleteFailed"),
-		},
-	);
+	return callApiResult(() => commands.pathTrash({ vaultPath, rels }), {
+		fallback: i18n.t("sidebar:fileTree.deleteFailed"),
+	});
 }
 
-export type TrashEntry = {
-	id: string;
-	batchId: string;
-	stored: string;
-	rel: string;
-	name: string;
-	deletedAt: string;
-	isDir: boolean;
-};
+export type { TrashEntry };
 
 /** List all items currently in the recycle bin (`.agentero/.trash/`). */
 export async function listTrash(vaultPath: string): Promise<TrashEntry[]> {
 	if (!isTauri()) return [];
-	return invokeApi<TrashEntry[]>(
-		"path_list_trash",
-		{
-			args: { vaultPath },
-		},
-		{
-			fallback: i18n.t("sidebar:recycleBin.loadFailed"),
-		},
-	);
+	return callApiResult(() => commands.pathListTrash({ vaultPath }), {
+		fallback: i18n.t("sidebar:recycleBin.loadFailed"),
+	});
 }
 
 /** Restore one recycle-bin item to its original path; returns the rel path. */
@@ -261,14 +243,9 @@ export async function restoreTrashItem(
 	batchId: string,
 	stored: string,
 ): Promise<string> {
-	const r = await invokeApi<{ rel: string }>(
-		"path_restore_item",
-		{
-			args: { vaultPath, batchId, stored },
-		},
-		{
-			fallback: i18n.t("sidebar:fileTree.undoFailed"),
-		},
+	const r = await callApiResult(
+		() => commands.pathRestoreItem({ vaultPath, batchId, stored }),
+		{ fallback: i18n.t("sidebar:fileTree.undoFailed") },
 	);
 	return r.rel;
 }
@@ -279,30 +256,17 @@ export async function purgeTrashItem(
 	batchId: string,
 	stored: string,
 ): Promise<void> {
-	await invokeApi<null>(
-		"path_purge_item",
-		{
-			args: { vaultPath, batchId, stored },
-		},
-		{
-			fallback: i18n.t("sidebar:recycleBin.purgeFailed"),
-			allowVoid: true,
-		},
+	await callApiResult(
+		() => commands.pathPurgeItem({ vaultPath, batchId, stored }),
+		{ fallback: i18n.t("sidebar:recycleBin.purgeFailed") },
 	);
 }
 
 /** Empty the entire recycle bin (permanent). */
 export async function purgeAllTrash(vaultPath: string): Promise<void> {
-	await invokeApi<null>(
-		"path_purge_trash",
-		{
-			args: { vaultPath },
-		},
-		{
-			fallback: i18n.t("sidebar:recycleBin.purgeFailed"),
-			allowVoid: true,
-		},
-	);
+	await callApiResult(() => commands.pathPurgeTrash({ vaultPath }), {
+		fallback: i18n.t("sidebar:recycleBin.purgeFailed"),
+	});
 }
 
 export type PaperMoveResult = {
@@ -323,14 +287,9 @@ export async function movePaperFolder(
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:fileTree.moveDesktopOnly"));
 	}
-	return invokeApi<PaperMoveResult>(
-		"paper_move",
-		{
-			args: { vaultPath, fromRel, destParentRel, dirtyPaths },
-		},
-		{
-			fallback: i18n.t("sidebar:fileTree.moveFailed"),
-		},
+	return callApiResult(
+		() => commands.paperMove({ vaultPath, fromRel, destParentRel, dirtyPaths }),
+		{ fallback: i18n.t("sidebar:fileTree.moveFailed") },
 	);
 }
 
@@ -353,33 +312,23 @@ export async function setPaperIsRead(
 		if (!sessionId) {
 			throw new Error(i18n.t("sidebar:fileTree.readMarkFailed"));
 		}
-		const paper = await invokeApi<PaperMetadata>(
-			"remote_paper_set_is_read",
-			{
-				args: { sessionId, path, isRead },
-			},
-			{
-				fallback: i18n.t("sidebar:fileTree.readMarkFailed"),
-			},
+		const paper = await callApiResult(
+			() => commands.remotePaperSetIsRead({ sessionId, path, isRead }),
+			{ fallback: i18n.t("sidebar:fileTree.readMarkFailed") },
 		);
 		void import("@/lib/activity").then(({ track }) => {
 			track("paper.read", { path, extra: { isRead } });
 		});
-		return withNormalizedTags(paper);
+		return paperFromWire(paper);
 	}
-	const paper = await invokeApi<PaperMetadata>(
-		"paper_set_is_read",
-		{
-			args: { vaultPath, path, isRead },
-		},
-		{
-			fallback: i18n.t("sidebar:fileTree.readMarkFailed"),
-		},
+	const paper = await callApi(
+		() => commands.paperSetIsRead({ vaultPath, path, isRead }),
+		{ fallback: i18n.t("sidebar:fileTree.readMarkFailed") },
 	);
 	void import("@/lib/activity").then(({ track }) => {
 		track("paper.read", { path, extra: { isRead } });
 	});
-	return withNormalizedTags(paper);
+	return paperFromWire(paper);
 }
 
 /**
@@ -397,32 +346,29 @@ export async function setPaperTags(
 	const { isRemoteVaultHandle, remoteSessionIdFromHandle } = await import(
 		"@/lib/vault/remote/remote-vault"
 	);
+	// The Rust deserializer accepts bare strings and `{name,color?}` objects;
+	// the generated wire type is the normalized `{name, color}` struct.
+	const wireTags: PaperTagWire[] = tags.map((tag) =>
+		typeof tag === "string"
+			? { name: tag, color: null }
+			: { name: tag.name, color: tag.color ?? null },
+	);
 	if (isRemoteVaultHandle(vaultPath)) {
 		const sessionId = remoteSessionIdFromHandle(vaultPath);
 		if (!sessionId) {
 			throw new Error(i18n.t("sidebar:paperInfo.tagsSaveFailed"));
 		}
-		const paper = await invokeApi<PaperMetadata>(
-			"remote_paper_set_tags",
-			{
-				args: { sessionId, path, tags },
-			},
-			{
-				fallback: i18n.t("sidebar:paperInfo.tagsSaveFailed"),
-			},
+		const paper = await callApiResult(
+			() => commands.remotePaperSetTags({ sessionId, path, tags: wireTags }),
+			{ fallback: i18n.t("sidebar:paperInfo.tagsSaveFailed") },
 		);
-		return withNormalizedTags(paper);
+		return paperFromWire(paper);
 	}
-	const paper = await invokeApi<PaperMetadata>(
-		"paper_set_tags",
-		{
-			args: { vaultPath, path, tags },
-		},
-		{
-			fallback: i18n.t("sidebar:paperInfo.tagsSaveFailed"),
-		},
+	const paper = await callApi(
+		() => commands.paperSetTags({ vaultPath, path, tags: wireTags }),
+		{ fallback: i18n.t("sidebar:paperInfo.tagsSaveFailed") },
 	);
-	return withNormalizedTags(paper);
+	return paperFromWire(paper);
 }
 
 /**
@@ -463,16 +409,28 @@ export async function updatePaperMeta(
 	if (isRemoteVaultHandle(vaultPath)) {
 		throw new Error(i18n.t("sidebar:paperInfo.editMeta.remoteUnsupported"));
 	}
-	const paper = await invokeApi<PaperMetadata>(
-		"paper_update_meta",
-		{
-			args: { vaultPath, path, patch },
-		},
-		{
-			fallback: i18n.t("sidebar:paperInfo.editMeta.saveFailed"),
-		},
+	// Wire patch fields are all required and nullable; `null` (Rust `None`)
+	// keeps the current value, matching the domain patch's absent fields.
+	const wirePatch: PaperMetaPatchWire = {
+		title: patch.title ?? null,
+		authors: patch.authors ?? null,
+		year: patch.year ?? null,
+		doi: patch.doi ?? null,
+		arxivId: patch.arxivId ?? null,
+		publication: patch.publication ?? null,
+		volume: patch.volume ?? null,
+		issue: patch.issue ?? null,
+		pages: patch.pages ?? null,
+		publisher: patch.publisher ?? null,
+		abstract: patch.abstract ?? null,
+		pdfUrl: patch.pdfUrl ?? null,
+		htmlUrl: patch.htmlUrl ?? null,
+	};
+	const paper = await callApi(
+		() => commands.paperUpdateMeta({ vaultPath, path, patch: wirePatch }),
+		{ fallback: i18n.t("sidebar:paperInfo.editMeta.saveFailed") },
 	);
-	return withNormalizedTags(paper);
+	return paperFromWire(paper);
 }
 
 export type PaperExportResult = {
@@ -482,46 +440,27 @@ export type PaperExportResult = {
 	filename: string;
 };
 
-/** Identifier-resolved metadata (Host `paper_resolve_identifier`). */
-export type ResolvedPaperMeta = {
-	title: string;
-	authors: string[];
-	year?: number;
-	date?: string;
-	abstract?: string;
-	doi?: string;
-	arxivId?: string;
-	publication?: string;
-	volume?: string;
-	issue?: string;
-	pages?: string;
-	publisher?: string;
-	pdfUrl?: string;
-	htmlUrl?: string;
-};
-
 /**
  * Resolve a DOI / arXiv id to metadata without importing. Backs Edit
  * Metadata's identifier refresh.
  */
 export async function resolveIdentifierMetadata(
 	text: string,
-): Promise<ResolvedPaperMeta> {
+): Promise<PaperMetadata> {
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:paperInfo.editMeta.desktopOnly"));
 	}
 	const { getSettings } = await import("@/lib/settings/react-store");
 	const settings: AppSettings = getSettings();
-	return invokeApi<ResolvedPaperMeta>(
-		"paper_resolve_identifier",
-		{
-			args: {
+	const record = await callApi(
+		() =>
+			commands.paperResolveIdentifier({
 				text: text.trim(),
 				translatorBaseUrl: settings.translatorBaseUrl,
-			},
-		},
+			}),
 		{ fallback: i18n.t("sidebar:paperInfo.editMeta.fetchFailed") },
 	);
+	return paperFromWire(record);
 }
 
 export type PaperBackfillPublicationResult = {
@@ -538,18 +477,20 @@ export async function backfillPublication(
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:papersLibrary.desktopOnly"));
 	}
-	return invokeApi<PaperBackfillPublicationResult>(
-		"paper_backfill_publication",
-		{
-			args: {
+	const r = await callApiResult(
+		() =>
+			commands.paperBackfillPublication({
 				vaultPath,
 				translatorBaseUrl: translatorBase(settings),
-			},
-		},
-		{
-			fallback: i18n.t("sidebar:papersLibrary.backfillPublicationFailed"),
-		},
+			}),
+		{ fallback: i18n.t("sidebar:papersLibrary.backfillPublicationFailed") },
 	);
+	return {
+		total: r.total,
+		updated: r.updated,
+		failed: r.failed,
+		errors: r.errors ?? [],
+	};
 }
 
 export type PaperImportResult = {
@@ -579,18 +520,14 @@ export async function exportLibrary(opts: {
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:papersLibrary.desktopOnly"));
 	}
-	return invokeApi<PaperExportResult>(
-		"paper_export",
-		{
-			args: {
+	return callApi(
+		() =>
+			commands.paperExport({
 				vaultPath: opts.vaultPath,
 				format: opts.format ?? "bibtex",
 				translatorBaseUrl: translatorBase(opts.settings),
-			},
-		},
-		{
-			fallback: i18n.t("sidebar:papersLibrary.exportFailed"),
-		},
+			}),
+		{ fallback: i18n.t("sidebar:papersLibrary.exportFailed") },
 	);
 }
 
@@ -630,19 +567,15 @@ export async function importLibraryText(opts: {
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:papersLibrary.desktopOnly"));
 	}
-	return invokeApi<PaperImportResult>(
-		"paper_import",
-		{
-			args: {
+	return callApiResult(
+		() =>
+			commands.paperImport({
 				vaultPath: opts.vaultPath,
 				parentDir: opts.parentDir ?? "papers",
 				content: opts.content,
 				translatorBaseUrl: translatorBase(opts.settings),
-			},
-		},
-		{
-			fallback: i18n.t("sidebar:papersLibrary.importFailed"),
-		},
+			}),
+		{ fallback: i18n.t("sidebar:papersLibrary.importFailed") },
 	);
 }
 

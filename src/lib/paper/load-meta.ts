@@ -1,9 +1,13 @@
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	commands,
+	type PaperRecord_Serialize as PaperRecordWire,
+} from "@/lib/core/bindings";
+import { callApi, callApiResult } from "@/lib/core/ipc";
 import { toVaultRelative } from "@/lib/core/path";
 import { isTauri } from "@/lib/core/tauri";
 import { arxivUrls } from "@/lib/paper/arxiv";
-import { withNormalizedTags } from "@/lib/paper/tags";
 import type { PaperMetadata } from "@/lib/paper/types";
+import { paperFromWire } from "@/lib/paper/wire";
 
 function enrichArxivUrls(data: PaperMetadata): PaperMetadata {
 	if (!data.arxiv_id) return data;
@@ -54,25 +58,20 @@ export async function loadPaperOpenBundle(
 			"@/lib/vault/remote/remote-vault"
 		);
 		if (isRemoteVaultHandle(vaultRoot)) return null;
-		void invokeApi(
-			"job_focus_paper",
-			{ args: { vaultPath: vaultRoot, path } },
-			{ allowVoid: true },
+		void callApiResult(() =>
+			commands.jobFocusPaper({ vaultPath: vaultRoot, path }),
 		).catch(() => undefined);
-		const data = await invokeApi<PaperOpenBundle>(
-			"paper_open_bundle",
-			{ args: { vaultPath: vaultRoot, path } },
-			{ allowVoid: true },
+		const data = await callApiResult(() =>
+			commands.paperOpenBundle({ vaultPath: vaultRoot, path }),
 		);
 		if (!data?.paper?.id) return null;
 		return {
-			...data,
-			paper: withNormalizedTags(
-				enrichArxivUrls({
-					...data.paper,
-					path: data.paper.path ?? data.pathRel,
-				}),
-			),
+			paper: enrichArxivUrls(paperFromWire(data.paper)),
+			pathRel: data.pathRel,
+			notesSeed: data.notesSeed ?? undefined,
+			pdfPath: data.pdfPath ?? undefined,
+			hasTex: data.hasTex,
+			hasPaperMd: data.hasPaperMd,
 		};
 	} catch {
 		return null;
@@ -98,27 +97,21 @@ export async function loadPaperMetadata(
 	try {
 		const { isRemoteVaultHandle, remotePaperGet, remoteSessionIdFromHandle } =
 			await import("@/lib/vault/remote/remote-vault");
-		let data: PaperMetadata | null = null;
+		let record: PaperRecordWire | null = null;
 		if (isRemoteVaultHandle(vaultRoot)) {
 			const sessionId = remoteSessionIdFromHandle(vaultRoot);
 			if (sessionId) {
-				data = (await remotePaperGet(sessionId, { path })) as PaperMetadata;
+				record = (await remotePaperGet(sessionId, {
+					path,
+				})) as PaperRecordWire;
 			}
 		} else {
-			data =
-				(await invokeApi<PaperMetadata>(
-					"paper_get",
-					{ args: { vaultPath: vaultRoot, path } },
-					{ allowVoid: true },
-				)) ?? null;
-		}
-		if (data?.id) {
-			return withNormalizedTags(
-				enrichArxivUrls({
-					...data,
-					path: data.path ?? path,
-				}),
+			record = await callApi(() =>
+				commands.paperGet({ vaultPath: vaultRoot, path }),
 			);
+		}
+		if (record?.id) {
+			return enrichArxivUrls(paperFromWire(record));
 		}
 	} catch {
 		// catalog miss or Host error

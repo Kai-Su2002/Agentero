@@ -5,48 +5,21 @@
 import { Channel } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import i18n from "@/i18n";
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	commands,
+	type MigrateProgress,
+	type ZoteroCollectionInfo,
+	type ZoteroItemInfo,
+	type ZoteroMigrateResult,
+	type ZoteroScan_Serialize,
+} from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
-export type ZoteroCollectionInfo = {
-	id: number;
-	path: string;
-	itemCount: number;
-};
+export type { ZoteroCollectionInfo, ZoteroItemInfo, ZoteroMigrateResult };
 
-export type ZoteroItemInfo = {
-	id: number;
-	title: string;
-	/** Zotero item type (journalArticle, webpage, …) for the picker badge. */
-	itemType: string;
-	year: number | null;
-	hasPdf: boolean;
-	notes: number;
-	collections: number[];
-};
-
-export type ZoteroScan = {
-	valid: boolean;
-	itemCount: number;
-	withPdfCount: number;
-	noteCount: number;
-	collections: ZoteroCollectionInfo[];
-	items: ZoteroItemInfo[];
+export type ZoteroScan = Omit<ZoteroScan_Serialize, "warning"> & {
 	warning?: string;
-};
-
-export type ZoteroMigrateResult = {
-	imported: number;
-	skipped: number;
-	copiedPdfs: number;
-	notesAdded: number;
-	/** Already-imported papers moved into their collection folder. */
-	relocated: number;
-	/** Duplicate Zotero items merged into an already-imported paper. */
-	mergedDuplicates: number;
-	pruned: number;
-	paths: string[];
-	errors: string[];
 };
 
 export type ZoteroMigratePhase = "migrate" | "parse";
@@ -84,13 +57,10 @@ export async function scanZotero(zoteroDir: string): Promise<ZoteroScan> {
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:zoteroMigrate.desktopOnly"));
 	}
-	return invokeApi<ZoteroScan>(
-		"zotero_scan",
-		{ args: { zoteroDir } },
-		{
-			fallback: "zotero_scan failed",
-		},
-	);
+	const scan = await callApi(() => commands.zoteroScan({ zoteroDir }), {
+		fallback: "zotero_scan failed",
+	});
+	return { ...scan, warning: scan.warning ?? undefined };
 }
 
 /** Migrate the Zotero library into `parentDir` + catalog; optionally copy PDFs. */
@@ -115,32 +85,29 @@ export async function migrateZotero(opts: {
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:zoteroMigrate.desktopOnly"));
 	}
-	const onProgress = new Channel<{
-		current: number;
-		total: number;
-		phase: ZoteroMigratePhase;
-	}>();
+	const onProgress = new Channel<MigrateProgress>();
 	if (opts.onProgress) {
 		const cb = opts.onProgress;
-		onProgress.onmessage = (m) => cb(m.current, m.total, m.phase);
+		onProgress.onmessage = (m) =>
+			cb(m.current, m.total, m.phase as ZoteroMigratePhase);
 	}
-	return invokeApi<ZoteroMigrateResult>(
-		"zotero_migrate",
-		{
-			args: {
-				vaultPath: opts.vaultPath,
-				zoteroDir: opts.zoteroDir,
-				parentDir: opts.parentDir ?? "papers",
-				copyPdfs: opts.copyPdfs,
-				preserveCollections: opts.preserveCollections,
-				migrateNotes: opts.migrateNotes,
-				migrateAnnotations: opts.migrateAnnotations,
-				includeCollections: opts.includeCollections ?? null,
-				includeItems: opts.includeItems ?? null,
-				preferCollection: opts.preferCollection ?? null,
-			},
-			onProgress,
-		},
+	return callApi(
+		() =>
+			commands.zoteroMigrate(
+				{
+					vaultPath: opts.vaultPath,
+					zoteroDir: opts.zoteroDir,
+					parentDir: opts.parentDir ?? "papers",
+					copyPdfs: opts.copyPdfs,
+					preserveCollections: opts.preserveCollections,
+					migrateNotes: opts.migrateNotes,
+					migrateAnnotations: opts.migrateAnnotations,
+					includeCollections: opts.includeCollections ?? null,
+					includeItems: opts.includeItems ?? null,
+					preferCollection: opts.preferCollection ?? null,
+				},
+				onProgress,
+			),
 		{ fallback: "zotero_migrate failed" },
 	);
 }

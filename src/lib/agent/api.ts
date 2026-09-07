@@ -1,7 +1,12 @@
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import i18n from "@/i18n";
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	commands,
+	events,
+	type UpsertAgentRequest_Deserialize,
+} from "@/lib/core/bindings";
+import { callApi, callApiResult } from "@/lib/core/ipc";
 import { readJsonStorage, writeJsonStorage } from "@/lib/core/storage";
 import { loadSettings } from "@/lib/settings";
 import type { CatalogAcpStatus, CatalogEntry, ProbeResult } from "./api-types";
@@ -16,7 +21,7 @@ export type {
 export type AgentTemplate =
 	| "opencode"
 	| "openclaw"
-	| "gemini"
+	| "antigravity"
 	| "hermes"
 	| "claude-acp"
 	| "codex-acp"
@@ -335,27 +340,34 @@ export type PermissionRequest = {
 	options: PermissionOption[];
 };
 
-async function invokeAgentApi<T>(
-	cmd: string,
-	args?: Record<string, unknown>,
-): Promise<T> {
-	return invokeApi<T>(cmd, args, {
-		desktopOnly: "Agent features require the Tauri desktop app.",
-	});
-}
+/** Shared non-Tauri guard message for every agent Host call. */
+const AGENT_CALL_OPTS = {
+	desktopOnly: "Agent features require the Tauri desktop app.",
+};
 
 export async function listAgents(): Promise<AgentListResponse> {
-	return invokeAgentApi("agent_list_agents");
+	// Wire descriptors keep serde defaults optional; the Host always fills
+	// args/env/available, so fold once at the boundary.
+	return (await callApi(
+		() => commands.agentListAgents(),
+		AGENT_CALL_OPTS,
+	)) as AgentListResponse;
 }
 
 export async function listAgentSkills(
 	vaultPath?: string,
 ): Promise<AgentSkill[]> {
-	return invokeAgentApi("agent_list_skills", { vaultPath: vaultPath ?? null });
+	return (await callApiResult(
+		() => commands.agentListSkills(vaultPath ?? null),
+		AGENT_CALL_OPTS,
+	)) as AgentSkill[];
 }
 
 export async function scanCatalog(): Promise<CatalogScanResponse> {
-	return invokeAgentApi("agent_scan_catalog");
+	return (await callApi(
+		() => commands.agentScanCatalog(),
+		AGENT_CALL_OPTS,
+	)) as CatalogScanResponse;
 }
 
 export async function upsertAgent(request: {
@@ -367,32 +379,35 @@ export async function upsertAgent(request: {
 	env?: Record<string, string>;
 	setDefault?: boolean;
 }): Promise<AgentDescriptor> {
-	const res = await invokeAgentApi<{ agent: AgentDescriptor }>(
-		"agent_upsert_agent",
-		{ request },
+	const res = await callApi(
+		() => commands.agentUpsertAgent(request as UpsertAgentRequest_Deserialize),
+		AGENT_CALL_OPTS,
 	);
-	return res.agent;
+	return res.agent as AgentDescriptor;
 }
 
 export async function ensureCatalogAgent(
 	templateId: string,
 	setDefault = false,
 ): Promise<AgentDescriptor> {
-	const res = await invokeAgentApi<{ agent: AgentDescriptor }>(
-		"agent_ensure_catalog",
-		{ templateId, setDefault },
+	const res = await callApi(
+		() => commands.agentEnsureCatalog(templateId, setDefault),
+		AGENT_CALL_OPTS,
 	);
-	return res.agent;
+	return res.agent as AgentDescriptor;
 }
 
 export async function removeAgent(id: string): Promise<void> {
-	await invokeAgentApi("agent_remove_agent", { id });
+	await callApi(() => commands.agentRemoveAgent(id), AGENT_CALL_OPTS);
 }
 
 export async function setDefaultAgent(
 	id: string | null,
 ): Promise<AgentListResponse> {
-	return invokeAgentApi("agent_set_default", { id });
+	return (await callApi(
+		() => commands.agentSetDefault(id),
+		AGENT_CALL_OPTS,
+	)) as AgentListResponse;
 }
 
 /** Persist optional ACP User-Agent override for Codex / mid-station affinity. */
@@ -400,20 +415,26 @@ export async function setAgentUserAgent(
 	userAgent: string,
 	userAgentProviderIds = "",
 ): Promise<{ userAgent: string; userAgentProviderIds: string }> {
-	return invokeAgentApi("agent_set_user_agent", {
-		userAgent,
-		userAgentProviderIds,
-	});
+	return callApi(
+		() => commands.agentSetUserAgent(userAgent, userAgentProviderIds),
+		AGENT_CALL_OPTS,
+	);
 }
 
 export async function probeAgent(id: string): Promise<ProbeResult> {
-	return invokeAgentApi("agent_probe", { id });
+	return (await callApiResult(
+		() => commands.agentProbe(id),
+		AGENT_CALL_OPTS,
+	)) as ProbeResult;
 }
 
 export async function probeCatalogAgent(
 	templateId: string,
 ): Promise<ProbeResult> {
-	return invokeAgentApi("agent_probe_catalog", { templateId });
+	return (await callApiResult(
+		() => commands.agentProbeCatalog(templateId),
+		AGENT_CALL_OPTS,
+	)) as ProbeResult;
 }
 
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
@@ -428,11 +449,10 @@ export async function runToolLifecycle(
 	action: ToolLifecycleAction,
 	taskId?: string,
 ): Promise<void> {
-	await invokeAgentApi("agent_run_tool_lifecycle", {
-		templateId,
-		action,
-		taskId,
-	});
+	await callApiResult(
+		() => commands.agentRunToolLifecycle(templateId, action, taskId ?? null),
+		AGENT_CALL_OPTS,
+	);
 }
 
 export type UninstallInfo = {
@@ -446,7 +466,10 @@ export type UninstallInfo = {
 export async function toolUninstallInfo(
 	templateId: string,
 ): Promise<UninstallInfo | null> {
-	return invokeAgentApi("agent_tool_uninstall_info", { templateId });
+	return callApi(
+		() => commands.agentToolUninstallInfo(templateId),
+		AGENT_CALL_OPTS,
+	);
 }
 
 export async function runOnce(request: {
@@ -466,6 +489,8 @@ export async function runOnce(request: {
 	collaborationModeId?: string;
 	/** ACP reasoning-effort value id (from agent:effort). */
 	reasoningEffort?: string;
+	/** Resolve the highest supported effort after session setup, unless explicitly chosen. */
+	preferHighestReasoningEffort?: boolean;
 	/** ACP fast-mode preference (from agent:fast-mode). */
 	fastMode?: boolean;
 	/** Local SKILL.md identifiers selected through the composer. */
@@ -507,28 +532,32 @@ export async function runOnce(request: {
 			},
 		});
 	});
-	return invokeAgentApi("agent_run_once", {
-		request: {
-			agentId: request.agentId,
-			sessionId: request.sessionId,
-			prompt: request.prompt,
-			isAcpCommand: request.isAcpCommand ?? false,
-			images: request.images ?? [],
-			vaultPath: request.vaultPath,
-			workflow: request.workflow,
-			target: request.target,
-			modelId: request.modelId,
-			collaborationModeId: request.collaborationModeId,
-			reasoningEffort: request.reasoningEffort,
-			fastMode: request.fastMode,
-			skillIds: request.skillIds ?? [],
-			autoApprove: request.autoApprove ?? false,
-			permissionMode: request.permissionMode,
-			responseLanguage,
-			personalPrompt,
-			hideFromChatHistory: request.hideFromChatHistory ?? false,
-		},
-	});
+	return callApiResult(
+		() =>
+			commands.agentRunOnce({
+				agentId: request.agentId,
+				sessionId: request.sessionId,
+				prompt: request.prompt,
+				isAcpCommand: request.isAcpCommand ?? false,
+				images: request.images ?? [],
+				vaultPath: request.vaultPath,
+				workflow: request.workflow,
+				target: request.target,
+				modelId: request.modelId,
+				collaborationModeId: request.collaborationModeId,
+				reasoningEffort: request.reasoningEffort,
+				preferHighestReasoningEffort:
+					request.preferHighestReasoningEffort ?? false,
+				fastMode: request.fastMode,
+				skillIds: request.skillIds ?? [],
+				autoApprove: request.autoApprove ?? false,
+				permissionMode: request.permissionMode,
+				responseLanguage,
+				personalPrompt,
+				hideFromChatHistory: request.hideFromChatHistory ?? false,
+			}),
+		AGENT_CALL_OPTS,
+	);
 }
 
 /** List ACP sessions for an agent via `session/list`. */
@@ -537,11 +566,15 @@ export async function listSessions(request: {
 	vaultPath?: string;
 	cursor?: string;
 }): Promise<AcpListSessionsResult> {
-	return invokeAgentApi("agent_list_sessions", {
-		agentId: request.agentId ?? null,
-		vaultPath: request.vaultPath ?? null,
-		cursor: request.cursor ?? null,
-	});
+	return (await callApiResult(
+		() =>
+			commands.agentListSessions(
+				request.agentId ?? null,
+				request.vaultPath ?? null,
+				request.cursor ?? null,
+			),
+		AGENT_CALL_OPTS,
+	)) as AcpListSessionsResult;
 }
 
 /** Load an ACP session's history via `session/load`. */
@@ -550,16 +583,20 @@ export async function loadSession(request: {
 	sessionId: string;
 	vaultPath?: string;
 }): Promise<AcpLoadSessionResult> {
-	return invokeAgentApi("agent_load_session", {
-		agentId: request.agentId ?? null,
-		sessionId: request.sessionId,
-		vaultPath: request.vaultPath ?? null,
-	});
+	return (await callApiResult(
+		() =>
+			commands.agentLoadSession(
+				request.agentId ?? null,
+				request.sessionId,
+				request.vaultPath ?? null,
+			),
+		AGENT_CALL_OPTS,
+	)) as AcpLoadSessionResult;
 }
 
 /** Request cooperative cancellation of the active ACP session. */
 export async function cancelAgentRun(sessionId: string): Promise<void> {
-	await invokeAgentApi<boolean>("agent_cancel_run", { sessionId });
+	await callApi(() => commands.agentCancelRun(sessionId), AGENT_CALL_OPTS);
 }
 
 /** Answer a pending ACP permission request (ask mode). `optionId = null` cancels. */
@@ -567,9 +604,10 @@ export async function respondPermission(
 	requestId: string,
 	optionId: string | null,
 ): Promise<void> {
-	await invokeAgentApi<{ resolved: boolean }>("agent_respond_permission", {
-		request: { requestId, optionId },
-	});
+	await callApi(
+		() => commands.agentRespondPermission({ requestId, optionId }),
+		AGENT_CALL_OPTS,
+	);
 }
 
 /** Answer a pending ACP form elicitation. */
@@ -578,13 +616,15 @@ export async function respondElicitation(request: {
 	action: "accept" | "decline" | "cancel";
 	content?: Record<string, string>;
 }): Promise<void> {
-	await invokeAgentApi<{ resolved: boolean }>("agent_respond_elicitation", {
-		request: {
-			requestId: request.requestId,
-			action: request.action,
-			content: request.content ?? null,
-		},
-	});
+	await callApi(
+		() =>
+			commands.agentRespondElicitation({
+				requestId: request.requestId,
+				action: request.action,
+				content: request.content ?? null,
+			}),
+		AGENT_CALL_OPTS,
+	);
 }
 
 /** Answer a pending Grok `_x.ai/ask_user_question` extension request. */
@@ -593,13 +633,15 @@ export async function respondAskUser(request: {
 	action: "accept" | "cancel";
 	answers?: string[];
 }): Promise<void> {
-	await invokeAgentApi<{ resolved: boolean }>("agent_respond_ask_user", {
-		request: {
-			requestId: request.requestId,
-			action: request.action,
-			answers: request.answers ?? null,
-		},
-	});
+	await callApi(
+		() =>
+			commands.agentRespondAskUser({
+				requestId: request.requestId,
+				action: request.action,
+				answers: request.answers ?? null,
+			}),
+		AGENT_CALL_OPTS,
+	);
 }
 
 export type WarmResult = {
@@ -618,95 +660,112 @@ export async function warmAgent(request: {
 	modelId?: string;
 	collaborationModeId?: string;
 }): Promise<WarmResult> {
-	return invokeAgentApi("agent_warm", {
-		request: {
-			agentId: request.agentId,
-			vaultPath: request.vaultPath,
-			modelId: request.modelId,
-			collaborationModeId: request.collaborationModeId,
-		},
-	});
-}
-
-function listenAgentEvent<T>(
-	event: string,
-	handler: (payload: T) => void,
-): Promise<UnlistenFn> {
-	return getCurrentWebviewWindow().listen<T>(event, (message) =>
-		handler(message.payload),
+	return callApiResult(
+		() =>
+			commands.agentWarm({
+				agentId: request.agentId,
+				vaultPath: request.vaultPath,
+				modelId: request.modelId,
+				collaborationModeId: request.collaborationModeId,
+			}),
+		AGENT_CALL_OPTS,
 	);
 }
 
-export async function listenAgentStream(
+export function listenAgentStream(
 	handler: (e: AgentStreamEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:stream", handler);
+	return events
+		.agentStream(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentCompleted(
+export function listenAgentCompleted(
 	handler: (e: AgentResultPayload) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:completed", handler);
+	return events
+		.agentCompleted(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentFailed(
+export function listenAgentFailed(
 	handler: (e: AgentFailedEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:failed", handler);
+	return events
+		.agentFailed(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentTool(
+export function listenAgentTool(
 	handler: (e: AgentToolEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:tool", handler);
+	return events
+		.agentTool(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentPlan(
+export function listenAgentPlan(
 	handler: (e: AgentPlanEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:plan", handler);
+	return events
+		.agentPlan(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentUsage(
+export function listenAgentUsage(
 	handler: (e: AgentUsageEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:usage", handler);
+	return events
+		.agentUsage(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentSessionInfo(
+export function listenAgentSessionInfo(
 	handler: (e: AgentSessionInfoEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:session-info", handler);
+	return events
+		.agentSessionInfo(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentCommands(
+export function listenAgentCommands(
 	handler: (e: AgentCommandsEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:commands", handler);
+	return events
+		.agentCommands(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentModels(
+export function listenAgentModels(
 	handler: (e: AgentModelsEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:models", handler);
+	return events
+		.agentModels(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentEffort(
+export function listenAgentEffort(
 	handler: (e: AgentEffortEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:effort", handler);
+	return events
+		.agentEffort(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentFastMode(
+export function listenAgentFastMode(
 	handler: (e: AgentFastModeEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:fast-mode", handler);
+	return events
+		.agentFastMode(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
-export async function listenAgentCollaboration(
+export function listenAgentCollaboration(
 	handler: (e: AgentCollaborationEvent) => void,
 ): Promise<UnlistenFn> {
-	return listenAgentEvent("agent:collaboration", handler);
+	return events
+		.agentCollaboration(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload));
 }
 
 const MODEL_PREF_KEY = "agentero-agent-model-pref";

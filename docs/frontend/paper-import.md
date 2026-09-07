@@ -11,6 +11,7 @@
 - 本地 PDF 命中已有条目（按识别出的标识符去重）时不新建论文：PDF 合入原条目（缺主 PDF 时成为主 PDF，否则进 `attachments/`），Toast 提示「已将 PDF 合入已有条目」（#406）。
 - 成功后：局部刷新 `papers/` 子树、Wiki、Library；**不**自动打开论文（并行入库时抢焦点会让文件树反复跳转），批量也**不**自动连跑精读。
 - 同一条 identifier lookup 管线可由其它入口复用（References 面板、Plaza 入库、Zotero 迁移）。
+- 调度：每个输入一个 JobCenter `import` job（Normal lane；并发取 `batchImportConcurrency`；`params` = `mode` + 来源标识并参与去重，同一 URL 不重复入队）。编排仍在渲染端执行器（`src/lib/paper/import/import-tasks.ts` 按 `params.mode` 分发），job id 兼作 Host `task_id`：字节进度经 `job:progress` 写回投影行，协作取消查 JobCenter 按 task id 索引的 cancel token。
 - Host：`lookup_import_batch` 等。
 
 ## References 侧栏导入

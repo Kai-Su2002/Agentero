@@ -20,6 +20,7 @@ import {
 	respondPermission,
 } from "@/lib/agent";
 import type { ToolAskUserRequest } from "@/lib/agent/chat-state";
+import { events } from "@/lib/core/bindings";
 
 export type UseAgentPermissionSurfacesOptions = {
 	toolAskUserRequest: ToolAskUserRequest | null;
@@ -109,17 +110,17 @@ export function useAgentPermissionSurfaces({
 		{ modal: false },
 	);
 
-	useTauriEvent<PermissionRequest>("agent:permission-request", (payload) =>
+	useTauriEvent(events.agentPermissionRequest, (payload) =>
 		setPermissionRequest(payload),
 	);
 
-	useTauriEvent<ElicitationRequest>("agent:elicitation-request", (payload) => {
+	useTauriEvent(events.agentElicitationRequest, (payload) => {
 		// Prefer host elicitation over tool-card promote.
 		setToolAskUserRequest(null);
 		setElicitationRequest(payload);
 	});
 
-	useTauriEvent<AskUserRequest>("agent:ask-user-request", (payload) => {
+	useTauriEvent(events.agentAskUserRequest, (payload) => {
 		// Grok ext is the authoritative respond path; drop tool-promote duplicate.
 		setToolAskUserRequest(null);
 		setAskUserRequest(payload);

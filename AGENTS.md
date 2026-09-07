@@ -93,10 +93,11 @@ pnpm tauri build
 ```
 
 ```bash
-# Headless CLI（仓库根 workspace）
+# Headless CLI 与共享基础 crate（仓库根 workspace）
 cargo build -p agentero-cli
 cargo run -p agentero-cli -- vault which --json
 cargo test -p agentero-cli
+cargo test -p agentero-core   # tauri 无关基础层（crates/agentero-core）
 ```
 
 完成实现前运行最小必要验证。UI 改动优先启动应用检查对应流程。

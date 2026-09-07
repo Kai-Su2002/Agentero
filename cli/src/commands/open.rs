@@ -89,7 +89,7 @@ pub fn run(path: &Path, globals: &GlobalOpts) -> Result<Value, CliError> {
 
     if !dry {
         // 1) Always leave a request file for the running Host watcher.
-        match agentero_lib::features::open_request::write_cli_open_request(&abs) {
+        match agentero_core::features::open_request::write_cli_open_request(&abs) {
             Ok(p) => {
                 methods.push("request-file");
                 request_file = Some(p.to_string_lossy().into_owned());

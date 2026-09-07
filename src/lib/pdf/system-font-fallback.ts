@@ -1,14 +1,10 @@
 import type { FontFallbackConfig } from "@embedpdf/engines/pdfium";
 import { FontCharset } from "@embedpdf/models";
+import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApi } from "@/lib/core/ipc";
 import { logger } from "@/lib/core/logger";
 import { isMobileApp, isTauri } from "@/lib/core/tauri";
-
-type SystemCjkFontPayload = {
-	path: string;
-	bytesBase64: string;
-};
 
 let fontFallbackPromise: Promise<FontFallbackConfig | null> | null = null;
 
@@ -33,11 +29,9 @@ export function loadSystemCjkFontFallback(): Promise<FontFallbackConfig | null> 
 	if (!isTauri() || isMobileApp()) return Promise.resolve(null);
 	if (fontFallbackPromise) return fontFallbackPromise;
 
-	fontFallbackPromise = invokeApi<SystemCjkFontPayload>(
-		"export_system_cjk_font",
-		undefined,
-		{ fallback: "export_system_cjk_font failed" },
-	)
+	fontFallbackPromise = callApi(() => commands.exportSystemCjkFont(), {
+		fallback: "export_system_cjk_font failed",
+	})
 		.then((payload) => {
 			if (!payload?.bytesBase64) return null;
 			const bytes = decodeBase64(payload.bytesBase64);

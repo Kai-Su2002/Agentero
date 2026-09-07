@@ -10,7 +10,7 @@ import {
 	plazaSourceForPath,
 } from "@/lib/plaza";
 import type { FileNode } from "@/lib/vault";
-import { isVirtualTreePath } from "../tree-helpers";
+import { isVirtualTreePath, normalizeTreeSelection } from "../tree-helpers";
 import type { TreeCreateDraft, TreeRenameDraft } from "../types";
 
 export type RowClickMods = { meta: boolean; ctrl: boolean; shift: boolean };
@@ -18,6 +18,7 @@ export type RowClickMods = { meta: boolean; ctrl: boolean; shift: boolean };
 export type TreeSelection = {
 	selected: Set<string>;
 	clearSelection: () => void;
+	prepareContextSelection: (path: string) => void;
 	handleSelectRow: (path: string, mods: RowClickMods) => void;
 	orderedSelected: () => string[];
 	/** Action target: the whole selection when the row is part of it. */
@@ -43,6 +44,7 @@ export function useTreeSelection({
 	onDeletePaths,
 	onCutPaths,
 	onPasteInto,
+	onSelectionChange,
 }: {
 	nodes: FileNode[];
 	selectedPath: string | null;
@@ -59,6 +61,7 @@ export function useTreeSelection({
 	onDeletePaths?: (paths: string[]) => void | Promise<void>;
 	onCutPaths?: (paths: string[]) => void;
 	onPasteInto?: (targetPath: string) => void;
+	onSelectionChange?: (count: number) => void;
 }): TreeSelection {
 	const [selected, setSelected] = useState<Set<string>>(new Set());
 	const [anchor, setAnchor] = useState<string | null>(null);
@@ -74,6 +77,23 @@ export function useTreeSelection({
 		setSelected(new Set());
 		setAnchor(null);
 	}, []);
+
+	useEffect(() => {
+		onSelectionChange?.(selected.size);
+	}, [onSelectionChange, selected.size]);
+
+	const prepareContextSelection = useCallback(
+		(path: string) => {
+			if (isVirtualTreePath(path)) {
+				clearSelection();
+				return;
+			}
+			if (selected.has(path)) return;
+			setSelected(new Set([path]));
+			setAnchor(path);
+		},
+		[clearSelection, selected],
+	);
 
 	const openRow = useCallback(
 		(path: string) => {
@@ -122,7 +142,9 @@ export function useTreeSelection({
 				const b = selectableOrder.indexOf(path);
 				if (a !== -1 && b !== -1) {
 					const [lo, hi] = a <= b ? [a, b] : [b, a];
-					setSelected(new Set(selectableOrder.slice(lo, hi + 1)));
+					setSelected(
+						new Set(normalizeTreeSelection(selectableOrder.slice(lo, hi + 1))),
+					);
 					return;
 				}
 			}
@@ -141,7 +163,7 @@ export function useTreeSelection({
 					}
 					if (next.has(path)) next.delete(path);
 					else next.add(path);
-					return next;
+					return new Set(normalizeTreeSelection(next));
 				});
 				setAnchor(path);
 				return;
@@ -161,10 +183,14 @@ export function useTreeSelection({
 		],
 	);
 
-	const orderedSelected = useCallback(
-		() => selectableOrder.filter((p) => selected.has(p)),
-		[selectableOrder, selected],
-	);
+	const orderedSelected = useCallback(() => {
+		const visible = selectableOrder.filter((p) => selected.has(p));
+		const visibleSet = new Set(visible);
+		return normalizeTreeSelection([
+			...visible,
+			...[...selected].filter((p) => !visibleSet.has(p)),
+		]);
+	}, [selectableOrder, selected]);
 
 	const pathsForAction = useCallback(
 		(path: string): string[] =>
@@ -225,6 +251,7 @@ export function useTreeSelection({
 	return {
 		selected,
 		clearSelection,
+		prepareContextSelection,
 		handleSelectRow,
 		orderedSelected,
 		pathsForAction,

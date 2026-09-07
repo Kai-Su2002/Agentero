@@ -3,7 +3,8 @@
  * @see docs/backend/mcp.md
  */
 
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi, callApiResult } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
 export const DEFAULT_MCP_PORT = 8765;
@@ -28,26 +29,22 @@ const idle = (port = DEFAULT_MCP_PORT): McpStatus => ({
 
 export async function mcpGetStatus(): Promise<McpStatus> {
 	if (!isTauri()) return idle();
-	return invokeApi<McpStatus>("mcp_get_status");
+	return callApi(() => commands.mcpGetStatus());
 }
 
 export async function mcpSetEnabled(enabled: boolean): Promise<McpStatus> {
 	if (!isTauri()) return idle();
-	return invokeApi<McpStatus>("mcp_set_enabled", { args: { enabled } });
+	return callApiResult(() => commands.mcpSetEnabled({ enabled }));
 }
 
 export async function mcpSetPort(port: number): Promise<McpStatus> {
 	if (!isTauri()) return idle(port);
-	return invokeApi<McpStatus>("mcp_set_port", { args: { port } });
+	return callApiResult(() => commands.mcpSetPort({ port }));
 }
 
 export async function mcpSetVault(vaultPath: string | null): Promise<void> {
 	if (!isTauri()) return;
-	await invokeApi<null>(
-		"mcp_set_vault",
-		{ args: { vaultPath } },
-		{ allowVoid: true },
-	);
+	await callApi(() => commands.mcpSetVault({ vaultPath }));
 }
 
 export async function mcpSetParentDir(parentDir: string): Promise<void> {
@@ -57,9 +54,5 @@ export async function mcpSetParentDir(parentDir: string): Promise<void> {
 		.replace(/\\/g, "/")
 		.replace(/^\/+|\/+$/g, "");
 	if (!dir) return;
-	await invokeApi<null>(
-		"mcp_set_parent_dir",
-		{ args: { parentDir: dir } },
-		{ allowVoid: true },
-	);
+	await callApi(() => commands.mcpSetParentDir({ parentDir: dir }));
 }

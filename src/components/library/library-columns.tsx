@@ -10,6 +10,7 @@ import {
 	type CellCtx,
 	type ColumnDef,
 	identifierValue,
+	isMissingLocalPdf,
 	type SortDir,
 	type SortKey,
 } from "@/components/library/library-row-utils";
@@ -116,7 +117,7 @@ export const COLUMN_META = {
 							<span className="block truncate" title={p.title}>
 								{p.title}
 							</span>
-							{p.has_pdf === false ? (
+							{isMissingLocalPdf(p) ? (
 								<Tooltip>
 									<TooltipTrigger asChild>
 										<span
@@ -222,6 +223,19 @@ export const COLUMN_META = {
 						{value ?? "—"}
 					</span>
 				</CopyTd>
+			);
+		},
+	},
+	citations: {
+		labelKey: "papersLibrary.colCitations",
+		widthWeight: 10,
+		headerClassName: "min-w-[80px]",
+		render: (p) => {
+			const count = p.citation_count;
+			return (
+				<td className="whitespace-nowrap px-3 py-2.5 text-right tabular-nums text-muted-foreground text-xs">
+					{count != null ? new Intl.NumberFormat(undefined).format(count) : "—"}
+				</td>
 			);
 		},
 	},

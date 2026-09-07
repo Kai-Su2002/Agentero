@@ -51,7 +51,8 @@
 | 终端打开 | 右键 / `⌥⌘T`（文件夹=自身，文件=父目录） |
 | 删除 | 右键 / `⌘⌫` → 回收站（无确认） |
 | 编辑元数据 | Paper 行右键（仅本地 Vault；查 `paperMetaByRelPath` 打开与 Library 相同的编辑对话框） |
-| 多选拖拽 | ⌘/Shift + 拖到目标文件夹（内部拖动带 `application/x-agentero-vault-paths`，Composer / Library 不抢成图片或 PDF 导入）；拖动时高亮落点夹。论文单元是叶子，拖到论文行 = 落到它的父目录（`dropDirFor`）；两端都在 `papers/` 下走 `paper_move`，否则 `wiki_move` |
+| 多选与批量操作 | ⌘/Ctrl 单击切换、Shift 单击范围选择；选择后复用 Vault 的固定 `PaneHeader` 显示数量、移动、删除与清除，不在树内插入或悬浮工具条，因此树的高度、滚动位置和可见范围不变。右键已选行作用于整组；右键未选行会先收敛为该单项。Esc 清除，Enter/Space 可用键盘激活。父目录与后代同时进入范围时只保留父目录这个语义目标，避免重复移动/删除。|
+| 多选拖拽 | 从已选行拖动整组到目标文件夹（内部拖动带 `application/x-agentero-vault-paths`，Composer / Library 不抢成图片或 PDF 导入）；拖动时高亮落点夹。论文单元是叶子，拖到论文行 = 落到它的父目录（`dropDirFor`）；两端都在 `papers/` 下走 `paper_move`，否则 `wiki_move` |
 | 外部 PDF | 拖到 `papers/` 组织夹，或拖到中间栏 Library 表（[#309](https://github.com/poco-ai/Agentero/issues/309)） |
 | 折叠 | `⌘←` 选中夹；`⇧⌘←` 折叠至默认 |
 | 定位 | 激活文档变化时展开祖先并 `scrollToIndex`；同一目标只定位一次，导入后台阶段引起的树刷新不再重复滚动 |
@@ -67,7 +68,7 @@
 
 ## 代码
 
-- UI：`src/components/sidebar/file-tree/`（barrel `index.ts`；`file-tree.tsx` 仅装配，行/菜单/输入/选中条/虚拟列表为独立子模块）、AI Elements `FileTree`
+- UI：`src/components/sidebar/file-tree/`（barrel `index.ts`；`file-tree.tsx` 仅装配，行/菜单/输入/虚拟列表为独立子模块）、`vault-sidebar-header.tsx`（普通 / 多选标题栏）、AI Elements `FileTree`
 - 树内状态：`src/components/sidebar/file-tree/hooks/`（`use-tree-model` 路径索引与扁平行、`use-tree-expansion` 展开与懒加载、`use-tree-selection` 多选、`use-tree-reveal` 虚拟化与定位、`use-tree-drag-drop`、`use-paper-row-actions`、`use-tree-context-menu`、`use-move-picker`）
 - 逻辑：`src/lib/vault/`（store、tree、fs-watch、reveal）
 - 附件：`src/lib/paper/attachments.ts`、`paths.ts`（`attachments/` 约定）

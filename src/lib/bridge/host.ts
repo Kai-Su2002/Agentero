@@ -1,5 +1,10 @@
-import { listen } from "@tauri-apps/api/event";
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	type BridgeDevice as BridgeDeviceWire,
+	type BridgeStatus as BridgeStatusWire,
+	commands,
+	events,
+} from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 
 export type BridgeStatus = {
 	enabled: boolean;
@@ -30,53 +35,75 @@ export type BridgeDevice = {
 	revoked: boolean;
 };
 
-export function bridgeStart(args: {
+/** Fold generated `null` optionals into the local absent-optional shape. */
+function statusFromWire(status: BridgeStatusWire): BridgeStatus {
+	return {
+		enabled: status.enabled,
+		online: status.online,
+		serverId: status.serverId ?? undefined,
+		relayEndpoint: status.relayEndpoint,
+		hostName: status.hostName ?? undefined,
+		vaultPath: status.vaultPath ?? undefined,
+		activeConnections: status.activeConnections,
+		pendingPairings: status.pendingPairings,
+		lastError: status.lastError ?? undefined,
+	};
+}
+
+function deviceFromWire(device: BridgeDeviceWire): BridgeDevice {
+	return {
+		deviceId: device.deviceId,
+		name: device.name,
+		pairedAt: device.pairedAt,
+		lastSeenAt: device.lastSeenAt ?? undefined,
+		revoked: device.revoked ?? false,
+	};
+}
+
+export async function bridgeStart(args: {
 	vaultPath: string;
 	hostName: string;
 	relayEndpoint?: string;
 }): Promise<BridgeStatus> {
-	return invokeApi("bridge_start", { args });
+	return statusFromWire(await callApi(() => commands.bridgeStart(args)));
 }
 
-export function bridgeStop(): Promise<void> {
-	return invokeApi("bridge_stop", undefined, { allowVoid: true });
+export async function bridgeStop(): Promise<void> {
+	await callApi(() => commands.bridgeStop());
 }
 
-export function bridgeHostStatus(): Promise<BridgeStatus> {
-	return invokeApi("bridge_status");
+export async function bridgeHostStatus(): Promise<BridgeStatus> {
+	return statusFromWire(await callApi(() => commands.bridgeStatus()));
 }
 
 export function bridgeOffer(): Promise<BridgeOfferResult> {
-	return invokeApi("bridge_offer");
+	return callApi(() => commands.bridgeOffer());
 }
 
-export function bridgeDevices(): Promise<BridgeDevice[]> {
-	return invokeApi("bridge_devices");
+export async function bridgeDevices(): Promise<BridgeDevice[]> {
+	const devices = await callApi(() => commands.bridgeDevices());
+	return devices.map(deviceFromWire);
 }
 
 export function bridgeRespondToPairing(
 	requestId: string,
 	allowed: boolean,
 ): Promise<boolean> {
-	return invokeApi("bridge_pair_respond", { requestId, allowed });
+	return callApi(() => commands.bridgePairRespond(requestId, allowed));
 }
 
 export function bridgeRevokeDevice(deviceId: string): Promise<boolean> {
-	return invokeApi("bridge_revoke_device", { deviceId });
+	return callApi(() => commands.bridgeRevokeDevice(deviceId));
 }
 
 export function listenPairingRequest(
 	handler: (request: PairingRequest) => void,
 ): Promise<() => void> {
-	return listen<PairingRequest>("bridge:pair-request", (event) =>
-		handler(event.payload),
-	);
+	return events.bridgePairRequest.listen((event) => handler(event.payload));
 }
 
 export function listenHostStatus(
 	handler: (online: boolean) => void,
 ): Promise<() => void> {
-	return listen<boolean>("bridge:host-status", (event) =>
-		handler(event.payload),
-	);
+	return events.bridgeHostStatus.listen((event) => handler(event.payload));
 }

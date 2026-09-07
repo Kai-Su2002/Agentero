@@ -5,8 +5,43 @@
 import { X } from "lucide-react";
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { cn } from "@/lib/core/utils";
+import { EASY_SCHOLAR_TAG_PREFIX, isEasyScholarTag } from "@/lib/easyscholar";
 import type { PaperTag } from "@/lib/paper/types";
 import { tagChipStyle, tagSwatchStyle } from "@/lib/ui/tag-colors";
+
+function parseEasyScholarTag(
+	name: string,
+): { key: string; value: string } | null {
+	if (!isEasyScholarTag(name)) return null;
+	const rest = name.slice(EASY_SCHOLAR_TAG_PREFIX.length);
+	const idx = rest.indexOf("=");
+	if (idx === -1) return { key: rest, value: "" };
+	return { key: rest.slice(0, idx), value: rest.slice(idx + 1) };
+}
+
+/** Render a short, human-readable label without the namespace prefix. */
+function formatEasyScholarTag(name: string): string {
+	const parsed = parseEasyScholarTag(name);
+	if (!parsed) return name;
+	const { key, value } = parsed;
+	switch (key) {
+		case "journal":
+			return value;
+		case "if":
+			return `IF ${value}`;
+		case "if5":
+			return `IF5 ${value}`;
+		case "jci":
+			return `JCI ${value}`;
+		case "rank": {
+			const sep = value.indexOf("=");
+			if (sep === -1) return value;
+			return `${value.slice(0, sep)}:${value.slice(sep + 1)}`;
+		}
+		default:
+			return `${key}=${value}`;
+	}
+}
 
 type PaperTagChipProps = {
 	tag: PaperTag;
@@ -39,6 +74,9 @@ export function PaperTagChip({
 				: "hover:bg-muted-foreground/20 hover:text-foreground"),
 		className,
 	);
+	const isEasyScholar = isEasyScholarTag(tag.name);
+	const displayName = isEasyScholar ? formatEasyScholarTag(tag.name) : tag.name;
+	const displayTitle = title ?? (isEasyScholar ? tag.name : undefined);
 	const body = (
 		<>
 			{tag.color ? (
@@ -48,7 +86,7 @@ export function PaperTagChip({
 					aria-hidden
 				/>
 			) : null}
-			{tag.name}
+			{displayName}
 			{trailing}
 		</>
 	);
@@ -59,7 +97,7 @@ export function PaperTagChip({
 				type="button"
 				className={classNames}
 				style={colored}
-				title={title}
+				title={displayTitle}
 				aria-label={ariaLabel}
 				onClick={onClick}
 			>
@@ -69,7 +107,7 @@ export function PaperTagChip({
 	}
 
 	return (
-		<span className={classNames} style={colored} title={title}>
+		<span className={classNames} style={colored} title={displayTitle}>
 			{body}
 		</span>
 	);

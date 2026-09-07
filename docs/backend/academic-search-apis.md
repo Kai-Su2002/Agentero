@@ -4,19 +4,25 @@ Agentero Host 端（`src-tauri/src/features/`）在论文识别、入库、引�
 
 > 范围限定在**学术元数据与论文发现**相关的外部 HTTP API。翻译 API（Google/Bing/DeepL/OpenAI 等）、版面分析 ONNX、本地 Agent/ACP、PostHog 遥测不在本文讨论范围内。
 
+> 路径简写：`scholar_api/…` 与 `features/paper/import/` 的映射 / resolver / 路由（`scholar_api::identifiers`、`api_mapper.rs`、`search_router.rs`、`search.rs`、`download.rs`、`sources/`）已随 crate 拆分迁到 `crates/agentero-core/src/features/paper/…`；`import/recognize/`（PDF 识别）与 `import/commands.rs` 仍在 `src-tauri`。其余 `features/…` 均指 `src-tauri/src/features/…`。
+
 ## 1. API 总览
 
 | 服务 | 主要端点 | 用途 | 核心调用模块 |
 |---|---|---|---|
-| **Semantic Scholar Graph API** | `GET /graph/v1/paper/search` | 标题/关键词搜索 | `features/import/title_search.rs` |
+| **Semantic Scholar Graph API** | `GET /graph/v1/paper/search` | 标题/关键词搜索 | `features/paper/import/search_router.rs` |
 | **Semantic Scholar Graph API** | `GET /graph/v1/paper/{id}/references` | 在线参考文献补全 | `features/refs/online.rs` |
-| **Semantic Scholar Graph API** | `GET /graph/v1/paper/ARXIV:{id}` / `DOI:{doi}` | venue 回填（`publicationVenue.name`） | `features/import/title_search.rs` |
+| **Semantic Scholar Graph API** | `GET /graph/v1/paper/ARXIV:{id}` / `DOI:{doi}` | venue 回填（`publicationVenue.name`） | `features/paper/scholar_api/sources/semantic_scholar.rs`（`fetch_venue_by_*`），调用方 `features/paper/import/commands.rs` |
 | **Semantic Scholar Graph API** | `GET /graph/v1/paper/{id}/citations` | "谁引用了我" 候选发现 | `features/refs/citing.rs` |
-| **arXiv Atom API** | `GET https://export.arxiv.org/api/query` | 按 ID 取元数据 / 按标题搜索 | `features/import/mod.rs`, `features/import/title_search.rs` |
-| **arXiv 二进制端点** | `https://arxiv.org/pdf/{id}` / `https://arxiv.org/e-print/{id}` / `https://arxiv.org/src/{id}` | PDF / TeX 源码下载 | `features/import/assets.rs` |
-| **Crossref REST API** | `GET https://api.crossref.org/works/{doi}` | DOI → 元数据 / 参考文献 | `features/import/pdf_recognize.rs`, `features/refs/online.rs`, `features/catalog/commands.rs` |
-| **Unpaywall** | `GET https://api.unpaywall.org/v2/{doi}` | DOI → 开放获取 PDF | `features/import/assets.rs` |
-| **Zotero Recognizer** | `POST https://services.zotero.org/recognizer/recognize` | PDF 首页文字几何识别 | `features/import/pdf_recognize.rs` |
+| **arXiv Atom API** | `GET https://export.arxiv.org/api/query` | 按 ID 取元数据 / 按标题搜索 | `features/paper/import/mod.rs`, `features/paper/import/search_router.rs` |
+| **arXiv 二进制端点** | `https://arxiv.org/pdf/{id}` / `https://arxiv.org/e-print/{id}` / `https://arxiv.org/src/{id}` | PDF / TeX 源码下载 | `features/paper/import/download.rs` |
+| **Crossref REST API** | `GET https://api.crossref.org/works/{doi}` | DOI → 元数据 / 参考文献 | `features/paper/import/recognize/pdf_recognize.rs`, `features/paper/analyze/refs/online.rs`, `features/paper/catalog/commands.rs` |
+| **OpenAlex REST API** | `GET https://api.openalex.org/works` | 标题搜索兜底（含 `cited_by_count`） | `features/paper/scholar_api/search.rs`（`SourceScope::All` 兜底源） |
+| **Unpaywall** | `GET https://api.unpaywall.org/v2/{doi}` | DOI → 开放获取 PDF | `features/paper/import/download.rs` |
+| **PubMed / NCBI E-utilities** | `GET https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi` / `efetch.fcgi` | 标题/PMID → 医学/生命科学元数据 | `features/paper/scholar_api/sources/pubmed.rs` |
+| **bioRxiv** | `GET https://api.biorxiv.org/details/biorxiv/{doi}` | DOI → 生命科学预印本元数据 | `features/paper/scholar_api/sources/biorxiv.rs` |
+| **medRxiv** | `GET https://api.biorxiv.org/details/medrxiv/{doi}` | DOI → 医学预印本元数据 | `features/paper/scholar_api/sources/biorxiv.rs` |
+| **Zotero Recognizer** | `POST https://services.zotero.org/recognizer/recognize` | PDF 首页文字几何识别 | `features/paper/import/recognize/pdf_recognize.rs` |
 | **Translator Runtime** | `POST {base}/web`, `POST {base}/search`, `POST {base}/import` | 通用 URL/标识符/题录解析 | `features/import/mod.rs` |
 | **Cool Papers (papers.cool)** | `GET https://papers.cool/{branch}/search?query=...`, `GET https://papers.cool/{branch}/kimi?paper={id}` | Kimi 论文解析 / 广场导入 | `features/coolpapers/` |
 | **arXiv RSS** | `GET https://rss.arxiv.org/rss/{category}` | 推荐与订阅流 | `features/recommend/mod.rs`, `features/feeds/` |
@@ -29,7 +35,7 @@ Agentero Host 端（`src-tauri/src/features/`）在论文识别、入库、引�
 
 当前主路径按以下顺序尝试：
 
-1. **标题/关键词搜索**（`features/import/title_search.rs::search_papers`）
+1. **标题/关键词搜索**（`features/paper/import/search_router.rs::search_papers`）
    - Semantic Scholar `GET /graph/v1/paper/search?query=...&fields=title,authors,year,venue,publicationVenue,journal,externalIds,citationCount,url` 与 arXiv Atom `GET export.arxiv.org/api/query?search_query=ti:"..."` **并行**发起。S2 在 5s 预算（`S2_SEARCH_BUDGET`）内返回非空则优先（venue 取 `publicationVenue.name`（跳过 `type=repository`），其次 `journal.name`，再次 `venue`），否则取已在途的 arXiv 结果；最坏耗时 ≈ max(预算, 单请求 20s 超时)。
    - 仅保留带 DOI 或 arXiv id 的候选；返回结果会按精确标题匹配重新排序。
    - `resolve_search_queries` 接收前端 `task_id`：关闭搜索卡片取消任务后，剩余查询直接跳过。
@@ -37,20 +43,22 @@ Agentero Host 端（`src-tauri/src/features/`）在论文识别、入库、引�
    - 若用户输入被识别为 arXiv id / DOI / URL，会构造 `{base}/web` 或 `{base}/search` 请求。
    - arXiv 的各类输入（`2508.05004`、`arXiv:2508.05004v2`、`https://arxiv.org/pdf/...`、`https://arxiv.org/html/...`）都会被规范化为 `https://arxiv.org/abs/{id}` 再走 `/web`。
    - Translator 失败且输入是 arXiv id 时，本地 fallback 到 `fetch_arxiv_metadata`。
-3. **Crossref DOI fallback**（`features/import/pdf_recognize.rs::resolve_identifier_full`）
-   - 当 Translator 无法解析一个 DOI 时，直接请求 `api.crossref.org/works/{doi}`。
-4. **arXiv Atom 直接 fallback**（`features/import/mod.rs::fetch_arxiv_metadata`）
+3. **Crossref DOI fallback**（`features/paper/scholar_api/identifiers/fallback.rs::fetch_crossref_metadata`）
+   - 当 Translator 无法解析一个 DOI 时，`fetch_direct_fallback` 直接请求 `api.crossref.org/works/{doi}`。
+4. **arXiv Atom 直接 fallback**（`features/paper/scholar_api/identifiers/fallback.rs::fetch_arxiv_metadata`）
    - 请求 `export.arxiv.org/api/query?id_list={id}`，解析 `<arxiv:journal_ref>` 作为 publication/venue。
+
+> **被引数（`citation_count`）**：Crossref 解析 `is-referenced-by-count`、OpenAlex 解析 `cited_by_count`、Semantic Scholar 解析 `citationCount`，三者 `capabilities()` 均声明 `PROVIDE_CITATION_COUNT`；Crossref / OpenAlex 的 title search 还必须把该字段列进 `select` 白名单，否则 API 根本不返回它。`api_paper_to_meta` 把值带进 `PaperRecord`，`merge_api_papers` 合并两个源时取较大值（各自索引的引用文献子集不同）。arXiv Atom 与 Translator 不产出被引数。**注意**：入库以 Translator 为主路径，`map_zotero_item_to_record` 不带被引数，因此常规导入写入的仍是 NULL；只有 Translator 失败后降级到 Crossref 直连的 DOI 导入才会落进真实值。完整缺口见 [catalog.md](catalog.md)。
 
 ### 2.2 PDF 元数据识别
 
-入口：`features/import/pdf_recognize.rs::recognize_and_resolve`。
+入口：`features/paper/import/recognize/pdf_recognize.rs::recognize_and_resolve`。
 
 流程：
 
 1. 本地 liteparse 探测 PDF 前若干页文字几何。
 2. 将文字几何按 Zotero Worker 形状提交到 `https://services.zotero.org/recognizer/recognize`，获取可能的 DOI / arXiv / title。
-3. 若识别出 DOI → `resolve_identifier_full` → Translator → Crossref fallback。
+3. 若识别出 DOI → `import/mod.rs::resolve_metadata` → Translator → Crossref 直连 fallback。
 4. 若识别出 arXiv → `fetch_arxiv_metadata`。
 5. 仅有 title/authors 时 → 生成本地 PDF 占位元数据（`meta_from_recognize`）。
 
@@ -92,7 +100,7 @@ UI 刷新（`paper_resolve_identifier`）对 DOI/arXiv/URL **先走标识符解�
 
 ### 2.6 arXiv / DOI Venue 回填
 
-入口：`features/import/title_search.rs::fetch_s2_venue_by_arxiv` / `fetch_s2_venue_by_doi`。
+入口：`features/paper/scholar_api/sources/semantic_scholar.rs::SemanticScholarApi::fetch_venue_by_arxiv` / `fetch_venue_by_doi` / `fetch_venue_by_ids`（取值逻辑 `venue_from_paper`）。
 
 请求 `GET /graph/v1/paper/{ARXIV:id\|DOI:doi}?fields=venue,publicationVenue,journal`。取值顺序：
 
@@ -102,8 +110,8 @@ UI 刷新（`paper_resolve_identifier`）对 DOI/arXiv/URL **先走标识符解�
 
 用于：
 
-- `map_arxiv_atom` 中当 `<arxiv:journal_ref>` 缺失时补 venue。
-- 批量 publication 回填与 Edit Metadata 刷新。
+- `paper_backfill_publication` 的 arXiv 分支：Atom 的 `<arxiv:journal_ref>`（`scholar_api/sources/arxiv.rs::parse_entries` → `ApiPaper.venue`）缺失时补 venue。
+- 批量 publication 回填与 Edit Metadata 刷新（`enrich_publication_from_s2`）。
 - title search 候选的 venue 字段。
 
 ### 2.7 推荐与订阅
@@ -131,11 +139,19 @@ UI 刷新（`paper_resolve_identifier`）对 DOI/arXiv/URL **先走标识符解�
 
 ### 2.10 PDF / TeX 资产下载
 
-入口：`features/import/assets.rs`。
+入口：`features/paper/import/download.rs`。
 
 - arXiv PDF 候选链：`https://arxiv.org/pdf/{id}` → `https://arxiv.org/pdf/{id}.pdf` → `https://export.arxiv.org/pdf/{id}`。
 - arXiv TeX 源码：`https://arxiv.org/e-print/{id}`（`/src/` 为别名）。
 - DOI 论文 PDF：先查 `api.unpaywall.org/v2/{doi}`，再查 Crossref `message.link` 中的 PDF 链接。
+
+### 2.11 PubMed / bioRxiv / medRxiv 元数据兜底
+
+入口：`features/paper/scholar_api/sources/pubmed.rs`、`features/paper/scholar_api/sources/biorxiv.rs`。
+
+- **PubMed**：实现 `AcademicApi`，支持标题搜索和 PMID 查询。流程为 `esearch.fcgi`（JSON）拿 PMID 列表 → `efetch.fcgi`（XML）批量取详情；请求带 `email` 与 `tool` 参数以符合 NCBI 礼貌使用要求。解析字段包括 title、authors、year、venue、volume、issue、pages、DOI、PMID、abstract；PMC 存在时给出 PDF 候选。
+- **bioRxiv / medRxiv**：共用 `biorxiv.rs`，实现 `AcademicApi`，仅支持 `FETCH_BY_DOI`（上游 API 无 title 搜索端点）。请求 `https://api.biorxiv.org/details/{server}/{doi}`，解析 title、authors、date、abstract，并构造 `.full.pdf` 直链。
+- PMID 在 `scholar_api::identifiers::resolver` 中已有识别器，现在为其补充 PubMed `efetch` 直连 fallback（`scholar_api::identifiers::fallback::fetch_pubmed_metadata`）；Translator 失败时可直接从 NCBI 拉取。
 
 ## 3. 并发与限流
 
@@ -154,9 +170,9 @@ UI 刷新（`paper_resolve_identifier`）对 DOI/arXiv/URL **先走标识符解�
 
 | 配置项 | 位置 | 默认值 | 说明 |
 |---|---|---|---|
-| `translatorBaseUrl` | `features/settings/mod.rs` | `https://translator.philfan.cn` | 可替换为自托管 Translator Runtime |
+| `translatorBaseUrl` | `features/system/settings/mod.rs` | `https://translator.philfan.cn` | 可替换为自托管 Translator Runtime |
 | `LookupImportArgs.translator_base_url` | 单次请求参数 | 空则使用设置值 | CLI/批量导入可临时覆盖 |
-| `ImportLocalPdfArgs.translator_base_url` | 本地 PDF 导入参数 | 空则使用设置值 | 背景识别阶段使用 |
+| 后台 PDF 识别（RecognizeMetadata job） | `job_runners.rs` 直接读设置 `translator_base_url` | 空则用 `DEFAULT_TRANSLATOR_BASE_URL` | **不**经 IPC 入参传入（`ImportLocalPdfArgs` 无此字段） |
 
 Translator Runtime 约定端点：
 
@@ -171,6 +187,7 @@ Translator Runtime 约定端点：
 | 用户输入 title/关键词 | S2 ∥ arXiv 并行竞速（5s 预算内 S2 优先） | 已在途的 arXiv 结果 | 无 |
 | 用户输入 arXiv id | Translator `/web` (canonical abs URL) | arXiv Atom | 无 |
 | 用户输入 DOI | Translator `/search` | Crossref `works/{doi}` | 无 |
+| 用户输入 PMID | Translator `/search` | PubMed `efetch` | 无 |
 | 用户输入 URL | Translator `/web` | - | 无 |
 | PDF 识别出 DOI | Translator | Crossref | 本地 title fallback |
 | PDF 识别出 arXiv | arXiv Atom | - | 本地 title fallback |

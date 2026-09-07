@@ -127,7 +127,7 @@ Rust 关键节点 ──emit──▶ Tauri wire 事件 ──┐
 
 ### 订阅 Tauri 事件的约定
 
-一律用 `listenSafe()`（`src/lib/core/tauri-events.ts`）或组件内的 `useTauriEvent()`，**不要**手写 `let off; void (async () => { off = await listen(...) })(); return () => off?.()`：`listen()` 需要一次 Host 往返，在它 resolve 前 dispose 会让 `off` 仍是 undefined，清理成为空操作、监听器永久泄漏 —— StrictMode 每次开发挂载都会命中。非 Tauri wire 的 promise 式订阅（bridge、workspace-broadcast）用 `toSafeDisposer()`。
+一律用类型化事件绑定（`src/lib/core/bindings.ts` 的 `events.*`）：组件内 `useTauriEvent(events.x, cb)`，非 UI 模块 `listenEventSafe(events.x, cb)`（`src/lib/core/tauri-events.ts`），**不要**手写 `let off; void (async () => { off = await listen(...) })(); return () => off?.()`：`listen()` 需要一次 Host 往返，在它 resolve 前 dispose 会让 `off` 仍是 undefined，清理成为空操作、监听器永久泄漏 —— StrictMode 每次开发挂载都会命中。字符串事件名订阅仅限前端窗口间广播（`workspace:*` 等）与 iOS bridge client 事件；非 Tauri wire 的 promise 式订阅（bridge、workspace-broadcast）用 `toSafeDisposer()`。
 
 ## 落地批次
 

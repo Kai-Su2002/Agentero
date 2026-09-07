@@ -118,6 +118,7 @@
 		"colTags": "Tags",
 		"colId": "ID",
 		"colPublication": "Publication",
+		"colCitations": "Citations",
 		"heatmapTooltip": "{{total}} events · {{highlights}} highlights · {{asks}} asks · {{translates}} translations",
 		"sortBy": "Sort by {{column}}",
 		"copyHint": "Click to copy {{label}}",
@@ -128,6 +129,11 @@
 		"filterTags": "Filter by tag",
 		"filterTagsEmpty": "No tags in this library yet.",
 		"clearTagFilter": "Clear tag filter",
+		"easyScholar": {
+			"fetchRank": "Fetch EasyScholar rank tags for all papers",
+			"fetchFailed": "Failed to fetch EasyScholar rank.",
+			"batchDone": "Updated {{updated}} papers · failed {{failed}} · no data {{empty}}"
+		},
 		"noMatch": "No papers match your search.",
 		"columnsMenuLabel": "Columns",
 		"resetColumns": "Reset columns",

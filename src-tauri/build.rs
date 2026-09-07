@@ -3,11 +3,28 @@ use std::fs;
 use std::path::PathBuf;
 
 fn main() {
+    // Unit-test binaries link the full Tauri stack, which statically imports
+    // `TaskDialogIndirect` — exported only by comctl32 v6. tauri-build's
+    // manifest resource reaches bin targets only (`rustc-link-arg-bins`), so
+    // without this every `cargo test` binary starts without a manifest, the
+    // loader binds comctl32 v5 and the process dies with
+    // STATUS_ENTRYPOINT_NOT_FOUND before any test runs. /MANIFESTDEPENDENCY
+    // makes the MSVC linker embed the Common-Controls v6 dependency; for bins
+    // it merges into the manifest tauri-build already provided. GNU toolchains
+    // need a different (windres) mechanism and are excluded here.
+    if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows")
+        && env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
+    {
+        println!(
+            "cargo::rustc-link-arg=/MANIFESTDEPENDENCY:type='win32' \
+             name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+             publicKeyToken='6595b64144ccf1df' language='*' processorArchitecture='*'"
+        );
+    }
     if env::var_os("CARGO_FEATURE_DESKTOP").is_some() {
         tauri_build::build();
     }
     forward_posthog_key();
-    generate_onboarding_templates();
 }
 
 /// Bake the PostHog project API key into the binary at compile time.
@@ -36,57 +53,4 @@ fn forward_posthog_key() {
         println!("cargo:rustc-env=AGENTERO_POSTHOG_KEY={value}");
         return;
     }
-}
-
-fn generate_onboarding_templates() {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let notes_root = manifest_dir.join("../templates/vault/notes");
-    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    let generated = out_dir.join("onboarding_templates.rs");
-
-    println!("cargo:rerun-if-changed={}", notes_root.display());
-
-    let mut entries = Vec::new();
-    let locales = fs::read_dir(&notes_root)
-        .unwrap_or_else(|e| panic!("read onboarding notes directory: {e}"))
-        .filter_map(Result::ok)
-        .filter(|entry| entry.path().is_dir())
-        .collect::<Vec<_>>();
-
-    for locale_dir in locales {
-        let locale = locale_dir.file_name().to_string_lossy().into_owned();
-        let mut files = fs::read_dir(locale_dir.path())
-            .unwrap_or_else(|e| panic!("read onboarding locale {locale}: {e}"))
-            .filter_map(Result::ok)
-            .filter(|entry| {
-                entry.path().is_file() && entry.path().extension().is_some_and(|ext| ext == "md")
-            })
-            .collect::<Vec<_>>();
-        files.sort_by_key(|entry| entry.file_name());
-
-        for file in files {
-            let filename = file.file_name().to_string_lossy().into_owned();
-            // Keep the selected locale in the embedded entry, but flatten the
-            // generated Vault paths so onboarding notes live directly in notes/.
-            let rel = format!("notes/{filename}");
-            let path = file.path();
-            entries.push((locale.clone(), rel, path));
-        }
-    }
-
-    entries.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
-
-    let mut source =
-        String::from("pub(crate) static BUNDLED_ONBOARDING_FILES: &[(&str, &str, &str)] = &[\n");
-    for (locale, rel, path) in entries {
-        source.push_str(&format!(
-            "    ({:?}, {:?}, include_str!({:?})),\n",
-            locale,
-            rel,
-            path.to_string_lossy().to_string()
-        ));
-    }
-    source.push_str("];\n");
-
-    fs::write(generated, source).expect("write generated onboarding templates");
 }

@@ -1,4 +1,4 @@
-import { ChevronRight, ExternalLink } from "lucide-react";
+import { ChevronRight, ExternalLink, RefreshCw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -7,12 +7,20 @@ import {
 	SettingsGroup,
 	SettingsRow,
 } from "@/components/settings/settings-layout";
+import type { SettingsHostContext } from "@/components/settings/types";
 import { Button } from "@/components/ui/button";
 import {
 	Collapsible,
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+	Dialog,
+	DialogContent,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -28,8 +36,14 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { errorMessage, notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
+import {
+	clearAndReparse,
+	clearParseResults,
+	type ParseResultScope,
+} from "@/lib/paper/reparse";
 import {
 	layoutBackendsAfterClearingProvider,
 	persistLayoutProviderConfig,
@@ -105,12 +119,22 @@ function probeStatusLabelKey(status: ProbeStatus): string {
 export function LayoutPane({
 	settings,
 	patch,
+	vaultPath,
+	hostContext,
 }: {
 	settings: AppSettings;
 	patch: (p: Partial<AppSettings>) => void;
+	vaultPath?: string | null;
+	hostContext: SettingsHostContext;
 }) {
-	const { t } = useTranslation("settings");
+	const { t } = useTranslation(["settings", "common"]);
 	const layout = settings.layout;
+	const isLocalVault = hostContext.kind === "local";
+	const canManageResults = Boolean(vaultPath) && isLocalVault && isTauri();
+	const [dialogOpen, setDialogOpen] = useState(false);
+	const [dialogMode, setDialogMode] = useState<"clear" | "reparse">("clear");
+	const [scope, setScope] = useState<ParseResultScope>("all");
+	const [busy, setBusy] = useState(false);
 	const isProviderConfigured = (id: LayoutProviderId) =>
 		(layout.providerConfigs[id]?.apiKey ?? "").trim().length > 0;
 	// All remote providers are listed for configuration, like the translate
@@ -134,6 +158,46 @@ export function LayoutPane({
 			backend === layout.parserBackend ||
 			isProviderConfigured(backend),
 	);
+
+	const openDialog = useCallback((mode: "clear" | "reparse") => {
+		setDialogMode(mode);
+		setScope("all");
+		setDialogOpen(true);
+	}, []);
+
+	const handleConfirm = useCallback(async () => {
+		if (!vaultPath) return;
+		setBusy(true);
+		try {
+			const result =
+				dialogMode === "clear"
+					? await clearParseResults(vaultPath, scope)
+					: await clearAndReparse(vaultPath, scope);
+			notifySuccess(
+				t(
+					dialogMode === "clear"
+						? "layout.clearResults.clearDone"
+						: "layout.clearResults.reparseDone",
+					{
+						scanned: result.papersScanned,
+						removed: result.filesRemoved,
+						layout: "layoutEnqueued" in result ? result.layoutEnqueued : 0,
+						paper: "paperEnqueued" in result ? result.paperEnqueued : 0,
+					},
+				),
+			);
+			setDialogOpen(false);
+		} catch (err) {
+			notifyError(errorMessage(err));
+		} finally {
+			setBusy(false);
+		}
+	}, [dialogMode, scope, vaultPath, t]);
+
+	const confirmLabel =
+		dialogMode === "clear"
+			? t("layout.clearResults.confirmClear")
+			: t("layout.clearResults.confirmReparse");
 
 	return (
 		<div className="space-y-6">
@@ -226,6 +290,101 @@ export function LayoutPane({
 					))}
 				</div>
 			</div>
+
+			<div className="flex justify-end gap-2">
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					disabled={!canManageResults || busy}
+					onClick={() => openDialog("clear")}
+				>
+					<Trash2 data-icon="inline-start" className="size-3.5" />
+					{t("layout.clearResults.clear")}
+				</Button>
+				<Button
+					type="button"
+					variant="outline"
+					size="sm"
+					disabled={!canManageResults || busy}
+					onClick={() => openDialog("reparse")}
+				>
+					<RefreshCw data-icon="inline-start" className="size-3.5" />
+					{t("layout.clearResults.clearAndReparse")}
+				</Button>
+			</div>
+
+			<Dialog
+				open={dialogOpen}
+				onOpenChange={(open) => {
+					if (!open && !busy) setDialogOpen(false);
+				}}
+			>
+				<DialogContent
+					showCloseButton={false}
+					className="sm:max-w-xs"
+					aria-describedby={undefined}
+				>
+					<DialogHeader>
+						<DialogTitle>
+							{dialogMode === "clear"
+								? t("layout.clearResults.dialog.clearTitle")
+								: t("layout.clearResults.dialog.reparseTitle")}
+						</DialogTitle>
+					</DialogHeader>
+
+					<div className="space-y-1.5 py-1">
+						<Label className="text-xs text-muted-foreground">
+							{t("layout.clearResults.dialog.scopeLabel")}
+						</Label>
+						<Select
+							value={scope}
+							onValueChange={(v) => setScope(v as ParseResultScope)}
+							disabled={busy}
+						>
+							<SelectTrigger size="sm" className="w-full">
+								<SelectValue />
+							</SelectTrigger>
+							<SelectContent>
+								<SelectItem value="layout">
+									{t("layout.clearResults.scope.layout")}
+								</SelectItem>
+								<SelectItem value="paper">
+									{t("layout.clearResults.scope.paper")}
+								</SelectItem>
+								<SelectItem value="all">
+									{t("layout.clearResults.scope.all")}
+								</SelectItem>
+							</SelectContent>
+						</Select>
+					</div>
+
+					<DialogFooter className="gap-2 sm:gap-0">
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							disabled={busy}
+							onClick={() => setDialogOpen(false)}
+						>
+							{t("common:cancel")}
+						</Button>
+						<Button
+							type="button"
+							variant="destructive"
+							size="sm"
+							disabled={busy}
+							onClick={() => void handleConfirm()}
+						>
+							{busy
+								? dialogMode === "clear"
+									? t("layout.clearResults.clearing")
+									: t("layout.clearResults.reparsing")
+								: confirmLabel}
+						</Button>
+					</DialogFooter>
+				</DialogContent>
+			</Dialog>
 		</div>
 	);
 }

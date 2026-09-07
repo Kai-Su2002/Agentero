@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod acp_live {
     use crate::features::agent::acp::permission_response;
-    use crate::features::agent::discover::resolve_command;
     use crate::features::agent::list_acp_sessions;
     use crate::features::agent::models::{AgentDescriptor, AgentTemplate, CatalogAcpStatus};
-    use crate::features::agent::templates::catalog_templates;
+    use crate::features::agent::registry::discovery::resolve_command;
+    use crate::features::agent::registry::templates::catalog_templates;
     use crate::features::agent::AgentRegistry;
     use agent_client_protocol::schema::v1::{
         PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
@@ -44,7 +44,7 @@ mod acp_live {
         assert!(ids.contains(&"claude-acp"));
         assert!(ids.contains(&"codex-acp"));
         assert!(ids.contains(&"hermes"));
-        assert!(ids.contains(&"gemini"));
+        assert!(ids.contains(&"antigravity"));
         assert!(ids.contains(&"qodercli"));
         assert!(ids.contains(&"grok-build"));
         assert!(ids.contains(&"pi"));
@@ -217,9 +217,9 @@ mod acp_live {
         if resolve_command("codex").is_some() {
             assert!(by_id("codex-acp").binary_available);
         }
-        if resolve_command("gemini").is_none() {
-            assert!(!by_id("gemini").binary_available);
-            assert_eq!(by_id("gemini").acp_status, CatalogAcpStatus::Missing);
+        if resolve_command("agy").is_none() {
+            assert!(!by_id("antigravity").binary_available);
+            assert_eq!(by_id("antigravity").acp_status, CatalogAcpStatus::Missing);
         }
     }
 
@@ -263,7 +263,7 @@ mod acp_live {
 
 #[cfg(test)]
 mod tool_payload {
-    use crate::features::agent::acp::{cap_tool_payload, TOOL_PAYLOAD_MAX_BYTES};
+    use crate::features::agent::acp::updates::{cap_tool_payload, TOOL_PAYLOAD_MAX_BYTES};
     use serde_json::{json, Value};
 
     #[test]
@@ -314,7 +314,7 @@ mod tool_payload {
 
 #[cfg(test)]
 mod list_sessions_paging {
-    use crate::features::agent::acp::{
+    use crate::features::agent::session::{
         list_sessions_page_done, LIST_SESSIONS_BUDGET, LIST_SESSIONS_MAX, LIST_SESSIONS_MAX_PAGES,
     };
     use std::time::Duration;
@@ -380,5 +380,31 @@ mod list_sessions_paging {
             1,
             LIST_SESSIONS_BUDGET
         ));
+    }
+
+    #[test]
+    fn simplified_agent_cwd_strips_extended_prefix() {
+        use crate::features::agent::acp::client::simplified_agent_cwd;
+
+        // Rust canonicalize() hands back extended-length drive paths; MSYS2
+        // shells cannot cd into them, so the agent must receive the plain form.
+        assert_eq!(
+            simplified_agent_cwd(std::path::Path::new(r"\\?\D:\Documents\Zotero")),
+            std::path::PathBuf::from(r"D:\Documents\Zotero")
+        );
+        assert_eq!(
+            simplified_agent_cwd(std::path::Path::new(r"D:\Documents\Zotero")),
+            std::path::PathBuf::from(r"D:\Documents\Zotero")
+        );
+        // UNC layouts have no plain drive form and stay unchanged.
+        assert_eq!(
+            simplified_agent_cwd(std::path::Path::new(r"\\?\UNC\server\share")),
+            std::path::Path::new(r"\\?\UNC\server\share")
+        );
+        // POSIX paths pass through untouched.
+        assert_eq!(
+            simplified_agent_cwd(std::path::Path::new("/home/user/vault")),
+            std::path::Path::new("/home/user/vault")
+        );
     }
 }

@@ -4,11 +4,15 @@
  * body size, then re-fits so the translation fills the block without huge gaps.
  */
 
-import { memo } from "react";
+import { memo, useLayoutEffect, useRef } from "react";
 import { cn } from "@/lib/core/utils";
 import { isLayoutTranslateHeadingKind } from "@/lib/pdf/layout/labels";
 import type { LayoutTranslateItem } from "@/lib/pdf/layout/layout-translate";
-import { PDF_PAGE_RASTER_DARK_CLASS } from "@/lib/pdf/page-theme";
+import {
+	PDF_PAGE_RASTER_DARK_CLASS,
+	PDF_PAPER_BLOCK_CLASS,
+	type PdfPaperTone,
+} from "@/lib/pdf/page-theme";
 
 type LayoutTranslateOverlayProps = {
 	/** Items already bucketed for this one page (groupLayoutTranslateItemsByPage). */
@@ -16,21 +20,30 @@ type LayoutTranslateOverlayProps = {
 	/** Page pixel size (for font-size heuristic). */
 	pageWidthPx: number;
 	pageHeightPx: number;
-	/** Match PDF page theme (not app chrome). */
-	pdfDark?: boolean;
+	/** Match PDF page paper (not app chrome). */
+	tone?: PdfPaperTone;
 };
 
 const LINE_HEIGHT = 1.25;
-const FS_MIN = 7;
+/**
+ * Heuristic floor. A DOM-measured second pass below may go lower only when the
+ * real browser metrics prove the text would otherwise be clipped.
+ */
+const FS_MIN = 4;
 const FS_MAX = 20;
+const FIT_SAFETY = 0.97;
+const DOM_FIT_ABSOLUTE_MIN = 1;
+const DOM_FIT_EPSILON_PX = 0.5;
 
 /** Wider glyphs for CJK; narrower for Latin (academic body). */
 function avgGlyphEm(text: string): number {
 	const t = text.replace(/\s+/g, "");
-	if (!t.length) return 0.55;
+	if (!t.length) return 0.58;
 	const cjk = (t.match(/[\u3000-\u9fff\u3400-\u4dbf]/g) ?? []).length;
 	const ratio = cjk / t.length;
-	return 0.5 * (1 - ratio) + 0.92 * ratio;
+	// Slightly conservative widths avoid an optimistic fit estimate followed by
+	// CSS overflow clipping at real browser font metrics.
+	return 0.55 * (1 - ratio) + 1 * ratio;
 }
 
 function estimateLineCount(
@@ -82,7 +95,7 @@ function fitFontSizeToBox(
 		if (h <= heightPx) lo = mid;
 		else hi = mid;
 	}
-	return lo;
+	return Math.max(FS_MIN, lo * FIT_SAFETY);
 }
 
 /**
@@ -200,6 +213,86 @@ function fontSizeForLayoutTranslateItem(
 	return fontSize;
 }
 
+function elementFitsBox(element: HTMLParagraphElement): boolean {
+	return (
+		element.scrollHeight <= element.clientHeight + DOM_FIT_EPSILON_PX &&
+		element.scrollWidth <= element.clientWidth + DOM_FIT_EPSILON_PX
+	);
+}
+
+type ExactFitParagraphProps = {
+	text: string;
+	initialFontSize: number;
+	boxWidthPx: number;
+	boxHeightPx: number;
+	isHeading: boolean;
+};
+
+/**
+ * The heuristic above is fast but font metrics differ across Windows/macOS,
+ * installed CJK fonts, and zoom levels. Verify the final browser layout and, if
+ * necessary, binary-search the actual DOM font size so `overflow-hidden` never
+ * silently chops off an otherwise complete translation.
+ */
+const ExactFitParagraph = memo(function ExactFitParagraph({
+	text,
+	initialFontSize,
+	boxWidthPx,
+	boxHeightPx,
+	isHeading,
+}: ExactFitParagraphProps) {
+	const ref = useRef<HTMLParagraphElement>(null);
+
+	useLayoutEffect(() => {
+		const element = ref.current;
+		if (!element || boxWidthPx <= 0 || boxHeightPx <= 0) return;
+		// Wait until React has committed the text this fit pass is measuring.
+		if (element.textContent !== text) return;
+
+		const applySize = (size: number) => {
+			element.style.fontSize = `${size}px`;
+		};
+
+		applySize(initialFontSize);
+		if (elementFitsBox(element)) return;
+
+		let lo = DOM_FIT_ABSOLUTE_MIN;
+		let hi = initialFontSize;
+		let best = DOM_FIT_ABSOLUTE_MIN;
+		applySize(lo);
+
+		// The 1px emergency floor makes clipping practically impossible even for
+		// malformed tiny boxes. If it still cannot fit, keep the smallest readable
+		// browser size rather than pretending the larger heuristic fit succeeded.
+		if (!elementFitsBox(element)) return;
+
+		for (let i = 0; i < 10; i++) {
+			const mid = (lo + hi) / 2;
+			applySize(mid);
+			if (elementFitsBox(element)) {
+				best = mid;
+				lo = mid;
+			} else {
+				hi = mid;
+			}
+		}
+		applySize(Math.max(DOM_FIT_ABSOLUTE_MIN, best * FIT_SAFETY));
+	}, [boxHeightPx, boxWidthPx, initialFontSize, text]);
+
+	return (
+		<p
+			ref={ref}
+			className={cn(
+				"m-0 h-full w-full overflow-hidden break-words whitespace-pre-wrap",
+				isHeading && "font-bold",
+			)}
+			style={{ fontSize: initialFontSize }}
+		>
+			{text}
+		</p>
+	);
+});
+
 /**
  * Paint translated (or in-flight) blocks for one PDF page.
  */
@@ -207,7 +300,7 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 	items,
 	pageWidthPx,
 	pageHeightPx,
-	pdfDark = false,
+	tone = "white",
 }: LayoutTranslateOverlayProps) {
 	const onPage = items.filter(
 		(it) =>
@@ -231,15 +324,18 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 					pageHeightPx,
 					text,
 				);
+				const boxWidthPx = item.bbox.w * pageWidthPx;
+				const boxHeightPx = item.bbox.h * pageHeightPx;
 				return (
 					<div
 						key={`layout-tr-${item.id}`}
 						className={cn(
 							"pointer-events-none absolute z-[3] overflow-hidden rounded-[1px]",
-							// Always paint as light paper; in PDF dark mode apply the same
-							// invert as page rasters so cover blocks match inverted paper.
-							"bg-white text-zinc-900",
-							pdfDark && PDF_PAGE_RASTER_DARK_CLASS,
+							// Blocks are opaque paper: paint the active tone, and invert in
+							// dark mode exactly like the page rasters so they still match.
+							PDF_PAPER_BLOCK_CLASS[tone],
+							"text-zinc-900",
+							tone === "dark" && PDF_PAGE_RASTER_DARK_CLASS,
 							item.status === "running" && "opacity-90",
 						)}
 						style={{
@@ -259,14 +355,13 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 						}}
 						aria-hidden="true"
 					>
-						<p
-							className={cn(
-								"m-0 h-full w-full overflow-hidden break-words whitespace-pre-wrap",
-								isHeading && "font-bold",
-							)}
-						>
-							{text}
-						</p>
+						<ExactFitParagraph
+							text={text}
+							initialFontSize={fontSize}
+							boxWidthPx={boxWidthPx}
+							boxHeightPx={boxHeightPx}
+							isHeading={isHeading}
+						/>
 					</div>
 				);
 			})}

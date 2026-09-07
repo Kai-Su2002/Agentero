@@ -32,9 +32,9 @@ async function resolveProxyUrl(): Promise<string | undefined> {
 		url = settings.networkProxyUrl.trim() || undefined;
 	} else {
 		try {
-			const { invokeApi } = await import("@/lib/core/ipc");
-			url =
-				(await invokeApi<string | null>("network_system_proxy")) ?? undefined;
+			const { callApi } = await import("@/lib/core/ipc");
+			const { commands } = await import("@/lib/core/bindings");
+			url = (await callApi(() => commands.networkSystemProxy())) ?? undefined;
 		} catch {
 			url = undefined;
 		}

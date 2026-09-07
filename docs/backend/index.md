@@ -1,6 +1,6 @@
 # 后端
 
-Tauri 2 + Rust Host：文件系统、Catalog、索引、ACP Client、远程 Vault。CLI（`cli/`）path 依赖同一 `agentero_lib`。
+Tauri 2 + Rust Host：文件系统、Catalog、索引、ACP Client、远程 Vault。tauri 无关的基座与数据域在 `agentero-core` crate；CLI（`cli/`）只依赖 `agentero-core`，Host 经桥接 re-export 复用同一实现（见 [../development/crate-split-roadmap.md](../development/crate-split-roadmap.md)）。
 
 > 整体架构与跨层工作流见 [../architecture.md](../architecture.md)。
 
@@ -19,22 +19,24 @@ Tauri 2 + Rust Host：文件系统、Catalog、索引、ACP Client、远程 Vaul
 ## 源码布局（feature-first）
 
 ```text
+crates/agentero-core/src/   # tauri 无关基座 + 数据域（agentero-core crate）
+  error、fs、http、paths、log_util、sqlite、time、blocking、usage（存储层）…
+  app_handle    # AppHandle + HostHooks（宿主回调抽象：emit / job spawn）
+  features/     # catalog、vault（tree/trash/rename/doctor）、wiki、import、
+                # zotero codec/io、scholar_api、pdf_parse、refs、feeds、
+                # translate、pdf locate/marks、lifecycle、open_request
 src-tauri/src/
-  app/           # run()、menu、logging、command 注册
-  core/          # error、fs、paths、log_util
-  features/      # 与前端 lib 域对齐
-    vault/ catalog/ import/ wiki/ doctor/ agent/
-    connector/ mcp/ remote/ search/ settings/
-    translate/ trash/ watcher/ terminal/ window/
-    bridge/ layout_model/ refs/ arxiv_proxy/
-    jobs/       # JobCenter 纯调度器：lanes/去重/并发上限；runner 由业务域启动时注册
-    rename/     # 链接感知改名编排：搬文件 + 修双链 + catalog 联动，单向调用 vault/wiki/catalog 原子能力
-    coolpapers/ # papers.cool：Kimi 解析写入 NOTES.md + 广场站点代理
-    site_proxy/     # 广场站点代理共享管道（转发 + HTML 注入闸门）
-    modelscope_proxy/ # modelscope.cn/papers 广场来源
-    telemetry/  # 桌面端，PostHog 匿名遥测
-    usage/      # XDG usage.sqlite 本地活动日志
-    feeds/      # 广场订阅：XDG feeds.sqlite + RSS/Atom 拉取
+  app/          # run()、menu、logging、command 注册、open_request desktop 壳
+  core/         # 桥接层：re-export agentero-core；app_handle 桥（TauriHostHooks）、telemetry、usage::commands
+  features/     # 与前端 lib 域对齐；各域 mod.rs = pub use agentero_core + desktop 壳留守
+    vault/      # commands、watcher（trash/rename/doctor 的 commands 留守）
+    paper/      # catalog commands、import 壳（job_runners/remote_ops/recognize）、
+                # analyze/layout、body_engines（云端 parse 引擎）、zotero db、discovery 站点代理
+    pdf/        # export
+    markdown/   # wiki commands/heading_rename、search
+    system/     # settings
+    agent/ jobs/ lifecycle（job 事件）
+  integration/  # connector、mcp、remote、bridge、sync（desktop-only）
   lib.rs
   main.rs
 ```
@@ -51,7 +53,7 @@ src-tauri/src/
 | `tauri-plugin-log` | 运行日志 |
 | shell / 子进程 | spawn ACP agent（及 SSH 相关） |
 
-应用设置走 XDG `settings.json`（`features/settings`），不依赖把论文 meta 放进 Store。
+应用设置走 XDG `settings.json`（`features/system/settings`），不依赖把论文 meta 放进 Store。
 
 ## 主要 Rust crates
 

@@ -5,7 +5,7 @@ Headless Vault / Catalog / Wiki 接口；**不含** BYOA / paper-reader。
 ## 位置
 
 - 目录：`cli/`（crate `agentero-cli`）
-- path 依赖 `agentero_lib`：`features::{vault,catalog,import,wiki}` + `core::{error,fs}`
+- path 依赖 `agentero-core`（**不**依赖 `agentero_lib`，依赖树无 tauri/wry/tao）：`features::{vault,catalog,import,wiki,zotero,feeds,translate,doctor,trash,pdf_locate,open_request}` + 顶层 `{error,fs,usage}`
 - 可选同版本 CLI 安装（不随桌面安装包打入，减小体积 [#285](https://github.com/poco-ai/Agentero/issues/285)；open/deep-link 仍见 [#165](https://github.com/poco-ai/Agentero/issues/165) / [#166](https://github.com/poco-ai/Agentero/issues/166)）
   - 设置 → 关于：**安装 CLI** 从 GitHub Release 下载与 App **同版本** 的 `agentero-cli-{ver}-{triple}` 归档，校验 `.sha256` 后写入用户目录并创建 PATH shim。POSIX 写 `~/.local/bin/agentero` 软链（不静默改 shell rc）；Windows 写 `agentero-cli.cmd` 并**自动把安装目录加入用户 PATH**（`HKCU\Environment`，广播 `WM_SETTINGCHANGE`，无需重启，新开终端即可用 `agentero-cli`）。下载 404 的错误文案会带上完整资产 URL（含宿主 triple），架构/版本不匹配时自解释；`CliInstallStatus.commandName` 供前端按平台展示验证命令
   - 独立 CLI 归档仍随每次 Release 发布，供无桌面的 headless 机器使用；macOS 亦可通过 Homebrew tap `poco-ai/agentero` 安装 headless CLI
@@ -106,7 +106,7 @@ zh 目标走并行竞速）；商业 BYOK Key 只在桌面 settings 里，CLI �
 所以论文开着时跑 CLI 也能在 1~2 秒内看到黄底（见 [frontend/pdf.md](../frontend/pdf.md)）。
 
 ```bash
-# CLI 以 `default-features = false` 依赖 `agentero_lib`，headless 构建不走 tauri-build。
+# CLI 只依赖 agentero-core（tauri 无关），headless 构建不走 tauri-build。
 # 桌面安装包不内置 CLI（已移除 `externalBin`，安装目录不会出现占位 agentero-cli.exe）；
 # 开发机可选跑下面命令把真二进制放进 src-tauri/binaries，让 设置 → 安装 CLI 走本地路径：
 pnpm cli:bundle

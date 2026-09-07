@@ -4,7 +4,8 @@
  * the rebuildable `{paper}/source/agentero-cite.json`; see docs/backend/api.md
  * `paper_refs_parse` / `paper_refs_list`.
  */
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi, callApiResult } from "@/lib/core/ipc";
 
 export type CitationMeta = {
 	title?: string;
@@ -48,11 +49,12 @@ export async function paperRefsList(
 	vaultPath: string,
 	path: string,
 ): Promise<CiteSidecar | null> {
-	const sidecar = await invokeApi<CiteSidecar | null>(
-		"paper_refs_list",
-		{ args: { vaultPath, path } },
-		{ fallback: "paper_refs_list failed", allowVoid: true },
-	);
+	// Wire sidecars carry serde `null` on absent optionals; domain readers
+	// treat them as absent, so fold once at the boundary.
+	const sidecar = (await callApi(
+		() => commands.paperRefsList({ vaultPath, path }),
+		{ fallback: "paper_refs_list failed" },
+	)) as CiteSidecar | null;
 	return sidecar ?? null;
 }
 
@@ -62,11 +64,10 @@ export async function paperRefsParse(
 	path: string,
 	force = false,
 ): Promise<CiteSidecar> {
-	return await invokeApi<CiteSidecar>(
-		"paper_refs_parse",
-		{ args: { vaultPath, path, force } },
+	return (await callApiResult(
+		() => commands.paperRefsParse({ vaultPath, path, force }),
 		{ fallback: "paper_refs_parse failed" },
-	);
+	)) as CiteSidecar;
 }
 
 /**
@@ -81,9 +82,8 @@ export async function loadPaperRefsReadOnly(
 ): Promise<CiteSidecar | null> {
 	const sidecar = await paperRefsList(vaultPath, path).catch(() => null);
 	if (!sidecar) {
-		void invokeApi(
-			"job_parse_refs_enqueue",
-			{ args: { vaultPath, path, force: false } },
+		void callApiResult(
+			() => commands.jobParseRefsEnqueue({ vaultPath, path, force: false }),
 			{ fallback: "refs parse enqueue failed" },
 		).catch(() => undefined);
 	}
@@ -130,8 +130,8 @@ export type CitingScanResult = {
  * Reverse citations — who cites *my* library. The opposite direction from the
  * rest of this module, and online-only: local TeX/`.bbl` cannot know it.
  *
- * `taskId` is the background-task id; Host routes progress events to it and
- * polls it for cancellation.
+ * `taskId` is the JobCenter job id; Host routes `job:progress` events to it
+ * and polls it for cancellation.
  */
 export async function libraryCitingScan(
 	vaultPath: string,
@@ -142,19 +142,17 @@ export async function libraryCitingScan(
 		force?: boolean;
 	} = {},
 ): Promise<CitingScanResult> {
-	return await invokeApi<CitingScanResult>(
-		"library_citing_scan",
-		{
-			args: {
+	return (await callApiResult(
+		() =>
+			commands.libraryCitingScan({
 				vaultPath,
 				taskId: opts.taskId ?? null,
 				sinceDays: opts.sinceDays ?? null,
 				budget: opts.budget ?? null,
 				force: opts.force ?? false,
-			},
-		},
+			}),
 		{ fallback: "library_citing_scan failed" },
-	);
+	)) as CitingScanResult;
 }
 
 /** Identifier usable by magic-wand import for an unmatched citation. */

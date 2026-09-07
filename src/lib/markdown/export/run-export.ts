@@ -1,7 +1,8 @@
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import i18n from "@/i18n";
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 import {
 	applyPngWatermark,
@@ -24,11 +25,9 @@ const EXPORT_WIDTH_PX = 800;
 
 async function loadSystemCjkFontBytes(): Promise<Uint8Array | null> {
 	try {
-		const payload = await invokeApi<{ path: string; bytesBase64: string }>(
-			"export_system_cjk_font",
-			undefined,
-			{ fallback: "export_system_cjk_font failed" },
-		);
+		const payload = await callApi(() => commands.exportSystemCjkFont(), {
+			fallback: "export_system_cjk_font failed",
+		});
 		if (!payload?.bytesBase64) return null;
 		const binary = atob(payload.bytesBase64);
 		const bytes = new Uint8Array(binary.length);

@@ -39,6 +39,7 @@ import {
 import { useBackgroundTasks } from "@/hooks/use-background-tasks";
 import {
 	type BackgroundTask,
+	type BackgroundTaskIcon,
 	type BackgroundTaskKind,
 	cancelBackgroundTask,
 	clearFinishedBackgroundTasks,
@@ -51,29 +52,48 @@ import { cn } from "@/lib/core/utils";
 /** Dwell before expanding detail from the ring (avoids flicker on pass-over). */
 const HOVER_EXPAND_MS = 400;
 
-/** Center icon for the primary active task kind. */
-function kindIcon(kind: BackgroundTaskKind | undefined) {
+/** Default icon per row kind; params-dependent rows carry an explicit hint. */
+const KIND_ICONS: Partial<Record<BackgroundTaskKind, BackgroundTaskIcon>> = {
+	downloadAssets: "download",
+	modelDownload: "download",
+	citingScan: "search",
+	import: "fileUp",
+	zoteroMigrate: "fileUp",
+	libraryIo: "package",
+	parseRefs: "layout",
+	layoutAnalyze: "layout",
+	layoutRun: "layout",
+	connectorSync: "plug",
+	recognizeMetadata: "scan",
+	paperRead: "read",
+};
+
+function taskIcon(task: BackgroundTask | undefined): BackgroundTaskIcon {
+	if (!task) return "list";
+	return task.icon ?? KIND_ICONS[task.kind] ?? "list";
+}
+
+/** Center icon for the primary active task. */
+function iconGlyph(icon: BackgroundTaskIcon) {
 	const cls = "relative size-3.5 text-foreground";
-	switch (kind) {
+	switch (icon) {
 		case "download":
-		case "downloadAll":
 			return <Download className={cls} aria-hidden />;
-		case "lookup":
+		case "search":
 			return <Search className={cls} aria-hidden />;
-		case "import":
+		case "fileUp":
 			return <FileUp className={cls} aria-hidden />;
-		case "export":
+		case "package":
 			return <Package className={cls} aria-hidden />;
-		case "parse":
 		case "layout":
 			return <LayoutGrid className={cls} aria-hidden />;
-		case "paperRead":
+		case "read":
 			return <BookOpen className={cls} aria-hidden />;
-		case "connector":
+		case "plug":
 			return <Plug className={cls} aria-hidden />;
-		case "recognize":
+		case "scan":
 			return <ScanSearch className={cls} aria-hidden />;
-		default:
+		case "list":
 			return <ListOrdered className={cls} aria-hidden />;
 	}
 }
@@ -192,20 +212,20 @@ const RING_CENTER_MS = 2400;
 /** Success pop / ring-merge celebration after the last active task ends. */
 const RING_SUCCESS_MS = 900;
 
-/** Circular progress control — center cycles progress / kind icon. */
+/** Circular progress control — center cycles progress / task icon. */
 function ProgressRing({
 	activeCount,
 	failed,
 	label,
 	progress,
-	taskKind,
+	icon,
 	onActivate,
 }: {
 	activeCount: number;
 	failed: boolean;
 	label: string;
 	progress: number | null;
-	taskKind?: BackgroundTaskKind;
+	icon: BackgroundTaskIcon;
 	onActivate: () => void;
 }) {
 	const radius = 16;
@@ -272,9 +292,9 @@ function ProgressRing({
 				/>
 			);
 		}
-		// Active work: cycle progress ↔ kind icon.
+		// Active work: cycle progress ↔ task icon.
 		if (phase === "icon") {
-			return kindIcon(taskKind);
+			return iconGlyph(icon);
 		}
 		// progress phase
 		if (activeCount > 1) {
@@ -292,7 +312,7 @@ function ProgressRing({
 			);
 		}
 		// No numeric progress yet — show task icon.
-		return kindIcon(taskKind);
+		return iconGlyph(icon);
 	})();
 
 	return (
@@ -563,7 +583,7 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 						failed={hasFailed}
 						label={ringLabel}
 						progress={ringProgress}
-						taskKind={active[0]?.kind}
+						icon={taskIcon(active[0])}
 						onActivate={() => {
 							pointerInsideRef.current = true;
 							if (hoverExpandTimerRef.current) {

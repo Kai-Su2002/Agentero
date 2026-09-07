@@ -7,7 +7,7 @@
 | **渲染** | 前端 EmbedPDF + PDFium | 展示页面、缩放、翻页、选区 |
 | **解析** | Host liteparse 等 | 生成 `PAPER.md`、Agent 可读正文（与预览分离） |
 
-任意 Vault 路径 `.pdf` 可 `blob:` 预览；论文单元：本地优先 → 自动下载 → 远程 `pdf_url` 回退。HTML 用远程 `html_url` iframe（不注入主 DOM）。普通网页条目打开 HTML 并创建 `NOTES.md` 分屏；旧条目缺少 `html_url` 时从 `source_url` 兜底。
+任意 Vault 路径 `.pdf` 可 `blob:` 预览；论文单元：本地优先 → 自动下载（JobCenter `downloadAssets` job，Host 续接 PAPER.md / 版面分析）→ 远程 `pdf_url` 回退。HTML 用远程 `html_url` iframe（不注入主 DOM）。普通网页条目打开 HTML 并创建 `NOTES.md` 分屏；旧条目缺少 `html_url` 时从 `source_url` 兜底。
 
 PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑在 Web Worker，缩放/滚动不阻塞主线程）；启动时经 `whenReady()` 就绪握手 + 8s 超时探针验证（`@embedpdf/engines` patch 同时把 worker 侧 `wasmError` / `onerror` 暴露为就绪失败，不再静默挂起），失败则自动回退主线程 direct engine 并记住结论（旧版库的 worker 变体在 Tauri WebView 下就绪消息丢失，表现为文档永远“正在加载”）。wasm URL 传给 worker 前先解析为绝对地址（blob worker 不能按页面基址解析相对路径）。对未嵌入字体的 PDF，Host 按 macOS / Windows / Linux 的系统字体路径读取一个本机 CJK 字体，通过本地 `blob:` URL 提供给 PDFium；移动端和找不到可读字体时安全跳过，不产生外部字体请求。Engine 宿主位于 React StrictMode 外，异步初始化即使在完成前被卸载也会主动销毁结果，避免 dev reload 遗留孤儿 WASM engine。工作区只挂载当前可见与最近使用的至多两个 PDF viewer；恢复的隐藏 PDF 标签按需 hydrate，退出保留集合的本地 PDF 字节会释放并在再次激活时重新读取。
 
@@ -28,7 +28,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 | 平移 | 放大后拖拽平移（临时抓手，与 Acrobat / Preview 一致）：按住**鼠标中键**拖拽，或按住**空格** + 左键拖拽；页面 1:1 跟随光标（含横向与斜向），armed 时 `grab`、拖拽中 `grabbing`。空格是无修饰裸键，归属规则与 `⌘F` 一致：**指针悬停的 viewer 优先接管**（阅读时焦点常落在 tab / 侧栏 / 笔记面板，不要求它是 dockview 的 active panel），否则由 active viewer 接管（焦点在 host 内，或点击页面后焦点仍停在 body）；输入框 / 按钮 / 链接，以及 `tab` / `option` / `checkbox` / `treeitem` 等可被空格激活的角色聚焦时保持原生行为；`⌘.` 框选模式下左键拖拽让位给 marquee，中键仍可平移；一旦 armed，左键与中键**完全等价**：除输入框等可编辑区域外，任意位置起手都平移，期间工具栏按钮与文中引用命中区的点击被暂时挂起（与 Acrobat 抓手一致），松开空格即恢复；`bindPanDragGesture` 在滚动容器 capture 阶段拦截并抑制兼容 `mousedown`，因此不会触发 EmbedPDF 划词、链接点击或 WebKit / Windows 中键自动滚动 |
 | 大纲 / 参考文献 / 版面解析 | 左侧浮层：书签、参考文献（紧凑列表）、版面解析结果（图/表/算法/公式） |
 | 查找 | `⌘F` + 命中高亮 |
-| 明暗模式 | 底部换页栏旁可单独切换亮色 / 暗色页面，偏好保存在本地，不改变应用全局主题。EmbedPDF 尚无页面 color-scheme API，仅在 PDF 暗色模式下对 `RenderLayer` / `TilingLayer` 做柔和反相（`PDF_PAGE_RASTER_DARK_CLASS`：`invert(0.88)` + `hue-rotate(180)` + 轻亮度/对比）；全文翻译覆盖层同样按浅色纸面绘制后套用同一 filter，以匹配反转后的纸面。选区 / 搜索 / 批注覆盖层与 Agent 裁剪（`renderPageRect`）不受影响。扫描版/插图会被一并反相 |
+| 页面背景 | 底部换页栏旁的调色板 popover 单选：**白纸 / 米色 `#faf9de` / 护眼绿 `#e3edcd` / 暗色**，偏好保存在本地（key 仍为 `agentero-pdf-color-scheme`，旧值 `light` 读作白纸），经 `agentero:pdf-color-scheme` 事件跨窗同步，不改变应用全局主题。EmbedPDF 尚无页面 color-scheme API：浅色 tone 在 `RenderLayer` / `TilingLayer` 之上叠一层 `mix-blend-multiply` tint（页面 shell 加 `isolate`，避免混到阅读区底色），白纸 × tint 精确落到目标色、黑字不变、插图仅轻微偏色，比 filter 更能保住图表饱和度；暗色仍对光栅做柔和反相（`PDF_PAGE_RASTER_DARK_CLASS`：`invert(0.84)` + `hue-rotate(180)` + 轻亮度/对比）。tint 层绘制在选区 / 搜索 / 批注层之下，高亮颜色与 Agent 裁剪（`renderPageRect`）均不受影响；全文翻译覆盖层按当前 tone 绘制纸面底色。扫描版/插图在暗色下会被一并反相 |
 | 沉浸 | 底部换页栏旁切换；全屏 + 限宽居中 |
 | 位置 | 记忆阅读位置 |
 | 文中链接 | Link annotation 覆盖层：citation / 图表·公式交叉引用 / 章节 GoTo 点击跳页，URI 开系统浏览器；未带 Link annotation 的纯文本 `http(s)` URL 与 `arXiv:<id>` 也会根据现有 PDFium 文字矩形生成外链命中区，并跳过与原生链接重叠的区域。打开论文后（主线程空闲时）在 Worker 里解析命名目标（`lib/pdf/citation-dest-keys.ts`），字节优先复用 `tab.pdfBytes`，按 `pdfPath:size` 缓存。**Citation hover**：hyperref `cite.<key>` 走 `pageIndex:pdfY → key → sidecar.rawKey`；ACS `mk:refN` 因 `/FitR` 整页冲突改走 **Link rect → mk:refN → sidecar id `ref-N`**。同一上标簇内按间距区分逗号与连字符：`14-18` 展开为 14…18 多条列表，`7,9` 保持两条。**Crossref hover**（`Fig. 3` / `Table 1` / `Eq. (2)`）：同理先 dest 坐标，冲突时 **Link rect → mk:tbl1 / mk:fig3**，再配 layout region 裁剪。索引 / layout / sidecar 未就绪或无法消歧时不弹卡片；章节等非 float 内部链接只保留导航。**浮动卡互斥（#430）**：citation 与 crossref 预览互斥；划词菜单 / 视觉草稿 / pin 卡（ask·translate·visual）打开时压制链接预览；预览卡与 pin 卡共用 sticky hover（指针在卡上不收起，离开后短延迟关闭；link 命中区用 pointer 事件与卡片对齐） |
@@ -36,7 +36,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 
 ## 划词菜单
 
-选区后：高亮 / 批注 / 提问 / 加入对话 / 翻译。
+选区后：高亮 / 批注 / 提问 / 加入对话 / 翻译。Settings → 翻译开启「划词自动翻译」后，选区文本提取完成即自动启动翻译并打开结果卡；关闭时保留手动翻译入口。
 
 **远程 PDF**（`agentero:arxiv:*`，如 arXiv Daily 预览）：无本地 sidecar。划词菜单只保留 **复制 / 提问 / 加入对话**（Ask 内存 ephemeral，关 tab 即丢，不写 `marks/`）；高亮 / 批注 / 翻译隐藏。底栏显示 Remote mode 徽标（`SiArxiv`，与 Info 面板同色）。引用 hover 可从 PDF dest key 生成只读条目，导入按钮走整篇入库。
 
@@ -87,7 +87,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 | `src/components/viewer/pdf/types.ts` | 对外契约与各卡片 / 编辑器状态类型，含共用 `ScreenPoint` |
 | `src/components/viewer/pdf/constants.ts` | 光栅 dpr / 底图 scale 封顶、页层样式与空集合单例（memo 依赖稳定性） |
 | `src/components/viewer/pdf/coords.ts` | 页↔屏坐标：页元素查找、rect→屏幕点、选区→归一化 anchor |
-| `src/components/viewer/pdf/color-scheme.ts` | PDF 页面明暗偏好持久化与跨窗广播 |
+| `src/components/viewer/pdf/paper-tone.ts` | PDF 页面背景 tone 偏好持久化与跨窗广播 |
 | `src/components/viewer/pdf/host-dom.ts` | 宿主 DOM 判定：可编辑目标、原生选区归属、文档关闭竞态错误 |
 | `src/components/viewer/pdf/region-crop.ts` | PDF 区域裁剪与 Agent 图片编码 |
 | `src/components/viewer/pdf/engine-provider.tsx` | PDFium engine 宿主：worker 优先 + 就绪探针 + 主线程回退 + 本机字体回退 |
@@ -114,7 +114,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 | `src/components/viewer/pdf/hooks/use-pdf-navigation.ts` | 页码输入、跳页与阅读位置恢复/持久化 |
 | `src/components/viewer/pdf/hooks/use-pdf-zoom-controls.ts` | 缩放百分比输入（focus 期不被观测值覆盖） |
 | `src/components/viewer/pdf/hooks/use-pdf-chrome-visibility.ts` | 顶部工具栏自动显隐：滚动事件 + 指针靠近顶部区域触发显示，空闲定时淡出 |
-| `src/components/viewer/pdf/hooks/use-pdf-color-scheme.ts` | 页面明暗状态与跨窗同步 |
+| `src/components/viewer/pdf/hooks/use-pdf-paper-tone.ts` | 页面背景 tone 状态与跨窗同步 |
 | `src/components/viewer/pdf/hooks/use-pdf-note-editor.ts` | 文字 / 视觉批注编辑：统一走页右缘评论列就地编辑，不再使用浮动 `AnnotationEditor` |
 | `src/components/viewer/pdf/hooks/use-pdf-find.ts` | `⌘F` 查找 |
 | `src/components/viewer/pdf/hooks/use-pdf-outline.ts` | 书签大纲加载 |

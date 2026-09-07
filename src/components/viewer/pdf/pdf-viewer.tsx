@@ -62,7 +62,6 @@ import { usePdfAskThreads } from "@/components/viewer/pdf/hooks/use-pdf-ask-thre
 import { usePdfCards } from "@/components/viewer/pdf/hooks/use-pdf-cards";
 import { usePdfChromeVisibility } from "@/components/viewer/pdf/hooks/use-pdf-chrome-visibility";
 import { usePdfCitations } from "@/components/viewer/pdf/hooks/use-pdf-citations";
-import { usePdfColorScheme } from "@/components/viewer/pdf/hooks/use-pdf-color-scheme";
 import { usePdfCrossrefPreview } from "@/components/viewer/pdf/hooks/use-pdf-crossref-preview";
 import { usePdfFind } from "@/components/viewer/pdf/hooks/use-pdf-find";
 import { usePdfHighlights } from "@/components/viewer/pdf/hooks/use-pdf-highlights";
@@ -76,8 +75,10 @@ import {
 } from "@/components/viewer/pdf/hooks/use-pdf-note-editor";
 import { usePdfOutline } from "@/components/viewer/pdf/hooks/use-pdf-outline";
 import { usePdfPageText } from "@/components/viewer/pdf/hooks/use-pdf-page-text";
+import { usePdfPaperTone } from "@/components/viewer/pdf/hooks/use-pdf-paper-tone";
 import { usePdfPinAnchors } from "@/components/viewer/pdf/hooks/use-pdf-pin-anchors";
 import { usePdfRegionFraming } from "@/components/viewer/pdf/hooks/use-pdf-region-framing";
+import { usePdfScrollSync } from "@/components/viewer/pdf/hooks/use-pdf-scroll-sync";
 import { usePdfSelectionActions } from "@/components/viewer/pdf/hooks/use-pdf-selection-actions";
 import { usePdfSelectionTranslate } from "@/components/viewer/pdf/hooks/use-pdf-selection-translate";
 import { usePdfSidebarPanels } from "@/components/viewer/pdf/hooks/use-pdf-sidebar-panels";
@@ -105,7 +106,7 @@ import { ActiveCardScrollSync } from "@/components/viewer/pdf/viewport/active-ca
 import { DockviewViewport } from "@/components/viewer/pdf/viewport/dockview-viewport";
 import { PanDragHandler } from "@/components/viewer/pdf/viewport/pan-handler";
 import { WheelZoomHandler } from "@/components/viewer/pdf/viewport/wheel-zoom-handler";
-import { useLibraryStore } from "@/hooks/use-app-stores";
+import { useLibraryStore, useSettings } from "@/hooks/use-app-stores";
 import { copyTextToClipboard } from "@/lib/core/clipboard";
 import { errorText } from "@/lib/core/error";
 import { notifyError } from "@/lib/core/notify";
@@ -160,11 +161,26 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 		source ||
 		"pdf";
 
+	// Make a private copy of the PDF bytes for this EmbedPDF mount. The worker
+	// engine may structured-clone/transfer the buffer; sharing the same
+	// ArrayBuffer with another pane or across a StrictMode remount can leave us
+	// with a detached buffer on the second open. The copy is created once per
+	// prop identity; if slicing fails (already detached) we fall back to the URL.
+	const pdfBuffer = useMemo(() => {
+		if (!sourceBytes) return null;
+		try {
+			return sourceBytes.slice(0);
+		} catch {
+			return null;
+		}
+	}, [sourceBytes]);
+	const effectiveSourceBytes = pdfBuffer ?? sourceBytes;
+
 	const plugins = useMemo(() => {
-		if (!source && !sourceBytes) return null;
+		if (!source && !effectiveSourceBytes) return null;
 		// Prefer bytes (no fetch step); fall back to a URL (remote https).
-		const initialDocument = sourceBytes
-			? { buffer: sourceBytes, documentId: docId, name: docId }
+		const initialDocument = effectiveSourceBytes
+			? { buffer: effectiveSourceBytes, documentId: docId, name: docId }
 			: { url: source as string, documentId: docId, name: docId };
 		return [
 			createPluginRegistration(DocumentManagerPluginPackage, {
@@ -221,7 +237,7 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 				renderScale: 2,
 			}),
 		];
-	}, [source, sourceBytes, docId]);
+	}, [source, effectiveSourceBytes, docId]);
 
 	const hostClass = cn(
 		"relative flex h-full min-h-0 flex-col bg-muted/20",
@@ -266,7 +282,20 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 				plugins={plugins}
 			>
 				<DocumentContent documentId={docId}>
-					{({ isLoaded, isLoading }) => {
+					{({ isLoaded, isLoading, isError, documentState }) => {
+						if (isError) {
+							console.error(
+								`[PdfViewer ${docId}] document load error:`,
+								documentState.error,
+								documentState.errorDetails,
+							);
+							return (
+								<p className="p-6 text-center text-destructive text-sm">
+									{t("pdf.loadError")}
+									{documentState.error ? `: ${documentState.error}` : null}
+								</p>
+							);
+						}
 						if (!isLoaded) {
 							return (
 								<p className="p-6 text-center text-muted-foreground text-sm">
@@ -274,7 +303,13 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 								</p>
 							);
 						}
-						return <PdfViewerInner {...props} docId={docId} />;
+						return (
+							<PdfViewerInner
+								{...props}
+								docId={docId}
+								sourceBytes={effectiveSourceBytes}
+							/>
+						);
 					}}
 				</DocumentContent>
 			</EmbedPDF>
@@ -291,12 +326,14 @@ function PdfViewerInner({
 	paperMeta: paperMetaProp = null,
 	isActive = true,
 	isRemotePaper = false,
+	translationPane = false,
 	importIdentifier,
 	onOpenSettings,
 	onHandle,
 	onHighlightsChange,
 	onAsksChange,
 	onVisualTracesChange,
+	onOpenTranslationTab,
 }: PdfViewerInnerProps) {
 	const { t } = useTranslation("viewer");
 	const [importBusy, setImportBusy] = useState(false);
@@ -312,6 +349,7 @@ function PdfViewerInner({
 	const { engine } = usePdfEngineContext();
 	const { provides: zoom, state: zoomState } = useZoom(docId);
 	const { provides: scroll, state: scrollState } = useScroll(docId);
+	usePdfScrollSync(docId);
 	const { provides: selectionCap } = useSelectionCapability();
 	const { provides: interactionCap } = useInteractionManagerCapability();
 	const { provides: annotationCap } = useAnnotationCapability();
@@ -353,7 +391,7 @@ function PdfViewerInner({
 	});
 	const zoomLevel = zoomState.currentZoomLevel || 1;
 
-	const { pdfDark, togglePdfColorScheme } = usePdfColorScheme();
+	const { pdfTone, setPdfTone } = usePdfPaperTone();
 	const {
 		zoomField,
 		setZoomField,
@@ -367,6 +405,10 @@ function PdfViewerInner({
 
 	// Catalog title + link for the ask card's external "open in chat" query.
 	const paperMetaByRelPath = useLibraryStore((s) => s.paperMetaByRelPath);
+	const autoTranslateSelection = useSettings(
+		(s) => s.translate.autoTranslateSelection,
+	);
+	const dualPaneTranslate = useSettings((s) => s.translate.dualPaneTranslate);
 	const paperMeta = useMemo(() => {
 		if (paperMetaProp) return paperMetaProp;
 		if (!paperRelPath) return undefined;
@@ -382,7 +424,12 @@ function PdfViewerInner({
 	const paperLink = useMemo(() => {
 		if (!paperMeta) return undefined;
 		if (paperMeta.arxiv_id) return arxivUrls(paperMeta.arxiv_id)?.abs;
-		return paperMeta.source_url ?? paperMeta.html_url ?? paperMeta.pdf_url;
+		return (
+			paperMeta.source_url ??
+			paperMeta.html_url ??
+			paperMeta.pdf_url ??
+			undefined
+		);
 	}, [paperMeta]);
 
 	const handleImportToLibrary = useCallback(async () => {
@@ -751,6 +798,7 @@ function PdfViewerInner({
 	// ---- Layout analysis ----
 	const {
 		layoutOverlayVisible,
+		layoutRawRegions,
 		hoverableRegionsByPage,
 		rawRegionsByPage,
 		startLayoutAnalysisRef,
@@ -783,6 +831,57 @@ function PdfViewerInner({
 		hostRef,
 		isRemotePaper,
 	});
+
+	const handleToggleLayoutTranslateWithDualPane = useCallback(() => {
+		if (!dualPaneTranslate) {
+			toggleLayoutTranslate();
+			return;
+		}
+		// In dual-pane mode the source pane only opens the right-hand
+		// translation panel. The translation pane itself owns the single
+		// layout-translation job so only one task runs at a time.
+		onOpenTranslationTab?.(docId, paperAbsPath ?? null, paperTitle ?? null);
+	}, [
+		dualPaneTranslate,
+		toggleLayoutTranslate,
+		onOpenTranslationTab,
+		docId,
+		paperAbsPath,
+		paperTitle,
+	]);
+
+	// In the right-hand translation pane, automatically start the bulk layout
+	// translation job once so the translated overlay appears without requiring
+	// a second button click. The same cache key/sidecar as the source pane is
+	// used, so completed work is shared. A ref prevents re-starting after the
+	// user clears the translation from the pane itself. The effect also re-arms
+	// when layout regions arrive later (e.g. the source pane's result is copied
+	// into the store after the right pane has already mounted).
+	const translationAutoStartedRef = useRef(false);
+	const hadLayoutRegionsRef = useRef(false);
+	useEffect(() => {
+		if (!translationPane) return;
+		const hasRegions = (layoutRawRegions?.length ?? 0) > 0;
+		if (hasRegions) {
+			hadLayoutRegionsRef.current = true;
+		} else if (hadLayoutRegionsRef.current) {
+			// Layout result was dropped (pane switched documents); allow retry.
+			translationAutoStartedRef.current = false;
+			hadLayoutRegionsRef.current = false;
+		}
+		if (!hasRegions) return;
+		if (translationAutoStartedRef.current) return;
+		if (!layoutTranslateActive && !layoutTranslateRunning) {
+			translationAutoStartedRef.current = true;
+			toggleLayoutTranslate();
+		}
+	}, [
+		translationPane,
+		layoutRawRegions,
+		layoutTranslateActive,
+		layoutTranslateRunning,
+		toggleLayoutTranslate,
+	]);
 
 	// Sticky overlays (selection menu / visual draft / pin card) suppress
 	// ephemeral link previews so the pointer cannot stack multiple cards (#430).
@@ -958,6 +1057,22 @@ function PdfViewerInner({
 		paperAbsPath,
 	});
 
+	const autoTranslatedSelectionRef = useRef<typeof selectionMenu>(null);
+
+	// When enabled, translate as soon as text extraction has produced a usable
+	// selection anchor. Keep the toolbar open so the other selection actions stay
+	// available while the result card streams beside it.
+	useEffect(() => {
+		const quote = selectionMenu?.anchor.quote?.trim();
+		if (!selectionMenu || !autoTranslateSelection || !quote) {
+			autoTranslatedSelectionRef.current = null;
+			return;
+		}
+		if (autoTranslatedSelectionRef.current === selectionMenu) return;
+		autoTranslatedSelectionRef.current = selectionMenu;
+		translateSelection(selectionMenu.anchor);
+	}, [autoTranslateSelection, selectionMenu, translateSelection]);
+
 	// ---- In-PDF highlight selection menu ----
 
 	// Re-anchor the active pin modal on scroll + zoom. zoomLevel forces
@@ -1056,8 +1171,14 @@ function PdfViewerInner({
 			hoverableRegionsByPage,
 			rawRegionsByPage,
 			layoutOverlayVisible,
-			layoutTranslateItemsByPage,
-			layoutTranslatePageStateByPage,
+			layoutTranslateItemsByPage:
+				translationPane || !dualPaneTranslate
+					? layoutTranslateItemsByPage
+					: new Map(),
+			layoutTranslatePageStateByPage:
+				translationPane || !dualPaneTranslate
+					? layoutTranslatePageStateByPage
+					: new Map(),
 		}),
 		[
 			hoverableRegionsByPage,
@@ -1065,6 +1186,8 @@ function PdfViewerInner({
 			layoutOverlayVisible,
 			layoutTranslateItemsByPage,
 			layoutTranslatePageStateByPage,
+			translationPane,
+			dualPaneTranslate,
 		],
 	);
 
@@ -1190,7 +1313,7 @@ function PdfViewerInner({
 				pageIndex={pageIndex}
 				width={width}
 				height={height}
-				pdfDark={pdfDark}
+				tone={pdfTone}
 				zoomRef={zoomRef}
 				marks={pageMarks}
 				layout={pageLayout}
@@ -1198,7 +1321,7 @@ function PdfViewerInner({
 				handlers={pageHandlers}
 			/>
 		),
-		[docId, pdfDark, zoomRef, pageMarks, pageLayout, pageMode, pageHandlers],
+		[docId, pdfTone, zoomRef, pageMarks, pageLayout, pageMode, pageHandlers],
 	);
 
 	// ---- Top toolbar auto show/hide (#400) ----
@@ -1274,7 +1397,7 @@ function PdfViewerInner({
 				layoutTranslateRunning={layoutTranslateRunning}
 				layoutTranslateActive={layoutTranslateActive}
 				layoutTranslateLabel={layoutTranslateLabel}
-				onToggleLayoutTranslate={toggleLayoutTranslate}
+				onToggleLayoutTranslate={handleToggleLayoutTranslateWithDualPane}
 				visible={topChromeVisible}
 				isRemotePaper={isRemotePaper}
 				onImportToLibrary={handleImportToLibrary}
@@ -1379,8 +1502,8 @@ function PdfViewerInner({
 				onPageFieldChange={setPageField}
 				pageFocusedRef={pageFocusedRef}
 				onCommitPageField={commitPageField}
-				pdfDark={pdfDark}
-				onTogglePdfColorScheme={togglePdfColorScheme}
+				pdfTone={pdfTone}
+				onSetPdfTone={setPdfTone}
 				onFitWidth={() => zoom?.requestZoom(ZoomMode.FitWidth)}
 				onFitPage={() => zoom?.requestZoom(ZoomMode.FitPage)}
 				isRemotePaper={isRemotePaper}

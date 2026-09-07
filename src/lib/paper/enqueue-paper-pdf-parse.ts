@@ -3,12 +3,13 @@
  *
  * The `job:changed` projection owns the tasks-panel row, progress, and
  * cancellation (§7.4 入口②). Omitting `taskId` lets the runner default it to
- * the job id, so the worker's `background-task:progress` events route to the
- * projected row.
+ * the job id, so the worker's `job:progress` events route to the projected
+ * row.
  */
 
+import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApiResult } from "@/lib/core/ipc";
 import { logger } from "@/lib/core/logger";
 
 const queuedPapers = new Set<string>();
@@ -38,15 +39,13 @@ export function enqueuePaperPdfParse(opts: EnqueuePaperPdfParseOptions): void {
 
 	void (async () => {
 		try {
-			await invokeApi(
-				"job_parse_body_enqueue",
-				{
-					args: {
+			await callApiResult(
+				() =>
+					commands.jobParseBodyEnqueue({
 						vaultPath,
 						path: paperRelPath,
 						force: false,
-					},
-				},
+					}),
 				{ fallback: "PDF body parse failed" },
 			);
 		} catch (e) {

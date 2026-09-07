@@ -7,11 +7,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::{Emitter, Manager};
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 
 pub const JOB_CHANGED_EVENT: &str = "job:changed";
 pub const JOB_OFFER_EVENT: &str = "job:offer";
 
-const LAYOUT_ANALYZE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+const RENDERER_JOB_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -21,6 +22,8 @@ pub struct JobOfferPayload {
     pub vault_path: String,
     pub paper_path: Option<String>,
     pub force: bool,
+    #[specta(type = Option<crate::core::json::Json>)]
+    pub params: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -38,12 +41,21 @@ pub enum JobKind {
     PageCount,
     WikiReindex,
     RecognizeMetadata,
+    Import,
+    ConnectorSync,
+    ModelDownload,
+    CitingScan,
+    LibraryIo,
+    MetadataRefresh,
 }
 
 impl JobKind {
     /// Dedupe fingerprint for enqueued jobs. The strings are part of the
-    /// active-key contract and must stay stable (tests assert them).
-    fn fingerprint(self, force: bool) -> String {
+    /// active-key contract and must stay stable (tests assert them). When
+    /// `params` are present they are folded in so otherwise-identical jobs
+    /// carrying different payloads (e.g. two import URLs) do not dedupe, while
+    /// the same payload does.
+    fn fingerprint(self, force: bool, params: Option<&serde_json::Value>) -> String {
         let label = match self {
             JobKind::ParseRefs => "parseRefs",
             JobKind::ParseBody => "parseBody",
@@ -53,6 +65,12 @@ impl JobKind {
             JobKind::PageCount => "pageCount",
             JobKind::WikiReindex => "wikiReindex",
             JobKind::RecognizeMetadata => "recognizeMetadata",
+            JobKind::Import => "import",
+            JobKind::ConnectorSync => "connectorSync",
+            JobKind::ModelDownload => "modelDownload",
+            JobKind::CitingScan => "citingScan",
+            JobKind::LibraryIo => "libraryIo",
+            JobKind::MetadataRefresh => "metadataRefresh",
         };
         // ParseRefs always runs with online lookup enabled; the segment is
         // kept for fingerprint compatibility with pre-refactor jobs.
@@ -61,7 +79,35 @@ impl JobKind {
         } else {
             ""
         };
-        format!("{label}:v1{online}:force:{force}")
+        let base = format!("{label}:v1{online}:force:{force}");
+        match params {
+            // Tauri enables serde_json's `preserve_order`, so `to_string`
+            // keeps insertion order; each call site builds its params with a
+            // fixed key order, so identical payloads digest identically.
+            Some(value) => {
+                use std::hash::{Hash, Hasher};
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                value.to_string().hash(&mut hasher);
+                format!("{base}:params:{:016x}", hasher.finish())
+            }
+            None => base,
+        }
+    }
+
+    /// Execution host of the kind's business logic: `LayoutAnalyze`, `Import`,
+    /// `ConnectorSync`, `CitingScan`, `LibraryIo` and `MetadataRefresh` are
+    /// offered to the renderer (`job:offer`); every other kind runs a Rust
+    /// runner.
+    pub fn exec_host(self) -> ExecHost {
+        match self {
+            JobKind::LayoutAnalyze
+            | JobKind::Import
+            | JobKind::ConnectorSync
+            | JobKind::CitingScan
+            | JobKind::LibraryIo
+            | JobKind::MetadataRefresh => ExecHost::Renderer,
+            _ => ExecHost::Host,
+        }
     }
 }
 
@@ -94,6 +140,16 @@ pub enum DepPolicy {
     AllSucceeded,
 }
 
+/// Where a job's business logic executes: in a Rust runner ([`ExecHost::Host`])
+/// or in the renderer through the `job:offer` / `job_report` protocol
+/// ([`ExecHost::Renderer`]). See [`JobKind::exec_host`].
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Hash, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum ExecHost {
+    Host,
+    Renderer,
+}
+
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct JobSnapshot {
@@ -110,6 +166,9 @@ pub struct JobSnapshot {
     pub phase: Option<String>,
     pub error: Option<String>,
     pub force: bool,
+    #[specta(type = Option<crate::core::json::Json>)]
+    pub params: Option<serde_json::Value>,
+    pub host: ExecHost,
 }
 
 #[derive(Debug, Clone, Serialize, specta::Type)]
@@ -127,6 +186,12 @@ pub struct StartedJob {
     pub paper_path: String,
     pub force: bool,
     pub task_id: Option<String>,
+    /// Per-job cancellation signal, fired by [`JobCenter::cancel`]. Fresh for
+    /// every started job and dropped when the job settles, so cancel state can
+    /// neither leak from a crashed job nor poison a later job reusing the same
+    /// task id. Deep cooperative pollers see it through the task-id registry
+    /// ([`is_task_cancelled`]) populated by `run_started`.
+    pub cancel_token: CancellationToken,
 }
 
 /// Outcome of `JobCenter::try_start`: whether a `Queued` job could actually
@@ -195,6 +260,8 @@ struct Job {
     phase: Option<String>,
     error: Option<String>,
     force: bool,
+    host: ExecHost,
+    params: Option<serde_json::Value>,
     task_id: Option<String>,
 }
 
@@ -214,6 +281,8 @@ impl Job {
             phase: self.phase.clone(),
             error: self.error.clone(),
             force: self.force,
+            params: self.params.clone(),
+            host: self.host,
         }
     }
 }
@@ -278,8 +347,15 @@ struct JobCenterInner {
     /// Number of currently `Running` jobs per kind, used to enforce the
     /// per-kind concurrency caps from paper-pipeline-orchestration.md §7.3.
     running_by_kind: HashMap<JobKind, usize>,
+    /// Live cancellation tokens of `Running` jobs, keyed by the unique job id.
+    /// Created by `mark_running_locked`, fired and removed by `cancel`, and
+    /// removed on every other terminal transition — cancel state therefore
+    /// cannot leak from a crashed job or poison a later job.
+    cancel_tokens: HashMap<JobId, CancellationToken>,
     /// `LayoutAnalyze` cap: 1 for local ONNX, unlimited for the remote API.
     layout_analyze_cap: LayoutAnalyzeCap,
+    /// `Import` cap: seeded from the `batch_import_concurrency` setting.
+    import_cap: ImportCap,
     /// Per-kind runners registered by business domains at app startup.
     runners: HashMap<JobKind, JobRunner>,
     /// Registered by the app assembly; re-read by `refresh_layout_backend`.
@@ -295,7 +371,12 @@ impl std::fmt::Debug for JobCenterInner {
             .field("active_keys", &self.active_keys)
             .field("lanes", &self.lanes)
             .field("running_by_kind", &self.running_by_kind)
+            .field(
+                "cancel_tokens",
+                &self.cancel_tokens.keys().collect::<Vec<_>>(),
+            )
             .field("layout_analyze_cap", &self.layout_analyze_cap)
+            .field("import_cap", &self.import_cap)
             .field("runners", &self.runners.keys().collect::<Vec<_>>())
             .field(
                 "layout_backend_source",
@@ -319,6 +400,18 @@ impl Default for LayoutAnalyzeCap {
     }
 }
 
+/// Default `Import` cap when unseeded (headless / tests); the app seeds it from
+/// the `batch_import_concurrency` setting. `Default` on `usize` would stall the
+/// queue at 0.
+#[derive(Debug, Clone, Copy)]
+struct ImportCap(usize);
+
+impl Default for ImportCap {
+    fn default() -> Self {
+        Self(3)
+    }
+}
+
 /// Per-kind concurrency cap (§7.3). `usize::MAX` = uncapped at the JobCenter
 /// level (the kind is either not yet scheduled here or throttled elsewhere).
 fn kind_concurrency(inner: &JobCenterInner, kind: JobKind) -> usize {
@@ -332,6 +425,18 @@ fn kind_concurrency(inner: &JobCenterInner, kind: JobKind) -> usize {
         // (pdf_parse::MAX_CONCURRENT_PDF_PARSE); the kind cap keeps queue
         // order fair when many PDFs are imported at once.
         JobKind::RecognizeMetadata => 2,
+        // Renderer-orchestrated imports (magic wand / local PDF / plaza /
+        // papers.cool); seeded from the `batch_import_concurrency` setting.
+        JobKind::Import => inner.import_cap.0,
+        // One Connector attachment save at a time: the rows are per-attachment
+        // and the browser drives them sequentially anyway.
+        JobKind::ConnectorSync => 1,
+        // Global one-shot download (XDG cache); dedupe collapses re-triggers,
+        // the cap guards distinct force-enqueues.
+        JobKind::ModelDownload => 1,
+        // Online scans / dialog-driven file IO / polite metadata batches:
+        // one library-scope renderer job of each kind at a time.
+        JobKind::CitingScan | JobKind::LibraryIo | JobKind::MetadataRefresh => 1,
         JobKind::PageCount | JobKind::WikiReindex => usize::MAX,
     }
 }
@@ -425,12 +530,15 @@ fn mark_running_locked(inner: &mut JobCenterInner, id: &JobId) -> Option<Started
     let kind = job.kind;
     inner.lanes.remove(id);
     *inner.running_by_kind.entry(kind).or_insert(0) += 1;
+    let cancel_token = CancellationToken::new();
+    inner.cancel_tokens.insert(id.clone(), cancel_token.clone());
     Some(StartedJob {
         snapshot,
         vault_path,
         paper_path,
         force,
         task_id,
+        cancel_token,
     })
 }
 
@@ -444,10 +552,15 @@ impl JobCenter {
         let center = Self {
             inner: Arc::new(Mutex::new(JobCenterInner::default())),
         };
-        // Renderer-executed layout analysis is part of the scheduler's
-        // offer/report protocol (no business feature involved), so this
-        // runner is built in instead of registered by a domain.
-        center.register_runner(JobKind::LayoutAnalyze, Arc::new(layout_analyze_runner));
+        // Renderer-executed kinds are part of the scheduler's offer/report
+        // protocol (no business feature involved), so this runner is built in
+        // instead of registered by a domain.
+        center.register_runner(JobKind::LayoutAnalyze, Arc::new(renderer_offer_runner));
+        center.register_runner(JobKind::Import, Arc::new(renderer_offer_runner));
+        center.register_runner(JobKind::ConnectorSync, Arc::new(renderer_offer_runner));
+        center.register_runner(JobKind::CitingScan, Arc::new(renderer_offer_runner));
+        center.register_runner(JobKind::LibraryIo, Arc::new(renderer_offer_runner));
+        center.register_runner(JobKind::MetadataRefresh, Arc::new(renderer_offer_runner));
         center
     }
 
@@ -464,8 +577,21 @@ impl JobCenter {
         center
     }
 
+    /// Seed the `Import` concurrency cap (chainable after
+    /// [`JobCenter::with_layout_backend`]).
+    pub fn with_import_concurrency(self, cap: usize) -> Self {
+        if let Ok(mut inner) = self.inner.try_lock() {
+            inner.import_cap = ImportCap(cap.max(1));
+        }
+        self
+    }
+
     pub async fn set_layout_analyze_cap(&self, cap: usize) {
         self.inner.lock().await.layout_analyze_cap = LayoutAnalyzeCap(cap.max(1));
+    }
+
+    pub async fn apply_import_concurrency(&self, cap: usize) {
+        self.inner.lock().await.import_cap = ImportCap(cap.max(1));
     }
 
     pub async fn apply_layout_backend(&self, backend: &str) {
@@ -531,7 +657,7 @@ impl JobCenter {
         lane: JobLane,
         force: bool,
     ) -> JobSnapshot {
-        self.enqueue_core(JobKind::ParseRefs, vault, path, lane, force, None)
+        self.enqueue_core(JobKind::ParseRefs, vault, path, lane, force, None, None)
             .await
     }
 
@@ -543,7 +669,7 @@ impl JobCenter {
         force: bool,
         task_id: Option<String>,
     ) -> JobSnapshot {
-        self.enqueue_core(JobKind::ParseBody, vault, path, lane, force, task_id)
+        self.enqueue_core(JobKind::ParseBody, vault, path, lane, force, task_id, None)
             .await
     }
 
@@ -554,7 +680,7 @@ impl JobCenter {
         lane: JobLane,
         force: bool,
     ) -> JobSnapshot {
-        self.enqueue_core(JobKind::LayoutAnalyze, vault, path, lane, force, None)
+        self.enqueue_core(JobKind::LayoutAnalyze, vault, path, lane, force, None, None)
             .await
     }
 
@@ -565,8 +691,16 @@ impl JobCenter {
         lane: JobLane,
         force: bool,
     ) -> JobSnapshot {
-        self.enqueue_core(JobKind::DownloadAssets, vault, path, lane, force, None)
-            .await
+        self.enqueue_core(
+            JobKind::DownloadAssets,
+            vault,
+            path,
+            lane,
+            force,
+            None,
+            None,
+        )
+        .await
     }
 
     pub async fn enqueue_recognize_metadata(
@@ -576,14 +710,119 @@ impl JobCenter {
         lane: JobLane,
         force: bool,
     ) -> JobSnapshot {
-        self.enqueue_core(JobKind::RecognizeMetadata, vault, path, lane, force, None)
+        self.enqueue_core(
+            JobKind::RecognizeMetadata,
+            vault,
+            path,
+            lane,
+            force,
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// Enqueue a renderer-orchestrated import. `params` (mode + source
+    /// identifiers) participates in the dedupe fingerprint so the same import
+    /// is not enqueued twice while distinct ones are not collapsed. `path` is
+    /// the vault-relative destination folder (imports have no paper dir yet).
+    pub async fn enqueue_import(
+        &self,
+        vault: impl Into<PathBuf>,
+        path: impl Into<String>,
+        lane: JobLane,
+        force: bool,
+        params: Option<serde_json::Value>,
+    ) -> JobSnapshot {
+        self.enqueue_core(JobKind::Import, vault, path, lane, force, None, params)
             .await
+    }
+
+    /// Enqueue a Zotero Connector attachment save. The Host writes the file and
+    /// streams `connector:progress`; the renderer relays that stream into this
+    /// job, so `params` carries the progress key (and title) and joins the
+    /// dedupe fingerprint. `path` is the paper folder the attachment lands in.
+    pub async fn enqueue_connector_sync(
+        &self,
+        vault: impl Into<PathBuf>,
+        path: impl Into<String>,
+        lane: JobLane,
+        force: bool,
+        params: Option<serde_json::Value>,
+    ) -> JobSnapshot {
+        self.enqueue_core(
+            JobKind::ConnectorSync,
+            vault,
+            path,
+            lane,
+            force,
+            None,
+            params,
+        )
+        .await
+    }
+
+    /// Enqueue the global layout-model download. The model lives in the XDG
+    /// cache (no vault / paper target), so every trigger shares the empty
+    /// scope and concurrent re-triggers dedupe into one active job.
+    pub async fn enqueue_model_download(&self, lane: JobLane, force: bool) -> JobSnapshot {
+        self.enqueue_core(JobKind::ModelDownload, "", "", lane, force, None, None)
+            .await
+    }
+
+    /// Enqueue the reverse-citation scan of a vault (renderer executor drives
+    /// the Host `library_citing_scan` command under the job id).
+    pub async fn enqueue_citing_scan(
+        &self,
+        vault: impl Into<PathBuf>,
+        lane: JobLane,
+        force: bool,
+        params: Option<serde_json::Value>,
+    ) -> JobSnapshot {
+        self.enqueue_core(JobKind::CitingScan, vault, "", lane, force, None, params)
+            .await
+    }
+
+    /// Enqueue a bibliography import / export (`params.op`). Dialog-driven,
+    /// so the renderer executor owns the flow.
+    pub async fn enqueue_library_io(
+        &self,
+        vault: impl Into<PathBuf>,
+        lane: JobLane,
+        force: bool,
+        params: Option<serde_json::Value>,
+    ) -> JobSnapshot {
+        self.enqueue_core(JobKind::LibraryIo, vault, "", lane, force, None, params)
+            .await
+    }
+
+    /// Enqueue a bulk metadata refresh; `params` carries the paper list
+    /// (`[{ path, query }]`) and joins the dedupe fingerprint so re-triggering
+    /// the same selection collapses while distinct selections do not.
+    pub async fn enqueue_metadata_refresh(
+        &self,
+        vault: impl Into<PathBuf>,
+        lane: JobLane,
+        force: bool,
+        params: Option<serde_json::Value>,
+    ) -> JobSnapshot {
+        self.enqueue_core(
+            JobKind::MetadataRefresh,
+            vault,
+            "",
+            lane,
+            force,
+            None,
+            params,
+        )
+        .await
     }
 
     /// Shared enqueue path for every kind: normalize, dedupe on
     /// (kind, vault, paper, fingerprint), then register on the lane.
     /// Adding a new kind only needs a `JobKind` variant (with fingerprint +
     /// concurrency cap) and a thin wrapper like the ones above.
+    #[allow(clippy::too_many_arguments)]
     async fn enqueue_core(
         &self,
         kind: JobKind,
@@ -592,10 +831,25 @@ impl JobCenter {
         lane: JobLane,
         force: bool,
         task_id: Option<String>,
+        params: Option<serde_json::Value>,
     ) -> JobSnapshot {
-        let vault_path = normalize_vault_path(vault.into());
+        // `normalize_vault_path` does a synchronous `fs::canonicalize`; run it on
+        // the blocking pool so a slow filesystem never stalls a tokio worker.
+        // This happens before the center lock is taken, so no lock is held
+        // across the await. On the (practically impossible) blocking join error
+        // fall back to the raw path, mirroring `normalize_vault_path`'s own
+        // `unwrap_or(path)`.
+        let raw_vault = vault.into();
+        let vault_for_blocking = raw_vault.clone();
+        let vault_path =
+            match tokio::task::spawn_blocking(move || normalize_vault_path(vault_for_blocking))
+                .await
+            {
+                Ok(normalized) => normalized,
+                Err(_) => raw_vault,
+            };
         let paper_path = path.into();
-        let fingerprint = kind.fingerprint(force);
+        let fingerprint = kind.fingerprint(force, params.as_ref());
         let key = JobKey {
             kind,
             vault_path: vault_path.clone(),
@@ -626,6 +880,8 @@ impl JobCenter {
             phase: Some("queued".into()),
             error: None,
             force,
+            host: kind.exec_host(),
+            params,
             task_id,
         };
         let snapshot = job.snapshot();
@@ -680,12 +936,18 @@ impl JobCenter {
                 job.progress = None;
                 job.phase = Some("cancelled".into());
                 let kind = job.kind;
-                // Signal the executing worker / renderer to stop. ParseBody's
-                // liteparse worker polls this flag; the layout executor aborts
-                // on the `job:changed(cancelled)` event emitted by the caller.
-                let task_id = job.task_id.clone().unwrap_or_else(|| job.id.0.clone());
                 release_running_slot(&mut inner, kind);
-                crate::core::background_tasks::cancel(&task_id);
+                // Signal the executing runner through the job's own token and
+                // drop the registry entry in the same step: cancel state dies
+                // with the job instead of leaking into a global flag set.
+                // `run_started` indexes the token by task id
+                // (`is_task_cancelled`) for the ParseBody liteparse worker and
+                // other cooperative pollers; the layout renderer executor
+                // aborts on the `job:changed(cancelled)` event emitted by the
+                // caller.
+                if let Some(token) = inner.cancel_tokens.remove(&id) {
+                    token.cancel();
+                }
                 release_active_key(&mut inner, &id);
                 true
             }
@@ -711,6 +973,35 @@ impl JobCenter {
                             .paper_path
                             .as_deref()
                             .is_some_and(|p| p == rel || p.starts_with(prefix.as_str()))
+                })
+                .map(|(id, _)| id.clone())
+                .collect()
+        };
+        let mut cancelled = Vec::new();
+        for id in ids {
+            if self.cancel(&id.0).await {
+                if let Some(snapshot) = self.snapshot(&id.0).await {
+                    cancelled.push(snapshot);
+                }
+            }
+        }
+        cancelled
+    }
+
+    /// Cancel every queued/running job for one vault, e.g. when the app
+    /// switches away from that vault and releases its session resources.
+    /// Returns the snapshots of the cancelled jobs so callers can emit
+    /// `job:changed` and drain freed slots.
+    pub async fn cancel_for_vault(&self, vault: &Path) -> Vec<JobSnapshot> {
+        let vault = normalize_vault_path(vault.to_path_buf());
+        let ids: Vec<JobId> = {
+            let inner = self.inner.lock().await;
+            inner
+                .jobs
+                .iter()
+                .filter(|(_, job)| {
+                    job.vault_path == vault
+                        && matches!(job.state, JobState::Queued | JobState::Running)
                 })
                 .map(|(id, _)| id.clone())
                 .collect()
@@ -861,17 +1152,63 @@ impl JobCenter {
         })
     }
 
-    /// Run the registered runner for a job `try_start` just moved to
-    /// `Running`, inline in the caller's task. Kinds without a registered
-    /// runner are no-ops (they never start backend-side).
+    /// Run the registered runner for a job `try_start` just moved to `Running`
+    /// and supervise it to completion. The runner executes in a child task so
+    /// a panic inside it surfaces here as a join error instead of silently
+    /// skipping the finish bookkeeping — an unsupervised crash would hold the
+    /// kind's concurrency slot and dedupe key forever, wedging every later job
+    /// of that kind in `Queued`. On crash the job is marked `Failed`,
+    /// `job:changed` is emitted and freed slots drain the queue. The job's
+    /// cancel token is indexed by task id ([`is_task_cancelled`]) for the
+    /// runner's lifetime and cleaned up on every exit path. Kinds without a
+    /// registered runner are no-ops (they never start backend-side).
     pub async fn run_started(&self, app: &tauri::AppHandle, started: StartedJob) {
         let runner = {
             let inner = self.inner.lock().await;
             inner.runners.get(&started.snapshot.kind).cloned()
         };
-        if let Some(runner) = runner {
-            runner(self.handle(), app.clone(), started).await;
+        let Some(runner) = runner else {
+            return;
+        };
+        let job_id = started.snapshot.id.clone();
+        let registration = TaskCancelRegistration::new(&started);
+        let center = self.handle();
+        let runner_app = app.clone();
+        let join = tauri::async_runtime::spawn(async move {
+            runner(center, runner_app, started).await;
+        })
+        .await;
+        // Drop the registration before settling: a successor reusing the task
+        // id may register its own token as soon as the freed slot drains the
+        // queue.
+        drop(registration);
+        if let Err(err) = join {
+            if let Some(snapshot) = self.settle_crashed_runner(&job_id, &err).await {
+                emit_job_changed(app, snapshot);
+            }
+            // The crashed runner never reached its own wake/drain tail.
+            self.wake_and_spawn_dependents(app, &job_id).await;
         }
+    }
+
+    /// Crash half of the `run_started` supervisor: mark the job `Failed`
+    /// (which releases its concurrency slot and dedupe key) so the queue for
+    /// that kind keeps moving. Returns the terminal snapshot to emit, or
+    /// `None` when the job already settled (e.g. cancelled mid-run), in which
+    /// case `finish` keeps the earlier terminal state.
+    async fn settle_crashed_runner(&self, job_id: &str, err: &tauri::Error) -> Option<JobSnapshot> {
+        log::error!(
+            target: "agentero::jobs",
+            "job runner crashed: id={job_id} error={err}"
+        );
+        self.finish(
+            job_id,
+            JobState::Failed,
+            None,
+            Some("failed"),
+            Some(format!("job runner crashed: {err}")),
+        )
+        .await
     }
 
     /// Spawn the runner for a job `try_start` just moved to `Running`.
@@ -968,6 +1305,7 @@ impl JobCenter {
         job.error = error;
         let snapshot = job.snapshot();
         release_active_key(&mut inner, &id);
+        inner.cancel_tokens.remove(&id);
         if was_running {
             release_running_slot(&mut inner, kind);
         }
@@ -1020,6 +1358,7 @@ impl JobCenter {
         };
         if let Some(kind) = terminal_kind {
             release_active_key(&mut inner, &id);
+            inner.cancel_tokens.remove(&id);
             release_running_slot(&mut inner, kind);
         }
         Some(snapshot)
@@ -1098,6 +1437,8 @@ impl JobCenter {
             phase: Some("queued".into()),
             error: None,
             force: false,
+            host: kind.exec_host(),
+            params: None,
             task_id: None,
         };
         let mut inner = self.inner.lock().await;
@@ -1122,6 +1463,11 @@ impl JobCenter {
             .copied()
             .unwrap_or(0)
     }
+
+    #[cfg(test)]
+    async fn cancel_token_count_for_test(&self) -> usize {
+        self.inner.lock().await.cancel_tokens.len()
+    }
 }
 
 impl Default for JobCenter {
@@ -1130,18 +1476,21 @@ impl Default for JobCenter {
     }
 }
 
-/// Built-in runner for [`JobKind::LayoutAnalyze`]: offer the job to the
-/// frontend and wait for a terminal `job_report`. The renderer runs the ONNX
-/// model and calls back with progress / success / failure. Lives in the
-/// scheduler (not a business domain) because it is the renderer-offer
-/// protocol itself.
-fn layout_analyze_runner(
+/// Built-in runner for renderer-executed kinds ([`ExecHost::Renderer`], e.g.
+/// `LayoutAnalyze` / `Import`): offer the job to the frontend and wait for a
+/// terminal `job_report`. The renderer runs the work (ONNX model, or the
+/// multi-command import orchestration) and calls back with progress / success /
+/// failure. Lives in the scheduler (not a business domain) because it is the
+/// renderer-offer protocol itself.
+fn renderer_offer_runner(
     center: JobCenter,
     app: tauri::AppHandle,
     started: StartedJob,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     center.run_job(app, started, |center, app, started| async move {
         let job_id = started.snapshot.id.clone();
+        let kind = started.snapshot.kind;
+        let params = started.snapshot.params.clone();
         let StartedJob {
             vault_path,
             paper_path,
@@ -1150,21 +1499,22 @@ fn layout_analyze_runner(
         } = started;
         let offer = JobOfferPayload {
             job_id: job_id.clone(),
-            kind: JobKind::LayoutAnalyze,
+            kind,
             vault_path: vault_path.to_string_lossy().to_string(),
             paper_path: Some(paper_path),
             force,
+            params,
         };
         let _ = app.emit(JOB_OFFER_EVENT, offer);
 
         match center
-            .wait_for_terminal(&job_id, LAYOUT_ANALYZE_TIMEOUT)
+            .wait_for_terminal(&job_id, RENDERER_JOB_TIMEOUT)
             .await
         {
             Some(JobState::Succeeded) => RunOutcome::Succeeded,
             Some(JobState::Failed) => RunOutcome::Failed(center.take_error(&job_id).await),
             Some(JobState::Cancelled) => RunOutcome::Cancelled,
-            _ => RunOutcome::Failed(Some("layout analyze report timeout".into())),
+            _ => RunOutcome::Failed(Some("renderer job report timeout".into())),
         }
     })
 }
@@ -1173,6 +1523,17 @@ pub fn emit_job_changed(app: &tauri::AppHandle, job: JobSnapshot) {
     let payload = JobChangedPayload { job };
     let _ = app.emit(JOB_CHANGED_EVENT, &payload);
     crate::features::lifecycle::emit_job_terminal(app, &payload.job);
+}
+
+/// Byte/count progress for a projected job row. Host-side emitters (model
+/// download runner, citing-scan command) go through this; `agentero-core`
+/// emitters (asset downloads, import batches) share the event-name constant
+/// because core cannot reach the JobCenter.
+pub fn emit_job_progress(app: &tauri::AppHandle, payload: &impl Serialize) {
+    let _ = app.emit(
+        agentero_core::features::paper::import::download::JOB_PROGRESS_EVENT,
+        payload,
+    );
 }
 
 pub fn parse_lane(lane: Option<JobLane>) -> JobLane {
@@ -1236,6 +1597,57 @@ pub fn spawn_recognize_metadata(app: Option<&tauri::AppHandle>, vault: &Path, pa
             StartOutcome::Waiting => {}
         }
     });
+}
+
+/// Cancel tokens of running jobs indexed by the cooperative-polling task id
+/// (the job's own id, or its explicit `task_id` override). Host command chains
+/// poll [`is_task_cancelled`] directly, and the app assembly installs the same
+/// lookup as the `agentero_core::cancel` probe so deep core code (pdf parse
+/// engines, asset downloaders, citing scans) sees job cancellation too.
+/// Registration replaces any stale entry for the id; the drop cleanup runs on
+/// every runner exit path (success / failure / panic / dropped future), so
+/// cancel state can neither leak nor poison a later task reusing the same id.
+static TASK_CANCEL_TOKENS: std::sync::LazyLock<
+    std::sync::Mutex<HashMap<String, CancellationToken>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+
+/// Whether the running job polled as `task_id` has been cancelled. Sync
+/// lookup over a short-lived lock for cooperative polling loops (chunk
+/// downloads, worker supervision); unknown or settled ids are never
+/// cancelled.
+pub fn is_task_cancelled(task_id: &str) -> bool {
+    TASK_CANCEL_TOKENS.lock().is_ok_and(|tokens| {
+        tokens
+            .get(task_id)
+            .is_some_and(|token| token.is_cancelled())
+    })
+}
+
+/// RAII task-id registration of a running job's cancel token; see
+/// [`TASK_CANCEL_TOKENS`].
+struct TaskCancelRegistration {
+    task_id: String,
+}
+
+impl TaskCancelRegistration {
+    fn new(started: &StartedJob) -> Self {
+        let task_id = started
+            .task_id
+            .clone()
+            .unwrap_or_else(|| started.snapshot.id.clone());
+        if let Ok(mut tokens) = TASK_CANCEL_TOKENS.lock() {
+            tokens.insert(task_id.clone(), started.cancel_token.clone());
+        }
+        Self { task_id }
+    }
+}
+
+impl Drop for TaskCancelRegistration {
+    fn drop(&mut self) {
+        if let Ok(mut tokens) = TASK_CANCEL_TOKENS.lock() {
+            tokens.remove(&self.task_id);
+        }
+    }
 }
 
 fn release_active_key(inner: &mut JobCenterInner, job_id: &JobId) {
@@ -1400,6 +1812,30 @@ mod tests {
         );
         // Idempotent: nothing left to cancel for that paper.
         assert!(center.cancel_for_paper(&vault, "papers/a").await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn cancel_for_vault_cancels_only_matching_active_jobs() {
+        let center = JobCenter::new();
+        let vault_a = vault("cancel-vault-a");
+        let vault_b = vault("cancel-vault-b");
+        let a = center
+            .enqueue_parse_refs(vault_a.clone(), "papers/a", JobLane::Normal, false)
+            .await;
+        let b = center
+            .enqueue_parse_refs(vault_b.clone(), "papers/b", JobLane::Normal, false)
+            .await;
+        assert_eq!(a.state, JobState::Queued);
+        assert_eq!(b.state, JobState::Queued);
+
+        let cancelled = center.cancel_for_vault(&vault_a).await;
+        assert_eq!(cancelled.len(), 1);
+        assert_eq!(cancelled[0].vault_path, vault_a.to_string_lossy());
+        assert_eq!(cancelled[0].state, JobState::Cancelled);
+        assert_eq!(
+            center.snapshot(&b.id).await.expect("other job").state,
+            JobState::Queued
+        );
     }
 
     #[test]
@@ -2005,5 +2441,405 @@ mod tests {
         assert_eq!(first.kind, JobKind::DownloadAssets);
         assert_eq!(first.fingerprint, "downloadAssets:v1:force:false");
         assert_eq!(center.list(None, None).await.len(), 1);
+    }
+
+    /// Import jobs dedupe on their `params` payload: the same source (URL /
+    /// identifier) collapses to one active job, a different source does not.
+    #[tokio::test]
+    async fn enqueue_dedupes_import_job_by_params() {
+        let center = JobCenter::new();
+        let vault = vault("dedupe-import");
+        let params_a =
+            serde_json::json!({ "mode": "lookup", "text": "https://arxiv.org/abs/1706.03762" });
+        let first = center
+            .enqueue_import(
+                vault.clone(),
+                "",
+                JobLane::Normal,
+                false,
+                Some(params_a.clone()),
+            )
+            .await;
+        let duplicate = center
+            .enqueue_import(vault.clone(), "", JobLane::Normal, false, Some(params_a))
+            .await;
+        let other = center
+            .enqueue_import(
+                vault.clone(),
+                "",
+                JobLane::Normal,
+                false,
+                Some(serde_json::json!({ "mode": "lookup", "text": "10.1234/xyz" })),
+            )
+            .await;
+
+        assert_eq!(first.id, duplicate.id);
+        assert_eq!(first.kind, JobKind::Import);
+        assert_eq!(first.host, ExecHost::Renderer);
+        assert!(first
+            .fingerprint
+            .starts_with("import:v1:force:false:params:"));
+        assert_ne!(first.id, other.id);
+        assert_eq!(center.list(None, None).await.len(), 2);
+    }
+
+    /// The `Import` cap defaults to 3 and is re-applied from the settings value;
+    /// a freed slot lets the queued import start.
+    #[tokio::test]
+    async fn import_concurrency_cap_gates_queue() {
+        let center = JobCenter::new();
+        center.apply_import_concurrency(1).await;
+        let vault = vault("conc-import");
+        let a = center
+            .enqueue_import(
+                vault.clone(),
+                "",
+                JobLane::Normal,
+                false,
+                Some(serde_json::json!({ "mode": "lookup", "text": "a" })),
+            )
+            .await;
+        let b = center
+            .enqueue_import(
+                vault.clone(),
+                "",
+                JobLane::Normal,
+                false,
+                Some(serde_json::json!({ "mode": "lookup", "text": "b" })),
+            )
+            .await;
+
+        match center.try_start(&a.id).await {
+            StartOutcome::Started(..) => {}
+            other => panic!("expected a Started, got {other:?}"),
+        }
+        match center.try_start(&b.id).await {
+            StartOutcome::Waiting => {}
+            other => panic!("expected b Waiting at cap, got {other:?}"),
+        }
+
+        center
+            .job_report(&a.id, Some(100.0), None, None, Some(JobState::Succeeded))
+            .await;
+        match center.try_start(&b.id).await {
+            StartOutcome::Started(..) => {}
+            other => panic!("expected b Started after slot freed, got {other:?}"),
+        }
+    }
+
+    /// Connector saves are renderer-relayed, dedupe on the `connector:progress`
+    /// key in `params`, and run one at a time.
+    #[tokio::test]
+    async fn enqueue_dedupes_connector_sync_job_by_params() {
+        let center = JobCenter::new();
+        let vault = vault("connector-sync");
+        let key = serde_json::json!({ "key": "session-1:papers/a" });
+        let first = center
+            .enqueue_connector_sync(
+                vault.clone(),
+                "papers/a",
+                JobLane::Normal,
+                false,
+                Some(key.clone()),
+            )
+            .await;
+        let duplicate = center
+            .enqueue_connector_sync(vault.clone(), "papers/a", JobLane::Normal, false, Some(key))
+            .await;
+        let other = center
+            .enqueue_connector_sync(
+                vault.clone(),
+                "papers/b",
+                JobLane::Normal,
+                false,
+                Some(serde_json::json!({ "key": "session-1:papers/b" })),
+            )
+            .await;
+
+        assert_eq!(first.id, duplicate.id);
+        assert_eq!(first.kind, JobKind::ConnectorSync);
+        assert_eq!(first.host, ExecHost::Renderer);
+        assert!(first
+            .fingerprint
+            .starts_with("connectorSync:v1:force:false:params:"));
+        assert_ne!(first.id, other.id);
+        assert_eq!(center.list(None, None).await.len(), 2);
+
+        match center.try_start(&first.id).await {
+            StartOutcome::Started(..) => {}
+            other => panic!("expected Started, got {other:?}"),
+        }
+        match center.try_start(&other.id).await {
+            StartOutcome::Waiting => {}
+            other => panic!("expected the second save Waiting at cap 1, got {other:?}"),
+        }
+    }
+
+    /// The layout-model download is a global Host job: every trigger shares
+    /// the empty vault/paper scope, so concurrent re-triggers collapse into
+    /// one active job.
+    #[tokio::test]
+    async fn enqueue_dedupes_model_download_job_globally() {
+        let center = JobCenter::new();
+        let first = center.enqueue_model_download(JobLane::Normal, false).await;
+        let duplicate = center.enqueue_model_download(JobLane::Normal, false).await;
+
+        assert_eq!(first.id, duplicate.id);
+        assert_eq!(first.kind, JobKind::ModelDownload);
+        assert_eq!(first.host, ExecHost::Host);
+        assert_eq!(first.fingerprint, "modelDownload:v1:force:false");
+        assert_eq!(first.paper_path.as_deref(), Some(""));
+        assert_eq!(center.list(None, None).await.len(), 1);
+
+        // Settled jobs release the key: a later trigger starts a fresh job.
+        center.mark_succeeded_for_test(&first.id).await;
+        let next = center.enqueue_model_download(JobLane::Normal, false).await;
+        assert_ne!(next.id, first.id);
+    }
+
+    /// Bulk metadata refresh is renderer-executed and dedupes on its paper
+    /// list: the same selection collapses, a distinct selection does not.
+    #[tokio::test]
+    async fn enqueue_dedupes_metadata_refresh_job_by_params() {
+        let center = JobCenter::new();
+        let vault = vault("metadata-refresh");
+        let params_a = serde_json::json!({ "papers": [{ "path": "papers/a", "query": "10.1/x" }] });
+        let first = center
+            .enqueue_metadata_refresh(
+                vault.clone(),
+                JobLane::Normal,
+                false,
+                Some(params_a.clone()),
+            )
+            .await;
+        let duplicate = center
+            .enqueue_metadata_refresh(vault.clone(), JobLane::Normal, false, Some(params_a))
+            .await;
+        let other = center
+            .enqueue_metadata_refresh(
+                vault.clone(),
+                JobLane::Normal,
+                false,
+                Some(serde_json::json!({ "papers": [{ "path": "papers/b", "query": "10.1/y" }] })),
+            )
+            .await;
+
+        assert_eq!(first.id, duplicate.id);
+        assert_eq!(first.kind, JobKind::MetadataRefresh);
+        assert_eq!(first.host, ExecHost::Renderer);
+        assert!(first
+            .fingerprint
+            .starts_with("metadataRefresh:v1:force:false:params:"));
+        assert_ne!(first.id, other.id);
+
+        // Cap 1: the distinct selection waits while the first batch runs.
+        match center.try_start(&first.id).await {
+            StartOutcome::Started(..) => {}
+            other => panic!("expected Started, got {other:?}"),
+        }
+        match center.try_start(&other.id).await {
+            StartOutcome::Waiting => {}
+            other => panic!("expected the second batch Waiting at cap 1, got {other:?}"),
+        }
+    }
+
+    /// Library import and export are distinct jobs (`params.op`), both
+    /// renderer-executed; a re-triggered op dedupes.
+    #[tokio::test]
+    async fn library_io_jobs_dedupe_per_op() {
+        let center = JobCenter::new();
+        let vault = vault("library-io");
+        let export = center
+            .enqueue_library_io(
+                vault.clone(),
+                JobLane::Normal,
+                false,
+                Some(serde_json::json!({ "op": "export" })),
+            )
+            .await;
+        let export_again = center
+            .enqueue_library_io(
+                vault.clone(),
+                JobLane::Normal,
+                false,
+                Some(serde_json::json!({ "op": "export" })),
+            )
+            .await;
+        let import = center
+            .enqueue_library_io(
+                vault.clone(),
+                JobLane::Normal,
+                false,
+                Some(serde_json::json!({ "op": "import" })),
+            )
+            .await;
+
+        assert_eq!(export.id, export_again.id);
+        assert_ne!(export.id, import.id);
+        assert_eq!(export.kind, JobKind::LibraryIo);
+        assert_eq!(export.host, ExecHost::Renderer);
+        assert!(export
+            .fingerprint
+            .starts_with("libraryIo:v1:force:false:params:"));
+
+        let citing = center
+            .enqueue_citing_scan(vault.clone(), JobLane::Normal, false, None)
+            .await;
+        assert_eq!(citing.kind, JobKind::CitingScan);
+        assert_eq!(citing.host, ExecHost::Renderer);
+        assert_eq!(citing.fingerprint, "citingScan:v1:force:false");
+        let citing_again = center
+            .enqueue_citing_scan(vault, JobLane::Normal, false, None)
+            .await;
+        assert_eq!(citing.id, citing_again.id);
+    }
+
+    /// A panicked runner task surfaces as a join error, exactly how the
+    /// `run_started` supervisor detects it; the crash path must settle the job
+    /// `Failed`, free the per-kind slot and the dedupe key, and drop the
+    /// cancel-token entry.
+    #[tokio::test]
+    async fn crashed_runner_settles_failed_and_frees_slot_and_key() {
+        let center = JobCenter::new();
+        let job = center
+            .enqueue_parse_refs(vault("panic-settle"), "papers/a", JobLane::Normal, false)
+            .await;
+        match center.try_start(&job.id).await {
+            StartOutcome::Started(..) => {}
+            other => panic!("expected Started, got {other:?}"),
+        }
+        assert_eq!(center.running_count_for_test(JobKind::ParseRefs).await, 1);
+        assert_eq!(center.cancel_token_count_for_test().await, 1);
+
+        let join = tauri::async_runtime::spawn(async { panic!("runner boom") }).await;
+        let err = match join {
+            Err(err) => err,
+            Ok(()) => panic!("expected the spawned panic to surface as a join error"),
+        };
+        let snapshot = center
+            .settle_crashed_runner(&job.id, &err)
+            .await
+            .expect("crash settle returned the terminal snapshot");
+
+        assert_eq!(snapshot.state, JobState::Failed);
+        assert!(snapshot
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("job runner crashed")));
+        assert_eq!(center.running_count_for_test(JobKind::ParseRefs).await, 0);
+        assert_eq!(center.cancel_token_count_for_test().await, 0);
+
+        // Dedupe key released: re-enqueue creates a fresh job (not the ghost
+        // snapshot of the crashed one) and the freed slot lets it start.
+        let next = center
+            .enqueue_parse_refs(vault("panic-settle"), "papers/a", JobLane::Normal, false)
+            .await;
+        assert_ne!(next.id, job.id);
+        assert_eq!(next.state, JobState::Queued);
+        match center.try_start(&next.id).await {
+            StartOutcome::Started(..) => {}
+            other => panic!("expected the successor to start, got {other:?}"),
+        }
+    }
+
+    /// Cancel of a running job must signal the runner through the job's own
+    /// token — including the task-id polling surface the deep business code
+    /// uses — and leave no cancel state behind once the runner exits.
+    #[tokio::test]
+    async fn cancel_running_job_signals_token_and_cleans_up_on_exit() {
+        let center = JobCenter::new();
+        let task_id = "cancel-registry-task";
+        let job = center
+            .enqueue_parse_body(
+                vault("cancel-token"),
+                "papers/a",
+                JobLane::Normal,
+                false,
+                Some(task_id.to_string()),
+            )
+            .await;
+        let started = match center.try_start(&job.id).await {
+            StartOutcome::Started(started) => started,
+            other => panic!("expected Started, got {other:?}"),
+        };
+        let token = started.cancel_token.clone();
+        // Mirror `run_started`: index the job token by task id.
+        let registration = TaskCancelRegistration::new(&started);
+        assert!(!token.is_cancelled());
+        assert!(!is_task_cancelled(task_id));
+
+        assert!(center.cancel(&job.id).await);
+
+        // The runner sees the cancellation on both surfaces; the JobCenter
+        // keeps no cancel entry once the job settled.
+        assert!(token.is_cancelled());
+        assert!(is_task_cancelled(task_id));
+        assert_eq!(center.cancel_token_count_for_test().await, 0);
+
+        // Runner exit drops the registration: all cancel state for the id is
+        // gone.
+        drop(registration);
+        assert!(!is_task_cancelled(task_id));
+    }
+
+    /// A job reusing the task id (and even the same dedupe key) of a
+    /// cancelled/crashed predecessor must start with a fresh, uncancelled
+    /// token and a clean polling surface.
+    #[tokio::test]
+    async fn reused_task_id_is_not_poisoned_by_cancelled_or_crashed_job() {
+        let center = JobCenter::new();
+        let vault = vault("reuse-id");
+        let task_id = "shared-task-id";
+
+        // First run: cancelled mid-flight, then the runner exits.
+        let first = center
+            .enqueue_parse_body(
+                vault.clone(),
+                "papers/a",
+                JobLane::Normal,
+                false,
+                Some(task_id.to_string()),
+            )
+            .await;
+        let started_first = match center.try_start(&first.id).await {
+            StartOutcome::Started(started) => started,
+            other => panic!("expected Started, got {other:?}"),
+        };
+        let registration_first = TaskCancelRegistration::new(&started_first);
+        assert!(center.cancel(&first.id).await);
+        assert!(is_task_cancelled(task_id));
+        drop(registration_first);
+
+        // Second run reuses the task id and the dedupe key of the cancelled
+        // job: it must get a new id and a fresh, uncancelled token.
+        let second = center
+            .enqueue_parse_body(
+                vault.clone(),
+                "papers/a",
+                JobLane::Normal,
+                false,
+                Some(task_id.to_string()),
+            )
+            .await;
+        assert_ne!(second.id, first.id);
+        let started_second = match center.try_start(&second.id).await {
+            StartOutcome::Started(started) => started,
+            other => panic!("expected Started, got {other:?}"),
+        };
+        assert!(!started_second.cancel_token.is_cancelled());
+        let registration_second = TaskCancelRegistration::new(&started_second);
+        assert!(!is_task_cancelled(task_id));
+
+        // A crash of the second runner also leaves no cancel state behind.
+        let join = tauri::async_runtime::spawn(async { panic!("runner boom") }).await;
+        let err = join.expect_err("spawned panic surfaces as a join error");
+        let snapshot = center
+            .settle_crashed_runner(&second.id, &err)
+            .await
+            .expect("crash settle returned the terminal snapshot");
+        assert_eq!(snapshot.state, JobState::Failed);
+        drop(registration_second);
+        assert!(!is_task_cancelled(task_id));
+        assert_eq!(center.cancel_token_count_for_test().await, 0);
     }
 }

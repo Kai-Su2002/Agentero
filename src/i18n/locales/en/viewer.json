@@ -19,8 +19,13 @@
 		"zoomFitPage": "Fit page",
 		"outline": "Outline",
 		"linkAria": "PDF link",
-		"useDarkMode": "Use dark mode",
-		"useLightMode": "Use light mode",
+		"paperTone": "Page background",
+		"paperToneOption": {
+			"white": "White",
+			"sepia": "Sepia",
+			"green": "Green",
+			"dark": "Dark"
+		},
 		"remoteMode": "Remote mode",
 		"importToLibrary": "Import to library",
 		"findPlaceholder": "Find in document",
@@ -61,6 +66,12 @@
 			"needLayout": "Run layout analysis first (Figures panel).",
 			"noText": "No extractable text regions to translate.",
 			"failed": "Full-text translate failed"
+		},
+		"translation": {
+			"title": "Translation",
+			"tabTitle": "Translation – {{title}}",
+			"noPaper": "Open a paper to see its rendered translation.",
+			"empty": "No rendered translation yet. Run full-text translate in the PDF viewer first."
 		}
 	},
 	"pdfAsk": {

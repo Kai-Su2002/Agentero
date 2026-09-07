@@ -89,17 +89,17 @@ LayoutAnalysisPluginPackage: {
 | 项 | 值 |
 |---|---|
 | 路径 | `$XDG_CACHE_HOME/agentero/models/pp-doclayoutv3.onnx`（Unix 默认 `~/.cache/agentero/models/`） |
-| 启动 | Host `spawn_background_download`（task id 固定 `layout-model`；已有文件则跳过） |
-| 面板 | App `useLayoutModelPrefetch` 监听 `layout-model:task` / 进度，写入左下角后台任务（可取消） |
+| 启动 | Host `spawn_background_download` 入队 JobCenter `modelDownload` job（已有文件则跳过；并发触发按 fingerprint 去重） |
+| 面板 | JobCenter 投影成 `modelDownload` 行（字节进度 `job:progress`，task id = job id；取消走 `job_cancel`） |
 | 代理 | 设置里的 `networkProxyEnabled` / `networkProxyUrl`（`core::http::client_builder`） |
 | 源顺序 | **ModelScope 优先** → HuggingFace 回退 |
 | ModelScope | `greatv/oar-ocr` → `pp-doclayoutv3.onnx` |
 | HuggingFace | EmbedPDF `PP-DocLayoutV3-ONNX/model_fp16.onnx` |
 | 来源标记 | 同目录 `pp-doclayoutv3.onnx.source` |
 | 前端 | `agentero-model://…/pp-doclayoutv3.onnx`（Windows：`http://agentero-model.localhost/…`） |
-| Commands | `layout_model_status` / `layout_model_ensure({ progressTaskId? })` |
+| Commands | `layout_model_status` / `job_model_download_enqueue` |
 
-实现：`src-tauri/src/features/layout_model/`、`src/lib/pdf/layout/model.ts`、`ai-runtime.ts`。
+实现：`src-tauri/src/features/paper/analyze/layout/model_assets/`、`src/lib/pdf/layout/model.ts`、`ai-runtime.ts`。
 
 ### 后端选择（本地 ONNX / 远程 Provider）
 
@@ -115,7 +115,7 @@ LayoutAnalysisPluginPackage: {
 
 远程 provider 共用流程（`src/lib/pdf/layout/paddle.ts` IPC 封装 + `run-analysis.ts`）：
 
-1. 读取本地 PDF，整份 base64 交给 Host 命令 `layout_remote_analyze_pdf`（`provider` 参数分发到 `src-tauri/src/features/layout_remote/` 的 `RemoteLayoutEngine` 实现：`paddle.rs` / `mineru.rs`）；token 由 Host 从设置注入，WebView 只持有 `*` 掩码；
+1. 读取本地 PDF，整份 base64 交给 Host 命令 `layout_remote_analyze_pdf`（`provider` 参数分发到 `src-tauri/src/features/paper/analyze/layout/hosted/` 的 `RemoteLayoutEngine` 实现：`paddle.rs` / `mineru.rs`）；token 由 Host 从设置注入，WebView 只持有 `*` 掩码；
 2. Host 轮询远端任务（总时限 10 分钟），期间通过 `layout-remote:progress` 事件回报进度（`requestId` 隔离并行任务）；
 3. 每页返回统一的 `boxes`（像素坐标 + `label` + `score`）；
 4. 后续与本地路径完全共用：PDF text runs 补文字 / captionRole → `mergeCaptionsIntoHosts` → sidecar / index。
@@ -154,6 +154,8 @@ type LayoutSidecar = {
 缓存只在已知 paper folder 时启用；散落 PDF 没有 `{paper}` 路径，仍使用当前内存流程（也不写 index）。
 
 **重新分析按钮**（Figures header）：`force: false`。有 `source/layout.json` 时只重跑 JSON→侧栏（`mergeCaptionsIntoHosts` + NMS），**不**再跑 PP-DocLayoutV3，也**不**覆盖 raw sidecar；**会**刷新 `layout-index.json`。无缓存时才走完整 PDF→JSON。需要强制刷新模型输出时由调用方显式传 `force: true`（当前 UI 不暴露）。
+
+**全库重置**（设置 →「版面解析」底部两个按钮）：Host 命令 `clear_parse_results` / `clear_and_reparse`（`src-tauri/src/features/jobs/commands.rs`）按 catalog 逐篇删除所选 scope 的解析产物——`layout`（`source/layout.json` + `layout-index.json`）、`paper`（`PAPER.md`）或 `all`（默认）。删除前先取消该 Vault 下相关 queued/running 的 `layoutAnalyze` / `parseBody` job（防止晚到的 runner 把旧结果写回），删除后清空 `CapsCache`。「清除并重新解析」再对全部论文 enqueue `force: true` 的重新解析 job（idle lane，沿用 per-kind 并发上限）。仅支持本地 Vault；前端入口 `src/lib/paper/reparse.ts` + `layout-pane.tsx`（确认弹窗内选 scope）。
 
 ---
 

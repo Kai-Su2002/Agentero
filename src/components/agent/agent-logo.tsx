@@ -3,7 +3,7 @@ import type { ComponentProps, ReactNode } from "react";
 import {
 	SiClaude,
 	SiDeepseek,
-	SiGooglegemini,
+	SiGoogle,
 	SiHermes,
 	SiOpencode,
 } from "react-icons/si";
@@ -15,7 +15,7 @@ export type AgentLogoKey =
 	| "openclaw"
 	| "claude-acp"
 	| "codex-acp"
-	| "gemini"
+	| "antigravity"
 	| "hermes"
 	| "qodercli"
 	| "grok-build"
@@ -32,7 +32,7 @@ export function agentLogoKeyForTemplate(
 		case "openclaw":
 		case "claude-acp":
 		case "codex-acp":
-		case "gemini":
+		case "antigravity":
 		case "hermes":
 		case "qodercli":
 		case "grok-build":
@@ -84,8 +84,8 @@ export function AgentLogo({
 		case "codex-acp":
 			icon = <OpenAiMark className={neutralIconClass} />;
 			break;
-		case "gemini":
-			icon = <SiGooglegemini className={cn(iconClass, "!text-[#1A73E8]")} />;
+		case "antigravity":
+			icon = <SiGoogle className={cn(iconClass, "!text-[#1A73E8]")} />;
 			break;
 		case "hermes":
 			icon = (

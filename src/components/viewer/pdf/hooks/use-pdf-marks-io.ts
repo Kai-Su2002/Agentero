@@ -28,7 +28,8 @@ import {
 } from "react";
 import { useStableDerived } from "@/components/viewer/pdf/hooks/use-stable-derived";
 import type { PdfViewerProps } from "@/components/viewer/pdf/types";
-import { listenSafe } from "@/lib/core/tauri-events";
+import { events } from "@/lib/core/bindings";
+import { listenEventSafe } from "@/lib/core/tauri-events";
 import {
 	listPdfVisualTraces,
 	type PdfVisualSessionTrace,
@@ -40,10 +41,6 @@ import { marksDir } from "@/lib/pdf/selection";
 import { isRecentSelfWrite } from "@/lib/pdf/selection/marks-io";
 import { listPdfTranslates } from "@/lib/pdf/translate";
 import type { PdfTranslateRecord } from "@/lib/pdf/translate/types";
-import {
-	VAULT_FILE_CHANGED_EVENT,
-	type VaultFileChangedPayload,
-} from "@/lib/vault/fs-watch";
 import { normalizePathKey } from "@/lib/vault/path";
 
 /** One Agent turn can rewrite several mark files; coalesce the burst. */
@@ -193,23 +190,20 @@ export function usePdfMarksIo({
 			}, MARKS_REFRESH_BURST_MS);
 		};
 		const marksKey = `${normalizePathKey(marksDir(paperAbsPath))}/`;
-		const unsubMarks = listenSafe<VaultFileChangedPayload>(
-			VAULT_FILE_CHANGED_EVENT,
-			(payload) => {
-				const paths = [...payload.paths];
-				if (payload.rename) {
-					paths.push(payload.rename.from, payload.rename.to);
-				}
-				const marksPaths = paths.filter((p) =>
-					normalizePathKey(p).startsWith(marksKey),
-				);
-				if (!marksPaths.length) return;
-				// Our own writes already updated in-memory state; skip their
-				// watcher echo unless an external change landed in the same batch.
-				if (marksPaths.every((p) => isRecentSelfWrite(p))) return;
-				scheduleRefresh();
-			},
-		);
+		const unsubMarks = listenEventSafe(events.vaultFileChanged, (payload) => {
+			const paths = [...payload.paths];
+			if (payload.rename) {
+				paths.push(payload.rename.from, payload.rename.to);
+			}
+			const marksPaths = paths.filter((p) =>
+				normalizePathKey(p).startsWith(marksKey),
+			);
+			if (!marksPaths.length) return;
+			// Our own writes already updated in-memory state; skip their
+			// watcher echo unless an external change landed in the same batch.
+			if (marksPaths.every((p) => isRecentSelfWrite(p))) return;
+			scheduleRefresh();
+		});
 		return () => {
 			cancelled = true;
 			window.removeEventListener("focus", onFocus);

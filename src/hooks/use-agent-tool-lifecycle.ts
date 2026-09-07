@@ -1,4 +1,3 @@
-import { invoke } from "@tauri-apps/api/core";
 import { useCallback, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -8,16 +7,11 @@ import {
 	type ToolLifecycleAction,
 } from "@/lib/agent";
 import { BACKGROUND_TASK_CANCELLED_MESSAGE } from "@/lib/core/background-tasks";
+import { commands, events } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
 import { notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
-import { listenSafe } from "@/lib/core/tauri-events";
-
-type LifecycleProgressEvent = {
-	taskId: string;
-	phase: string;
-	progress: number | null;
-};
+import { listenEventSafe } from "@/lib/core/tauri-events";
 
 export type LifecycleProgressState = {
 	progress: number | null;
@@ -91,8 +85,8 @@ export function useAgentToolLifecycle(opts: {
 			});
 			const taskId = `agent-lifecycle-${entry.templateId}-${Date.now().toString(36)}`;
 			taskIdsRef.current.set(entry.templateId, taskId);
-			const stopProgress = listenSafe<LifecycleProgressEvent>(
-				"agent-lifecycle:progress",
+			const stopProgress = listenEventSafe(
+				events.agentLifecycleProgress,
 				(payload) => {
 					if (payload.taskId !== taskId) return;
 					patchLifecycleProgress(entry.templateId, {
@@ -168,9 +162,10 @@ export function useAgentToolLifecycle(opts: {
 		if (!isTauri()) return;
 		const taskId = taskIdsRef.current.get(templateId);
 		if (!taskId) return;
-		// Host polls is_cancelled(taskId) and kills the install child process.
-		// Not cancelBackgroundTask: this task is never registered in that store.
-		void invoke("background_task_cancel", { taskId }).catch(() => {});
+		// Host polls the lifecycle cancel registry and kills the install child
+		// process. Not cancelBackgroundTask: this task is never registered in
+		// that store.
+		void commands.agentLifecycleCancel(taskId).catch(() => {});
 	}, []);
 
 	return {

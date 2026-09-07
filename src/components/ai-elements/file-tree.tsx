@@ -149,7 +149,12 @@ export const FileTree = ({
 
 	return (
 		<FileTreeContext.Provider value={contextValue}>
-			<div className={cn("text-sm", className)} role="tree" {...props}>
+			<div
+				className={cn("text-sm", className)}
+				role="tree"
+				aria-multiselectable={Boolean(onSelectRow)}
+				{...props}
+			>
 				{children}
 			</div>
 		</FileTreeContext.Provider>
@@ -228,6 +233,8 @@ export type FileTreeFolderProps = HTMLAttributes<HTMLDivElement> & {
 
 /** Ring shown on the row a drag is currently hovering (valid drop target). */
 const DROP_RING = "ring-1 ring-inset ring-primary bg-accent";
+const SELECTED_ROW =
+	"border-primary bg-primary/10 hover:bg-primary/15 active:bg-primary/20";
 
 export const FileTreeFolder = ({
 	path,
@@ -268,8 +275,8 @@ export const FileTreeFolder = ({
 					data-path={path}
 					draggable
 					className={cn(
-						"group flex h-7 min-h-7 w-full items-center gap-1 rounded px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted/80",
-						isSelected && "bg-muted",
+						"group flex h-7 min-h-7 w-full items-center gap-1 rounded border-l-2 border-transparent px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+						isSelected && SELECTED_ROW,
 						dropTargetPath === path && DROP_RING,
 					)}
 					onClick={(e) => {
@@ -302,6 +309,7 @@ export const FileTreeFolder = ({
 					onDrop={(e) => onRowDrop?.(path, e)}
 					onDragEnd={() => onRowDragEnd?.()}
 					aria-expanded={isExpanded}
+					aria-selected={isSelected}
 					role="treeitem"
 				>
 					<FileTreeDisclosureIcon
@@ -362,8 +370,8 @@ export const FileTreeFolderRow = ({
 			data-path={path}
 			draggable
 			className={cn(
-				"group flex h-7 min-h-7 w-full items-center gap-1 rounded px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted/80",
-				isSelected && "bg-muted",
+				"group flex h-7 min-h-7 w-full items-center gap-1 rounded border-l-2 border-transparent px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+				isSelected && SELECTED_ROW,
 				dropTargetPath === path && DROP_RING,
 				className,
 			)}
@@ -396,6 +404,7 @@ export const FileTreeFolderRow = ({
 			onDrop={(e) => onRowDrop?.(path, e)}
 			onDragEnd={() => onRowDragEnd?.()}
 			aria-expanded={isExpanded}
+			aria-selected={isSelected}
 			role="treeitem"
 		>
 			<FileTreeDisclosureIcon
@@ -489,10 +498,18 @@ export const FileTreeFile = ({
 		(e: KeyboardEvent<HTMLDivElement>) => {
 			if (e.key === "Enter" || e.key === " ") {
 				e.preventDefault();
-				onSelect?.(path);
+				if (onSelectRow) {
+					onSelectRow(path, {
+						meta: e.metaKey,
+						ctrl: e.ctrlKey,
+						shift: e.shiftKey,
+					});
+				} else {
+					onSelect?.(path);
+				}
 			}
 		},
-		[onSelect, path],
+		[onSelect, onSelectRow, path],
 	);
 
 	const fileContextValue = useMemo(() => ({ name, path }), [name, path]);
@@ -503,8 +520,8 @@ export const FileTreeFile = ({
 				data-path={path}
 				draggable
 				className={cn(
-					"group flex h-7 min-h-7 cursor-pointer items-center gap-1 rounded px-4 transition-colors hover:bg-muted/50 active:bg-muted/80",
-					isSelected && "bg-muted",
+					"group flex h-7 min-h-7 cursor-pointer items-center gap-1 rounded border-l-2 border-transparent px-4 transition-colors hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+					isSelected && SELECTED_ROW,
 					dropTargetPath === path && DROP_RING,
 					className,
 				)}
@@ -517,6 +534,7 @@ export const FileTreeFile = ({
 				onDrop={(e) => onRowDrop?.(path, e)}
 				onDragEnd={() => onRowDragEnd?.()}
 				role="treeitem"
+				aria-selected={isSelected}
 				tabIndex={0}
 				{...props}
 			>

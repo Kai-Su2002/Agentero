@@ -7,10 +7,11 @@
 import { createStore } from "zustand/vanilla";
 import { debounce } from "@/lib/core/debounce";
 import { isTauri } from "@/lib/core/tauri";
-import type { PaperMetadata } from "@/lib/paper";
-import { listPapers } from "@/lib/paper/api";
+import type { PaperLibraryRow, PaperMetadata } from "@/lib/paper";
+import { listPapers, setPaperTags } from "@/lib/paper/api";
 import type { LocalPdfImportEntry } from "@/lib/paper/lookup";
 import type { CitingScanResult } from "@/lib/paper/refs";
+import type { PaperTagInput } from "@/lib/paper/tags";
 import { getVaultPath } from "@/lib/vault/store";
 
 export type LibraryIoBusy =
@@ -23,7 +24,7 @@ export type LibraryIoBusy =
 export type { LocalPdfImportEntry };
 
 type LibraryStore = {
-	papers: PaperMetadata[];
+	papers: PaperLibraryRow[];
 	loading: boolean;
 	/** Title search query for the papers library view. */
 	query: string;
@@ -78,7 +79,7 @@ function tagsFingerprint(tags: PaperMetadata["tags"]): string {
  * return identical rows, and replacing the array anyway would re-render the
  * whole library and retrigger heatmap loads for every paper.
  */
-function samePapers(a: PaperMetadata[], b: PaperMetadata[]): boolean {
+function samePapers(a: PaperLibraryRow[], b: PaperLibraryRow[]): boolean {
 	if (a === b) return true;
 	if (a.length !== b.length) return false;
 	for (let i = 0; i < a.length; i++) {
@@ -89,6 +90,7 @@ function samePapers(a: PaperMetadata[], b: PaperMetadata[]): boolean {
 			x.path !== y.path ||
 			x.updated_at !== y.updated_at ||
 			x.is_read !== y.is_read ||
+			x.has_pdf !== y.has_pdf ||
 			x.title !== y.title ||
 			tagsFingerprint(x.tags) !== tagsFingerprint(y.tags)
 		) {
@@ -99,7 +101,9 @@ function samePapers(a: PaperMetadata[], b: PaperMetadata[]): boolean {
 }
 
 export function setLibraryPapers(
-	next: PaperMetadata[] | ((previous: PaperMetadata[]) => PaperMetadata[]),
+	next:
+		| PaperLibraryRow[]
+		| ((previous: PaperLibraryRow[]) => PaperLibraryRow[]),
 ): void {
 	const papers =
 		typeof next === "function" ? next(libraryStore.getState().papers) : next;
@@ -158,6 +162,23 @@ export async function refreshLibrary(): Promise<void> {
 	} finally {
 		libraryStore.setState({ loading: false });
 	}
+}
+
+/**
+ * Replace a paper's tags in catalog and update the local library row.
+ * Works for both local and remote vaults.
+ */
+export async function setLibraryPaperTags(
+	vaultPath: string,
+	path: string,
+	tags: PaperTagInput[],
+): Promise<void> {
+	const updated = await setPaperTags(vaultPath, path, tags);
+	// Merge over the row: `paper_set_tags` returns a bare record without the
+	// `paper_list` local-PDF probe.
+	setLibraryPapers((prev) =>
+		prev.map((p) => (p.path === path ? { ...p, ...updated } : p)),
+	);
 }
 
 /** Coalesces external-change bursts (CLI, sync clients) into one reload. */

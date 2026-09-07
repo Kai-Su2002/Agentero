@@ -1,5 +1,6 @@
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
 /** Platform-aware label key under `sidebar:fileTree.*`. */
@@ -42,9 +43,7 @@ export async function openInTerminal(path: string): Promise<void> {
 	if (!isTauri()) {
 		throw new Error("Open in terminal requires the desktop app.");
 	}
-	await invokeApi<{ cwd: string }>(
-		"path_open_in_terminal",
-		{ path: trimmed },
-		{ allowVoid: true, fallback: "Failed to open terminal." },
-	);
+	await callApi(() => commands.pathOpenInTerminal(trimmed), {
+		fallback: "Failed to open terminal.",
+	});
 }

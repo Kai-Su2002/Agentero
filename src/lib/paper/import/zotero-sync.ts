@@ -7,28 +7,20 @@
 
 import { Channel } from "@tauri-apps/api/core";
 import i18n from "@/i18n";
-import { invokeApi } from "@/lib/core/ipc";
+import {
+	commands,
+	type SyncConflict,
+	type SyncProgress,
+	type ZoteroSyncResult,
+} from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
 export type ZoteroSyncPhase = "read" | "pull" | "push";
 
-export type ZoteroSyncConflict = {
-	paperPath: string;
-	title: string;
-	reason: string;
-};
+export type ZoteroSyncConflict = SyncConflict;
 
-export type ZoteroSyncResult = {
-	linked: number;
-	unlinked: number;
-	metadataFilled: number;
-	notesPulled: number;
-	annotationsPulled: number;
-	notesPushed: number;
-	linkageBackfilled: number;
-	conflicts: ZoteroSyncConflict[];
-	errors: string[];
-};
+export type { ZoteroSyncResult };
 
 /** Run one bidirectional sync pass. */
 export async function syncZotero(opts: {
@@ -45,29 +37,26 @@ export async function syncZotero(opts: {
 	if (!isTauri()) {
 		throw new Error(i18n.t("sidebar:zoteroMigrate.desktopOnly"));
 	}
-	const onProgress = new Channel<{
-		current: number;
-		total: number;
-		phase: ZoteroSyncPhase;
-	}>();
+	const onProgress = new Channel<SyncProgress>();
 	if (opts.onProgress) {
 		const cb = opts.onProgress;
-		onProgress.onmessage = (m) => cb(m.current, m.total, m.phase);
+		onProgress.onmessage = (m) =>
+			cb(m.current, m.total, m.phase as ZoteroSyncPhase);
 	}
-	return invokeApi<ZoteroSyncResult>(
-		"zotero_sync",
-		{
-			args: {
-				vaultPath: opts.vaultPath,
-				zoteroDir: opts.zoteroDir,
-				pullMetadata: opts.pullMetadata,
-				pullNotes: opts.pullNotes,
-				pullAnnotations: opts.pullAnnotations,
-				pushNotes: opts.pushNotes,
-				forcePush: opts.forcePush ?? false,
-			},
-			onProgress,
-		},
+	return callApi(
+		() =>
+			commands.zoteroSync(
+				{
+					vaultPath: opts.vaultPath,
+					zoteroDir: opts.zoteroDir,
+					pullMetadata: opts.pullMetadata,
+					pullNotes: opts.pullNotes,
+					pullAnnotations: opts.pullAnnotations,
+					pushNotes: opts.pushNotes,
+					forcePush: opts.forcePush ?? false,
+				},
+				onProgress,
+			),
 		{ fallback: "zotero_sync failed" },
 	);
 }

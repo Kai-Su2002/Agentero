@@ -6,12 +6,12 @@
 
 import i18n from "@/i18n";
 import { track } from "@/lib/activity";
-import { enqueueBackgroundTask } from "@/lib/core/background-tasks";
+import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
-import { invokeApi } from "@/lib/core/ipc";
+import { callApiResult } from "@/lib/core/ipc";
 import { logger } from "@/lib/core/logger";
 import { notifyError, notifySuccess, notifyWarning } from "@/lib/core/notify";
-import { mapLimit } from "@/lib/core/utils";
+import { enqueueTask, enqueueTaskSettled } from "@/lib/core/tasks";
 import {
 	detectPaperDirectory,
 	notesPathForPaper,
@@ -22,8 +22,6 @@ import {
 	resolvePapersParentDir,
 } from "@/lib/paper";
 import {
-	exportLibraryToFile,
-	importLibraryFromFile,
 	type PaperMetaPatch,
 	rescanPapers,
 	resolveIdentifierMetadata,
@@ -34,21 +32,16 @@ import {
 	libraryStore,
 	refreshLibrary,
 	scheduleLibraryRefresh,
-	setCitingScanDraft,
 	setEditMetaDraft,
 	setLibraryIoBusy,
 	setLibraryPapers,
 	setLibraryRescanning,
 } from "@/lib/paper/library-store";
-import { downloadPaperAssets } from "@/lib/paper/lookup";
 import {
 	maybeAutoRunPaperReader,
 	paperAssetsReadyForReader,
 	runPaperReaderWorkflow,
 } from "@/lib/paper/reader";
-import { libraryCitingScan } from "@/lib/paper/refs";
-import { enqueuePaperLayoutAnalysis } from "@/lib/pdf/layout";
-import { getSettings } from "@/lib/settings/react-store";
 import type { FileNode } from "@/lib/vault";
 import { joinVaultPath, readVaultFile } from "@/lib/vault";
 import { isRemoteVaultHandle } from "@/lib/vault/remote/remote-vault";
@@ -80,31 +73,15 @@ export function editPaperMetaFromTree(paperDir: string): void {
 
 /**
  * Find new papers that cite this library but are not imported yet, and open
- * the candidate list. Online-only and slow enough to need the task panel.
+ * the candidate list. Online-only and slow enough to need the task panel:
+ * runs as a `citingScan` renderer job (executor in `library-tasks.ts`).
  */
 export async function discoverCitingPapers(): Promise<void> {
 	const vaultPath = getVaultPath();
 	if (!vaultPath || libraryStore.getState().ioBusy) return;
 	setLibraryIoBusy("citing");
 	try {
-		await enqueueBackgroundTask(
-			{ kind: "lookup", title: i18n.t("app:tasks.citingScan") },
-			async ({ id, setDetail }) => {
-				setDetail(i18n.t("app:tasks.citingScanPhaseMeta"));
-				// Host emits the per-seed counter for the fetch phase directly.
-				const result = await libraryCitingScan(vaultPath, { taskId: id });
-				if (result.cancelled) return null;
-				setDetail(
-					i18n.t("sidebar:papersLibrary.citingScanDone", {
-						count: result.candidates.length,
-					}),
-				);
-				// The result describes the vault it was scanned from; a switch
-				// mid-scan means the dialog would be about the wrong library.
-				if (getVaultPath() === vaultPath) setCitingScanDraft(result);
-				return result;
-			},
-		);
+		await enqueueTaskSettled({ kind: "citingScan", vaultPath, path: "" });
 	} catch (e) {
 		notifyError(errorText(e));
 	} finally {
@@ -142,18 +119,12 @@ export async function libraryExport(): Promise<void> {
 	if (!vaultPath || libraryStore.getState().ioBusy) return;
 	setLibraryIoBusy("export");
 	try {
-		await enqueueBackgroundTask(
-			{ kind: "export", title: i18n.t("app:tasks.libraryExport") },
-			async () => {
-				const result = await exportLibraryToFile({
-					vaultPath,
-					settings: getSettings(),
-					format: "bibtex",
-				});
-				// User cancelled dialog — treat as soft cancel, not failure.
-				return result ?? null;
-			},
-		);
+		await enqueueTaskSettled({
+			kind: "libraryIo",
+			vaultPath,
+			path: "",
+			params: { op: "export" },
+		});
 	} catch (e) {
 		notifyError(errorText(e));
 	} finally {
@@ -166,28 +137,12 @@ export async function libraryImport(): Promise<void> {
 	if (!vaultPath || libraryStore.getState().ioBusy) return;
 	setLibraryIoBusy("import");
 	try {
-		const result = await enqueueBackgroundTask(
-			{ kind: "import", title: i18n.t("app:tasks.libraryImport") },
-			async ({ setDetail }) => {
-				const r = await importLibraryFromFile({
-					vaultPath,
-					parentDir: currentLookupParentDir(),
-					settings: getSettings(),
-				});
-				if (!r) return null;
-				setDetail(
-					i18n.t("sidebar:papersLibrary.importDone", { count: r.imported }),
-				);
-				await refreshTree(vaultPath);
-				await refreshLibrary();
-				return r;
-			},
-		);
-		if (result?.errors.length) {
-			notifyWarning(
-				`${i18n.t("sidebar:papersLibrary.importDone", { count: result.imported })}; ${result.errors.slice(0, 2).join("; ")}`,
-			);
-		}
+		await enqueueTaskSettled({
+			kind: "libraryIo",
+			vaultPath,
+			path: "",
+			params: { op: "import" },
+		});
 	} catch (e) {
 		notifyError(errorText(e));
 	} finally {
@@ -196,36 +151,38 @@ export async function libraryImport(): Promise<void> {
 }
 
 /**
- * Shared download core: background task + tree/library refresh + layout
- * analysis. Returns the download result for follow-up workflows (reader).
+ * Shared download core: one `downloadAssets` JobCenter job per paper. The Host
+ * runner downloads, invalidates caps, backfills PAPER.md and enqueues the
+ * layout pass; byte progress projects into the tasks panel. Returns the
+ * post-download asset flags for follow-up workflows (reader).
  */
 async function runPaperAssetsDownload(vaultPath: string, rel: string) {
-	return enqueueBackgroundTask(
-		{
-			kind: "download",
-			title: i18n.t("app:tasks.downloadPaper"),
-			detail: rel,
-		},
-		async ({ id, setDetail }) => {
-			setDetail(rel);
-			const r = await downloadPaperAssets({
-				vaultRoot: vaultPath,
-				paperPath: rel,
-				progressTaskId: id,
-			});
-			setDetail(i18n.t("app:tasks.downloadRefreshing", { path: rel }));
-			await refreshTree(vaultPath);
-			await refreshLibrary();
-			enqueuePaperLayoutAnalysis({
-				paperAbsPath: joinVaultPath(vaultPath, rel),
-			});
-			track("asset.download", {
-				path: rel,
-				extra: { pdf: r.pdf, tex: r.tex, paperMd: r.paperMd },
-			});
-			return r;
-		},
-	);
+	await enqueueTaskSettled({ kind: "downloadAssets", vaultPath, path: rel });
+	await refreshTree(vaultPath);
+	await refreshLibrary();
+	// Best-effort: a failed lookup (vault switched / paper moved mid-download)
+	// must not turn the successful download into an error toast; the reader
+	// gate simply stays closed then.
+	const status = await callApiResult(
+		() => commands.jobPaperAssetsStatus({ vaultPath, path: rel }),
+		{ fallback: "paper assets status failed" },
+	).catch((error) => {
+		logger.warn("paper assets status failed", {
+			path: rel,
+			error: errorText(error),
+		});
+		return null;
+	});
+	const assets = {
+		pdf: status?.pdf ?? false,
+		tex: status?.tex ?? false,
+		paperMd: status?.paperMd ?? false,
+	};
+	track("asset.download", {
+		path: rel,
+		extra: { pdf: assets.pdf, tex: assets.tex, paperMd: assets.paperMd },
+	});
+	return assets;
 }
 
 /**
@@ -333,9 +290,8 @@ export async function downloadAllMissingAssets(): Promise<void> {
 	// CapsCache-backed query (§8.4) replaces the frontend tree walk.
 	let queue: string[] = [];
 	try {
-		queue = await invokeApi<string[]>(
-			"job_papers_needing_assets",
-			{ args: { vaultPath } },
+		queue = await callApiResult(
+			() => commands.jobPapersNeedingAssets({ vaultPath }),
 			{ fallback: "collect papers needing assets failed" },
 		);
 	} catch (e) {
@@ -346,9 +302,14 @@ export async function downloadAllMissingAssets(): Promise<void> {
 
 	for (const rel of queue) {
 		if (!rel) continue;
-		void invokeApi(
-			"job_download_assets_enqueue",
-			{ args: { vaultPath, path: rel, lane: "idle", force: false } },
+		void callApiResult(
+			() =>
+				commands.jobDownloadAssetsEnqueue({
+					vaultPath,
+					path: rel,
+					lane: "idle",
+					force: false,
+				}),
 			{ fallback: "download enqueue failed" },
 		).catch((e) =>
 			logger.warn("bulk download enqueue failed", {
@@ -414,16 +375,14 @@ export async function paperTagsChange(
 		});
 		setLibraryPapers((prev) =>
 			prev.map((p) => {
-				const key = (p.path ?? "")
-					.replace(/\\/g, "/")
-					.replace(/^\/+|\/+$/g, "");
+				const key = p.path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 				return key === path ? { ...p, ...updated } : p;
 			}),
 		);
 		setTabs((prev) =>
 			prev.map((tab) => {
 				if (!tab.paperMeta) return tab;
-				const key = (tab.paperMeta.path ?? "")
+				const key = tab.paperMeta.path
 					.replace(/\\/g, "/")
 					.replace(/^\/+|\/+$/g, "");
 				const samePath = key === path;
@@ -434,12 +393,11 @@ export async function paperTagsChange(
 					paperMeta: {
 						...tab.paperMeta,
 						...updated,
-						path: updated.path ?? path,
 					},
 				};
 			}),
 		);
-		return { ...paperMeta, ...updated, path: updated.path ?? path };
+		return { ...paperMeta, ...updated };
 	} catch (e) {
 		notifyError(errorText(e));
 		return null;
@@ -466,16 +424,14 @@ export async function paperMetaChange(
 		});
 		setLibraryPapers((prev) =>
 			prev.map((p) => {
-				const key = (p.path ?? "")
-					.replace(/\\/g, "/")
-					.replace(/^\/+|\/+$/g, "");
+				const key = p.path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
 				return key === path ? { ...p, ...updated } : p;
 			}),
 		);
 		setTabs((prev) =>
 			prev.map((tab) => {
 				if (!tab.paperMeta) return tab;
-				const key = (tab.paperMeta.path ?? "")
+				const key = tab.paperMeta.path
 					.replace(/\\/g, "/")
 					.replace(/^\/+|\/+$/g, "");
 				const samePath = key === path;
@@ -486,12 +442,11 @@ export async function paperMetaChange(
 					paperMeta: {
 						...tab.paperMeta,
 						...updated,
-						path: updated.path ?? path,
 					},
 				};
 			}),
 		);
-		return { ...paperMeta, ...updated, path: updated.path ?? path };
+		return { ...paperMeta, ...updated };
 	} catch (e) {
 		notifyError(errorText(e));
 		return null;
@@ -501,98 +456,58 @@ export async function paperMetaChange(
 /**
  * Re-resolve external metadata for the given papers and overwrite catalog fields
  * where the provider returned a non-empty value (library header refresh button).
- * Online-only and slow enough to surface in the background-tasks panel with
- * progress + partial-failure reporting; concurrency 3 to stay polite with
- * metadata providers.
+ * Runs as one `metadataRefresh` renderer batch job (executor in
+ * `library-tasks.ts`): the paper list travels in the job params, progress is
+ * reported per item (N/M), cancellation routes through the panel, and partial
+ * failures surface on the job row.
  */
 export async function refreshLibraryMetadata(
 	vaultPath: string | null | undefined,
 	targets: PaperMetadata[],
 ): Promise<void> {
 	if (!vaultPath || isRemoteVaultHandle(vaultPath)) return;
-	const papers = targets.filter(
-		(p) => p.path && (p.doi?.trim() || p.arxiv_id?.trim() || p.title?.trim()),
-	);
+	const papers = targets
+		.map((p) => ({
+			path: p.path ?? "",
+			query: p.doi?.trim() || p.arxiv_id?.trim() || p.title?.trim() || "",
+		}))
+		.filter((p) => p.path && p.query);
 	if (papers.length === 0) {
 		notifyError(i18n.t("sidebar:papersLibrary.refreshMetadataNoTargets"));
 		return;
 	}
-	await enqueueBackgroundTask(
-		{
-			kind: "other",
-			title: i18n.t("sidebar:papersLibrary.refreshMetadataTaskTitle"),
-			detail: i18n.t("sidebar:papersLibrary.refreshMetadataTaskDetail", {
-				current: 0,
-				total: papers.length,
-			}),
-		},
-		async ({ signal, setProgress, setDetail }) => {
-			const stats = { updated: 0, empty: 0, failed: 0, processed: 0 };
-			setProgress(0);
-			const updateStats = () => {
-				setProgress(Math.round((stats.processed / papers.length) * 100));
-				setDetail(
-					i18n.t("sidebar:papersLibrary.refreshMetadataTaskDetail", {
-						current: stats.processed,
-						total: papers.length,
-						updated: stats.updated,
-						failed: stats.failed,
-						empty: stats.empty,
-					}),
-				);
-			};
-			await mapLimit(papers, 3, async (paper) => {
-				if (signal.aborted) return;
-				const text =
-					paper.doi?.trim() || paper.arxiv_id?.trim() || paper.title?.trim();
-				try {
-					const meta = await resolveIdentifierMetadata(text ?? "");
-					const patch: PaperMetaPatch = {};
-					if (meta.title?.trim()) patch.title = meta.title.trim();
-					if (meta.authors?.length) patch.authors = meta.authors;
-					if (meta.year != null) patch.year = String(meta.year);
-					if (meta.doi?.trim()) patch.doi = meta.doi.trim();
-					if (meta.arxivId?.trim()) patch.arxivId = meta.arxivId.trim();
-					if (meta.publication?.trim())
-						patch.publication = meta.publication.trim();
-					if (meta.volume?.trim()) patch.volume = meta.volume.trim();
-					if (meta.issue?.trim()) patch.issue = meta.issue.trim();
-					if (meta.pages?.trim()) patch.pages = meta.pages.trim();
-					if (meta.publisher?.trim()) patch.publisher = meta.publisher.trim();
-					if (meta.abstract?.trim()) patch.abstract = meta.abstract.trim();
-					if (meta.pdfUrl?.trim()) patch.pdfUrl = meta.pdfUrl.trim();
-					if (meta.htmlUrl?.trim()) patch.htmlUrl = meta.htmlUrl.trim();
+	try {
+		await enqueueTask({
+			kind: "metadataRefresh",
+			vaultPath,
+			path: "",
+			params: { papers },
+		});
+	} catch (e) {
+		notifyError(errorText(e));
+	}
+}
 
-					if (Object.keys(patch).length > 0 && paper.path) {
-						await updatePaperMeta(vaultPath, paper.path, patch);
-						stats.updated++;
-						scheduleLibraryRefresh();
-					} else {
-						stats.empty++;
-					}
-				} catch (e) {
-					stats.failed++;
-					logger.error("refresh metadata failed", {
-						path: paper.path,
-						error: String(e),
-					});
-				} finally {
-					stats.processed++;
-					updateStats();
-				}
-			});
-			await refreshLibrary();
-			if (stats.failed > 0) {
-				throw new Error(
-					i18n.t("sidebar:papersLibrary.refreshMetadataPartial", {
-						updated: stats.updated,
-						failed: stats.failed,
-						empty: stats.empty,
-					}),
-				);
-			}
-		},
-	);
+/**
+ * Catalog patch from an identifier-resolved record. Empty fields are skipped
+ * so `paper_update_meta` keeps the stored value.
+ */
+export function resolvedMetaPatch(meta: PaperMetadata): PaperMetaPatch {
+	const patch: PaperMetaPatch = {};
+	if (meta.title?.trim()) patch.title = meta.title.trim();
+	if (meta.authors?.length) patch.authors = meta.authors;
+	if (meta.year != null) patch.year = String(meta.year);
+	if (meta.doi?.trim()) patch.doi = meta.doi.trim();
+	if (meta.arxiv_id?.trim()) patch.arxivId = meta.arxiv_id.trim();
+	if (meta.publication?.trim()) patch.publication = meta.publication.trim();
+	if (meta.volume?.trim()) patch.volume = meta.volume.trim();
+	if (meta.issue?.trim()) patch.issue = meta.issue.trim();
+	if (meta.pages?.trim()) patch.pages = meta.pages.trim();
+	if (meta.publisher?.trim()) patch.publisher = meta.publisher.trim();
+	if (meta.abstract?.trim()) patch.abstract = meta.abstract.trim();
+	if (meta.pdf_url?.trim()) patch.pdfUrl = meta.pdf_url.trim();
+	if (meta.html_url?.trim()) patch.htmlUrl = meta.html_url.trim();
+	return patch;
 }
 
 /**
@@ -612,20 +527,7 @@ export async function refreshPaperMetadata(
 	}
 	try {
 		const meta = await resolveIdentifierMetadata(text);
-		const patch: PaperMetaPatch = {};
-		if (meta.title?.trim()) patch.title = meta.title.trim();
-		if (meta.authors?.length) patch.authors = meta.authors;
-		if (meta.year != null) patch.year = String(meta.year);
-		if (meta.doi?.trim()) patch.doi = meta.doi.trim();
-		if (meta.arxivId?.trim()) patch.arxivId = meta.arxivId.trim();
-		if (meta.publication?.trim()) patch.publication = meta.publication.trim();
-		if (meta.volume?.trim()) patch.volume = meta.volume.trim();
-		if (meta.issue?.trim()) patch.issue = meta.issue.trim();
-		if (meta.pages?.trim()) patch.pages = meta.pages.trim();
-		if (meta.publisher?.trim()) patch.publisher = meta.publisher.trim();
-		if (meta.abstract?.trim()) patch.abstract = meta.abstract.trim();
-		if (meta.pdfUrl?.trim()) patch.pdfUrl = meta.pdfUrl.trim();
-		if (meta.htmlUrl?.trim()) patch.htmlUrl = meta.htmlUrl.trim();
+		const patch = resolvedMetaPatch(meta);
 
 		if (Object.keys(patch).length > 0) {
 			await updatePaperMeta(vaultPath, paper.path, patch);

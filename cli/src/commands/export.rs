@@ -3,7 +3,7 @@
 use crate::error::CliError;
 use crate::output::to_value;
 use crate::resolve::{resolve_vault, GlobalOpts};
-use agentero_lib::features::zotero::{self, PaperExportArgs};
+use agentero_core::features::zotero::{self, PaperExportArgs};
 use clap::{Subcommand, ValueHint};
 use serde_json::{json, Value};
 use std::fs;

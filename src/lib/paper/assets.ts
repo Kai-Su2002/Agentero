@@ -80,7 +80,7 @@ export type PaperDownloadReason = "noPdf" | "noBody";
  */
 export function paperAssetDownloadReasons(
 	node: TreeWalkNode,
-	meta?: { body_source?: string } | null,
+	meta?: { body_source?: string | null } | null,
 ): PaperDownloadReason[] {
 	const reasons: PaperDownloadReason[] = [];
 	if (!paperHasLocalPdf(node)) reasons.push("noPdf");
@@ -95,7 +95,7 @@ export function paperAssetDownloadReasons(
 /** Show file-tree Download when PDF / source / readable body is incomplete. */
 export function paperNeedsAssetDownload(
 	node: TreeWalkNode,
-	meta?: { body_source?: string } | null,
+	meta?: { body_source?: string | null } | null,
 ): boolean {
 	return paperAssetDownloadReasons(node, meta).length > 0;
 }
@@ -106,7 +106,7 @@ export function paperNeedsAssetDownload(
  */
 export function paperAssetsComplete(
 	node: TreeWalkNode,
-	meta?: { body_source?: string } | null,
+	meta?: { body_source?: string | null } | null,
 ): boolean {
 	return paperAssetDownloadReasons(node, meta).length === 0;
 }
@@ -116,7 +116,7 @@ export function paperAssetsComplete(
  */
 export function paperNeedsRead(
 	node: TreeWalkNode,
-	meta: { is_read?: boolean; body_source?: string } | null | undefined,
+	meta: { is_read?: boolean; body_source?: string | null } | null | undefined,
 ): boolean {
 	if (!paperAssetsComplete(node, meta)) return false;
 	return !(meta?.is_read === true);

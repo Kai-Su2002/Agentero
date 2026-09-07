@@ -7,7 +7,8 @@
  * the response (with a 200 DPI fallback for the point conversion).
  */
 
-import { invokeApi } from "@/lib/core/ipc";
+import { commands } from "@/lib/core/bindings";
+import { callApi } from "@/lib/core/ipc";
 import { clamp01 } from "@/lib/core/math";
 import { layoutLabelToKind } from "@/lib/pdf/layout/labels";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
@@ -31,17 +32,6 @@ export type LayoutRemoteAnalyzePdfResult = {
 	pages: LayoutRemotePageResult[];
 };
 
-/** Progress event emitted by the Host while the job runs. */
-export const LAYOUT_REMOTE_PROGRESS_EVENT = "layout-remote:progress";
-
-export type LayoutRemoteProgressPayload = {
-	phase: string;
-	extractedPages: number | null;
-	totalPages: number | null;
-	/** Present when several API jobs run in parallel; omit on older Hosts. */
-	requestId?: string | null;
-};
-
 /** Match the local PP-DocLayoutV3 plugin threshold. */
 export const PADDLE_LAYOUT_MIN_SCORE = 0.3;
 
@@ -60,15 +50,17 @@ export async function invokeLayoutRemoteAnalyzePdf(args: {
 	apiKey?: string;
 	requestId?: string;
 }): Promise<LayoutRemoteAnalyzePdfResult> {
-	return invokeApi<LayoutRemoteAnalyzePdfResult>("layout_remote_analyze_pdf", {
-		args: {
+	// Wire boxes keep serde `null` on absent score/coordinate numbers and add
+	// `renderedPages`; the converters below treat null like the old payload.
+	return (await callApi(() =>
+		commands.layoutRemoteAnalyzePdf({
 			provider: args.provider,
 			pdfBase64: args.pdfBase64,
 			fileName: args.fileName ?? null,
 			apiKey: args.apiKey ?? null,
 			requestId: args.requestId ?? null,
-		},
-	});
+		}),
+	)) as LayoutRemoteAnalyzePdfResult;
 }
 
 /**
@@ -81,13 +73,13 @@ export async function invokeLayoutRemoteProbe(args: {
 	imageBase64: string;
 	apiKey?: string;
 }): Promise<{ jobId: string }> {
-	return invokeApi<{ jobId: string }>("layout_remote_probe", {
-		args: {
+	return callApi(() =>
+		commands.layoutRemoteProbe({
 			provider: args.provider,
 			imageBase64: args.imageBase64,
 			apiKey: args.apiKey ?? null,
-		},
-	});
+		}),
+	);
 }
 
 /** Tiny white JPEG for the settings connectivity probe. */

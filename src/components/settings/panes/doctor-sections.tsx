@@ -98,7 +98,7 @@ export function WikiIssueRows({ issues }: { issues: WikiCheckIssue[] }) {
 		<>
 			{issues.map((issue) => {
 				const { before, after } = splitLineAroundFocus(
-					issue.context,
+					issue.context ?? undefined,
 					issue.targetRaw,
 				);
 				return (

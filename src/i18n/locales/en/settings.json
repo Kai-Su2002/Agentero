@@ -99,6 +99,16 @@
 			"label": "Network proxy",
 			"systemDetected": "System proxy detected ({{url}}) — used automatically while this switch is off."
 		},
+		"easyScholar": {
+			"section": "EasyScholar",
+			"keyLabel": "Key",
+			"placeholder": "Enter EasyScholar key",
+			"confirm": "Confirm",
+			"probeIdle": "Not configured",
+			"probeOk": "Available",
+			"probeFail": "Unavailable",
+			"probeProbing": "Checking…"
+		},
 		"plaza": {
 			"label": "Plaza"
 		},
@@ -380,6 +390,9 @@
 		"autoSelection": {
 			"label": "Auto-translate PDF selection"
 		},
+		"dualPane": {
+			"label": "Open rendered translation in a side window"
+		},
 		"providerConfig": {
 			"section": "API Services",
 			"confirm": "Confirm",
@@ -480,6 +493,26 @@
 			"probeOk": "Available",
 			"probeFail": "Unavailable",
 			"probeProbing": "Checking availability…"
+		},
+		"clearResults": {
+			"clear": "Clear parse results",
+			"clearAndReparse": "Clear and reparse",
+			"clearing": "Clearing…",
+			"reparsing": "Reparsing…",
+			"confirmClear": "Clear",
+			"confirmReparse": "Clear & reparse",
+			"clearDone": "Cleared {{removed}} file(s) across {{scanned}} paper(s).",
+			"reparseDone": "Cleared {{removed}} file(s) and enqueued {{layout}} layout / {{paper}} body job(s).",
+			"scope": {
+				"layout": "Layout sidecars",
+				"paper": "Body parse results",
+				"all": "All (layout + body)"
+			},
+			"dialog": {
+				"clearTitle": "Clear parse results?",
+				"reparseTitle": "Clear and reparse?",
+				"scopeLabel": "Choose scope"
+			}
 		}
 	},
 	"doctor": {
