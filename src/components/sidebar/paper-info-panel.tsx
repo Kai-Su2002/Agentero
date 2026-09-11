@@ -30,6 +30,7 @@ import {
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { Input } from "@/components/ui/input";
+import { MathText } from "@/components/ui/math-text";
 import {
 	Popover,
 	PopoverContent,
@@ -76,7 +77,7 @@ function MetaRow({
 			<Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
 			<div className="min-w-0 flex-1">
 				<span className="sr-only">{label}</span>
-				<div className="text-xs leading-snug text-foreground">{children}</div>
+				<div className="text-sm leading-snug text-foreground">{children}</div>
 			</div>
 		</div>
 	);
@@ -109,7 +110,7 @@ function CopyValue({
 			)}
 		>
 			{/* No `block` here: it sorts after line-clamp-* and would override display:-webkit-box. */}
-			<span className={cn("w-full", className)}>{text}</span>
+			<MathText text={text} className={cn("w-full", className)} />
 		</button>
 	);
 }
@@ -132,7 +133,7 @@ function LinkChip({
 			title={label}
 			className={cn(
 				"inline-flex items-center gap-1 rounded-md border bg-background px-1.5 py-0.5",
-				"h-6 min-w-0 flex-1 justify-center text-[11px] leading-none text-muted-foreground transition-colors",
+				"h-6 min-w-0 flex-1 justify-center text-caption leading-none text-muted-foreground transition-colors",
 				"hover:bg-muted hover:text-foreground",
 				"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 			)}
@@ -195,7 +196,7 @@ function ServiceLinkChip({
 			title={label}
 			className={cn(
 				"inline-flex h-6 min-w-0 flex-1 items-center justify-center gap-1 rounded-md border bg-background px-1.5",
-				"text-[11px] leading-none text-muted-foreground transition-colors",
+				"text-caption leading-none text-muted-foreground transition-colors",
 				"hover:bg-muted hover:text-foreground",
 				"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 			)}
@@ -286,7 +287,7 @@ function TagsEditor({
 						placeholder={t("paperInfo.addTag")}
 						aria-label={t("paperInfo.addTag")}
 						disabled={busy}
-						className="h-6 border-dashed py-0 pr-7 pl-1.5 text-[11px]"
+						className="h-6 border-dashed py-0 pr-7 pl-1.5 text-caption"
 					/>
 					<Popover open={colorOpen} onOpenChange={setColorOpen}>
 						<PopoverTrigger asChild>
@@ -427,6 +428,8 @@ export function PaperInfoPanel({
 	const { t } = useTranslation("sidebar");
 	const [open, setOpen] = useState(Boolean(meta));
 	const [contentHeight, setContentHeight] = useState(loadStoredHeight);
+	/** Disable height transition while the user is dragging the resize handle. */
+	const [isDragging, setIsDragging] = useState(false);
 	const dragRef = useRef<{
 		startY: number;
 		startHeight: number;
@@ -448,6 +451,7 @@ export function PaperInfoPanel({
 			startHeight: contentHeight,
 			collapseOnRelease: false,
 		};
+		setIsDragging(true);
 		e.currentTarget.setPointerCapture(e.pointerId);
 	};
 
@@ -464,11 +468,13 @@ export function PaperInfoPanel({
 		const drag = dragRef.current;
 		if (!drag) return;
 		dragRef.current = null;
+		setIsDragging(false);
 		e.currentTarget.releasePointerCapture(e.pointerId);
 		setContentHeight((h) => {
 			persistHeight(h);
 			return h;
 		});
+		// Collapse after releasing drag so height can ease closed.
 		if (drag.collapseOnRelease) setOpen(false);
 	};
 
@@ -524,7 +530,10 @@ export function PaperInfoPanel({
 	return (
 		<div
 			className={cn(
-				"relative flex min-h-0 shrink-0 flex-col border-t",
+				"relative flex min-h-0 shrink-0 flex-col overflow-hidden border-t",
+				// Match rail collapse: 200ms ease-out. Skip while resizing.
+				!isDragging &&
+					"transition-[height] duration-200 ease-[cubic-bezier(0.25,1,0.5,1)]",
 				className,
 			)}
 			style={{ height: open ? contentHeight + HEADER_HEIGHT : HEADER_HEIGHT }}
@@ -543,6 +552,11 @@ export function PaperInfoPanel({
 					onPointerMove={onHandlePointerMove}
 					onPointerUp={onHandlePointerUp}
 					onPointerCancel={onHandlePointerUp}
+					onLostPointerCapture={() => {
+						if (!dragRef.current) return;
+						dragRef.current = null;
+						setIsDragging(false);
+					}}
 					onKeyDown={onHandleKeyDown}
 					className={cn(
 						// Sits on the panel's top border; wider invisible hit area.
@@ -561,8 +575,8 @@ export function PaperInfoPanel({
 					<CollapsibleTrigger
 						className={cn(
 							"flex min-w-0 flex-1 items-center gap-1.5 px-2 text-left outline-none",
-							"text-muted-foreground text-xs font-medium",
-							"hover:bg-muted/40 hover:text-foreground",
+							"text-muted-foreground text-sm font-medium",
+							"hover:text-foreground",
 							"focus-visible:ring-1 focus-visible:ring-ring",
 						)}
 					>
@@ -586,23 +600,32 @@ export function PaperInfoPanel({
 							})}
 							onClick={() => void copyField(arxivId, t("paperInfo.arxivId"))}
 							className={cn(
-								"flex min-w-0 max-w-[55%] shrink cursor-pointer items-center gap-1 rounded-md px-1.5 py-0.5",
-								"text-[10px] text-muted-foreground tabular-nums transition-colors",
-								"hover:bg-muted hover:text-foreground",
+								"min-w-0 max-w-[55%] shrink truncate px-1",
+								"text-caption text-muted-foreground tabular-nums transition-colors",
+								"hover:text-foreground",
 								"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 							)}
 						>
-							<span className="truncate">{arxivId}</span>
+							{arxivId}
 						</button>
 					) : null}
 				</div>
-				<CollapsibleContent className="flex min-h-0 flex-1 flex-col">
+				{/* forceMount: keep body mounted so the outer height transition
+				    can clip it closed instead of unmounting on the first frame. */}
+				<CollapsibleContent
+					forceMount
+					className={cn(
+						"flex min-h-0 flex-1 flex-col",
+						!open && "pointer-events-none",
+					)}
+					aria-hidden={!open}
+				>
 					{!meta ? (
 						<p className="px-3 pb-3 text-muted-foreground text-xs leading-snug">
 							{t("paperInfo.selectPrompt")}
 						</p>
 					) : (
-						<div className="agentero-scroll min-h-0 flex-1 overflow-y-auto pb-2">
+						<div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pb-2 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
 							<MetaRow icon={BookOpen} label={t("paperInfo.title")}>
 								<CopyValue
 									text={meta.title}

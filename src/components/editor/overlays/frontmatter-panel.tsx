@@ -243,7 +243,7 @@ export function FrontmatterPanel({
 				{showSource ? (
 					<>
 						{!formAvailable && hasContent ? (
-							<p className="mb-1.5 text-[11px] text-muted-foreground leading-snug">
+							<p className="mb-1.5 text-caption text-muted-foreground leading-snug">
 								{t("frontmatter.parseFallback")}
 							</p>
 						) : null}
@@ -259,7 +259,7 @@ export function FrontmatterPanel({
 							rows={Math.min(12, Math.max(4, value.split("\n").length + 1))}
 							className={cn(
 								"agentero-scroll w-full min-h-[5.5rem] resize-y rounded-md border border-input",
-								"bg-background px-2.5 py-2 font-mono text-[12px] leading-relaxed text-foreground",
+								"bg-background px-2.5 py-2 font-mono text-xs leading-relaxed text-foreground",
 								"outline-none placeholder:text-muted-foreground/70",
 								"focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50",
 								readOnly && "cursor-default opacity-90",

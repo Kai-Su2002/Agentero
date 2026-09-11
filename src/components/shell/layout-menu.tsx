@@ -45,7 +45,6 @@ export function LayoutMenu({ value, onValueChange }: LayoutMenuProps) {
 						setOpen(true);
 					}}
 					onMouseLeave={scheduleClose}
-					className="hover:bg-transparent hover:text-inherit dark:hover:bg-transparent aria-expanded:bg-transparent aria-expanded:text-inherit dark:aria-expanded:bg-transparent dark:aria-expanded:text-inherit"
 				>
 					<PanelsTopLeft className="size-3.5" />
 				</Button>

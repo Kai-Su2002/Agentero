@@ -8,7 +8,8 @@ Tauri 2 + Rust Host：文件系统、Catalog、索引、ACP Client、远程 Vaul
 
 - **本地优先**：Vault 文件为笔记/源事实来源；catalog 权威存论文集合与结构化 meta。
 - **Mac 优先、跨平台**：桌面以 macOS 开发为主；CI 构建 macOS / Linux / Windows。
-- **BYOA**：Host 只做 ACP Client，不捆绑 Agent、不托管模型 API Key。
+- **BYOA**：Host 只做 ACP Client，不捆绑 Agent；ACP Agent 的模型 Key 由 Agent CLI 自己管理，Host 不代管。
+- **内置 Provider**：翻译 / embedding / 正文 OCR 另有一条构建期注入凭证的内置通道（id `agentero`），与 BYOA 正交。见 [builtin-provider.md](builtin-provider.md)。
 
 ## 为什么 Tauri 2
 
@@ -34,7 +35,7 @@ src-tauri/src/
                 # analyze/layout、body_engines（云端 parse 引擎）、zotero db、discovery 站点代理
     pdf/        # export
     markdown/   # wiki commands/heading_rename、search
-    system/     # settings
+    system/     # settings、builtin（构建期内置 provider 凭证）
     agent/ jobs/ lifecycle（job 事件）
   integration/  # connector、mcp、remote、bridge、sync（desktop-only）
   lib.rs
@@ -72,7 +73,7 @@ src-tauri/src/
 
 - **路径**：capabilities 限制在用户可选目录（`$HOME/**` 等 scope）；业务上以当前 Vault 为根。
 - **CSP**：`tauri.conf.json` 限制 Webview 外部资源。
-- **密钥**：模型 Key 由 Agent CLI 管理；Host 只存 command/args 与 UI 偏好。
+- **密钥**：三条互不相干的托管路径。① ACP Agent 的模型 Key 由 Agent CLI 自己管理，Host 只存 command/args 与 UI 偏好；② 用户自备（BYOK）的翻译 / 版面 / embedding Key 明文存本机 `settings.json`（Unix `0600`），`settings_get` 与广播按字符 redact 为 `*`；③ 内置 provider 的网关 Key 在**构建期**编入二进制，只在 Host 进程内使用，绝不写入 `AppSettings`，因此既进不了 `settings.json` 也进不了 webview——但已发布二进制里的内嵌 Key 对拿到安装包的人仍可提取，网关只能限制损失面，详见 [builtin-provider.md](builtin-provider.md)。
 - **网络**：产品侧抓取限定必要域名；Agent 出站由 agent 进程自己控制。
 
 ## 存储分层
@@ -119,6 +120,7 @@ src-tauri/src/
 | 搜索 | [search.md](search.md) |
 | 设置 | [settings.md](settings.md) |
 | 翻译 | [translate.md](translate.md) |
+| 内置 Provider（构建期凭证） | [builtin-provider.md](builtin-provider.md) |
 | 日志 | [logging.md](logging.md) |
 | 遥测 | [telemetry.md](telemetry.md) |
 | 使用记录 | [usage.md](usage.md) |

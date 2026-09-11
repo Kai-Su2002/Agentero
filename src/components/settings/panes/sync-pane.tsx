@@ -9,6 +9,7 @@ import {
 	PageTitle,
 	SettingsGroup,
 	SettingsRow,
+	SettingsSectionLabel,
 } from "@/components/settings/settings-layout";
 import { Button } from "@/components/ui/button";
 import {
@@ -440,9 +441,9 @@ export function SyncPane({ vaultPath }: { vaultPath: string | null }) {
 				) : null}
 			</SettingsGroup>
 
-			<p className="mb-1.5 mt-4 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+			<SettingsSectionLabel className="mt-4">
 				<HelpLabel label={t("sync.scope")} help={t("sync.scopeHint")} />
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow label={t("sync.scopePdf")} htmlFor="sync-scope-pdf">
 					<span className="flex items-center gap-2">

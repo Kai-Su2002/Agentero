@@ -8,6 +8,12 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+	PDF_CHROME_CHIP,
+	PDF_CHROME_VIS,
+	PDF_CHROME_VIS_HIDE,
+	PDF_CHROME_VIS_SHOW,
+} from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
 import { cn } from "@/lib/core/utils";
 
 type PdfLeftToolbarProps = {
@@ -48,14 +54,17 @@ export function PdfLeftToolbar({
 	return (
 		<div
 			className={cn(
-				"pointer-events-none absolute top-2 left-3 z-30 transition-opacity duration-200",
-				visible ? "opacity-100" : "opacity-0",
+				"pointer-events-none absolute top-2 left-3 z-30 origin-top-left",
+				PDF_CHROME_VIS,
+				visible ? PDF_CHROME_VIS_SHOW : PDF_CHROME_VIS_HIDE,
 			)}
 		>
 			<TooltipProvider delayDuration={200}>
 				<div
+					data-pdf-chrome
 					className={cn(
-						"flex h-7 select-none items-center gap-0.5 rounded-lg border border-border/80 bg-background/95 p-0.5 shadow-sm backdrop-blur-sm",
+						"flex h-7 select-none items-center gap-0.5 rounded-lg p-0.5",
+						PDF_CHROME_CHIP,
 						visible ? "pointer-events-auto" : "pointer-events-none",
 					)}
 				>

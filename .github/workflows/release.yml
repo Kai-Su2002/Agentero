@@ -183,6 +183,10 @@ jobs:
           # PostHog project API key baked in at compile time (build.rs);
           # empty/absent secret compiles telemetry out. See docs/backend/telemetry.md.
           AGENTERO_POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}
+          # Built-in provider gateway key, baked in at compile time (build.rs);
+          # empty/absent secret still builds, but ships without the built-in
+          # provider, so verify it after release. See docs/backend/builtin-provider.md.
+          AGENTERO_BUILTIN_API_KEY: ${{ secrets.AGENTERO_BUILTIN_API_KEY }}
           # Tauri updater signature, independent from Apple code signing.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}

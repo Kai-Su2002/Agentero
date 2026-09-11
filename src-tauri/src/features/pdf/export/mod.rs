@@ -19,6 +19,9 @@ pub mod commands;
 /// Prefer single-file `.ttf` / `.otf` (pdf-lib does not reliably load `.ttc`),
 /// while keeping collections as a fallback for systems that only ship them.
 fn cjk_font_candidates() -> Vec<PathBuf> {
+    // Every `extend` below lives in a desktop cfg block, so `out` is never
+    // mutated on mobile.
+    #[cfg_attr(any(target_os = "ios", target_os = "android"), allow(unused_mut))]
     let mut out = Vec::new();
 
     #[cfg(target_os = "macos")]

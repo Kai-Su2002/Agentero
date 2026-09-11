@@ -191,7 +191,7 @@ export function DoctorAliasSection({
 										}
 									/>
 									<div className="min-w-0 flex-1">
-										<p className="truncate text-[13px]">{draft.paperTitle}</p>
+										<p className="truncate text-sm">{draft.paperTitle}</p>
 										<p className="truncate text-muted-foreground text-xs">
 											{draft.path}
 										</p>
@@ -272,9 +272,7 @@ export function DoctorAliasSection({
 								>
 									<div className="flex items-start gap-2">
 										<div className="min-w-0 flex-1">
-											<p className="text-[13px] leading-snug">
-												{issue.message}
-											</p>
+											<p className="text-sm leading-snug">{issue.message}</p>
 											{issue.path ? (
 												<p className="mt-0.5 truncate text-muted-foreground text-xs">
 													{issue.path}

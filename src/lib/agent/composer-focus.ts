@@ -3,20 +3,37 @@
  * on mount, and the rail composer stays mounted while hidden, so callers that
  * just expanded the rail need an imperative focus. The composer may appear a few
  * frames later (rail expand + lazy panel), hence the bounded retry.
+ *
+ * Supports both the legacy textarea and the inline contenteditable field.
  */
 
 export const AGENT_COMPOSER_INPUT_ATTR = "data-agent-composer-input";
 
 const FOCUS_TIMEOUT_MS = 800;
 
-function visibleComposerInput(): HTMLTextAreaElement | null {
-	const nodes = document.querySelectorAll<HTMLTextAreaElement>(
+function visibleComposerInput(): HTMLElement | null {
+	const nodes = document.querySelectorAll<HTMLElement>(
 		`[${AGENT_COMPOSER_INPUT_ATTR}]`,
 	);
 	for (const node of nodes) {
 		if (node.offsetParent !== null) return node;
 	}
 	return null;
+}
+
+function placeCaretAtEnd(el: HTMLElement) {
+	if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+		const len = el.value.length;
+		el.setSelectionRange(len, len);
+		return;
+	}
+	const selection = window.getSelection();
+	if (!selection) return;
+	const range = document.createRange();
+	range.selectNodeContents(el);
+	range.collapse(false);
+	selection.removeAllRanges();
+	selection.addRange(range);
 }
 
 export function focusAgentComposer(): void {
@@ -26,7 +43,7 @@ export function focusAgentComposer(): void {
 		const input = visibleComposerInput();
 		if (input) {
 			input.focus();
-			input.setSelectionRange(input.value.length, input.value.length);
+			placeCaretAtEnd(input);
 			return;
 		}
 		if (Date.now() < deadline) requestAnimationFrame(attempt);

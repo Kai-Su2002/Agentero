@@ -2,7 +2,7 @@ import tweakcnManifest from "@/themes/tweakcn-manifest.json";
 
 /**
  * Bundled tweakcn UI theme presets (colors + radius only; fonts/shadows are
- * intentionally excluded so the packaged Geist font stays intact).
+ * intentionally excluded so Appearance font stacks stay intact).
  * Full theme data is loaded on-demand from `@/themes/tweakcn-themes.json`;
  * the manifest only contains the metadata needed for the settings dropdown.
  * Refresh with `node scripts/fetch-tweakcn-themes.mjs`.

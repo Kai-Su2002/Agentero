@@ -210,7 +210,7 @@ export function PlazaWebFrame({
 					<TooltipContent side="bottom">{t("plaza.reload")}</TooltipContent>
 				</Tooltip>
 				<span
-					className="ml-1 min-w-0 flex-1 truncate text-[11px] text-muted-foreground"
+					className="ml-1 min-w-0 flex-1 truncate text-caption text-muted-foreground"
 					title={currentPath}
 				>
 					{currentPath}

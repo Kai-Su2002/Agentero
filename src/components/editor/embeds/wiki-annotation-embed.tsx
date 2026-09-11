@@ -274,7 +274,7 @@ export const WikiAnnotationEmbed = memo(function WikiAnnotationEmbed({
 					/>
 				)}
 				<span
-					className="min-w-0 truncate font-medium text-[10px] text-muted-foreground tracking-wide"
+					className="min-w-0 truncate font-medium text-caption text-muted-foreground tracking-wide"
 					title={locationLabel ?? undefined}
 				>
 					{locationLabel}
@@ -296,7 +296,7 @@ export const WikiAnnotationEmbed = memo(function WikiAnnotationEmbed({
 			{isVisual && hasComment ? (
 				<div
 					className={cn(
-						"flex min-w-0 items-start gap-1.5 text-[13px] text-foreground/90 leading-relaxed",
+						"flex min-w-0 items-start gap-1.5 text-sm text-foreground/90 leading-relaxed",
 						hasQuote ? "mt-2" : "mt-1.5",
 					)}
 				>
@@ -327,11 +327,11 @@ export const WikiAnnotationEmbed = memo(function WikiAnnotationEmbed({
 			{ref.kind === "highlight" && hasComment ? (
 				<div
 					className={cn(
-						"min-w-0 text-[13px] text-foreground/85 leading-relaxed",
+						"min-w-0 text-sm text-foreground/85 leading-relaxed",
 						hasQuote || hasImage ? "mt-2" : "mt-1.5",
 					)}
 				>
-					<MessageResponse className="text-[13px] leading-relaxed">
+					<MessageResponse className="text-sm leading-relaxed">
 						{ref.comment}
 					</MessageResponse>
 				</div>
@@ -349,18 +349,18 @@ export const WikiAnnotationEmbed = memo(function WikiAnnotationEmbed({
 						<div
 							key={m.id}
 							className={cn(
-								"min-w-0 rounded-md px-2.5 py-1.5 text-[13px] leading-relaxed",
+								"min-w-0 rounded-md px-2.5 py-1.5 text-sm leading-relaxed",
 								m.role === "user"
 									? "bg-primary/10 text-foreground/90"
 									: "bg-muted/70 text-foreground/85",
 							)}
 						>
-							<div className="mb-0.5 font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
+							<div className="mb-0.5 font-medium text-caption text-muted-foreground uppercase tracking-wider">
 								{m.role === "user"
 									? t("embed.annotationRoleUser")
 									: t("embed.annotationRoleAssistant")}
 							</div>
-							<MessageResponse className="text-[13px] leading-relaxed">
+							<MessageResponse className="text-sm leading-relaxed">
 								{m.content}
 							</MessageResponse>
 						</div>

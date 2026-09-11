@@ -78,10 +78,67 @@ Doctor 聚合本地 Vault 的只读完整性检查，并为论文别名、双链
 
 读路径（桌面）始终 dual-read v1/v2，不依赖 Doctor 也能打开旧 Vault。
 
+## Host / Agent 诊断
+
+除 Vault Doctor 外，设置页诊断还有三个 **host 级**检查（不依赖 Vault）：
+
+### 主机运行环境（`doctor_check_host`）
+
+`agent/doctor.rs` `diagnose_host`：在 Agent 实际使用的合并环境（`effective_local_agent_env`，PATH 按 descriptor → 进程 → login shell → 常见 GUI 缺失目录顺序合并）里检查：
+
+- `node` / `npm`：解析路径 + `--version`（5s 超时），状态 `available / missing / unusable`；
+- `npm prefix -g`：追加进环境 PATH 后再查 node（覆盖 npm 全局安装但 GUI PATH 缺失的场景）。
+- Windows：探测子进程一律带 `CREATE_NO_WINDOW`（`diagnostic_command` 统一收口）。应用是 GUI 子系统二进制，缺该标志时 Windows 会给每个控制台子进程新建可见控制台——表现为每次打开/刷新问题诊断，每探测一个工具就多一个黑窗（标题即该工具路径，两个 hermes 条目就是两个黑窗）。
+
+Codex 登录状态不再放在主机运行环境；改由 Agent 卡片第三行展示（见下）。
+
+### Agent ACP 连通性（`doctor_check_agents`）
+
+`agent/doctor_agents.rs` `diagnose_agents`：对 registry 中**每个已注册 Agent**（含 custom）重新执行 ACP initialize 探测（不发 prompt），并分类失败原因。每个诊断额外收集卡片三行字段：
+
+| 行 | 字段 | 来源 |
+|---|---|---|
+| Agent 位置 · 版本 | `agentPath` / `agentVersion` | 模板 `detect_command` 的路径 + `--version` |
+| ACP 位置 · 版本 | `resolvedPath` / `acpVersion` | ACP `command` 的路径 + `--version`（不是协议版本） |
+| 登录状态 | `authStatus` | Codex 走 `codex(-acp) login status`；其它由探测结果推导（成功→已登录，`not-logged-in`→未登录，命令缺失→不适用，其余→未知） |
+
+- 编排：先 `scan_catalog()`（把 PATH 上已装但未落盘的目录 Agent 自动注册，避免必须先打开设置 → Agent）；再 `snapshot()` 一次（内部已刷新命令可用性）；`buffered(3)` 限流并行探测；`!available` 的 Agent 不 spawn，直接按 `last_error` 合成「命令缺失」结果（镜像 `agent_probe` 快路径）；
+- 写回：每个结果 `apply_probe_result` 持久化到 registry，结束后 `emit_registry_changed`，Agent 目录页同步刷新；成功时清除该 Agent 的 warm-gate 熔断，失败**不**记录新熔断（Doctor 是用户主动重试，应无视 120s 冷却）；
+- 分类（`classify_acp_error`，按序匹配原始错误文本）：
+
+| 分类 | 匹配模式（示例） | 典型原因 |
+|---|---|---|
+| `command-missing` | `not found on PATH`、`No such file or directory (os error 2)` | CLI 未安装或 GUI PATH 缺失 |
+| `not-logged-in` | `not logged in`、`invalid_grant`、`authentication required` 等（与前端 `isAgentAuthFailure` 一致；优先于协议类，auth 错误常被包进 `initialize failed:`） | Agent 未登录 / token 过期 |
+| `timeout` | `timed out` | 冷启动慢、代理/网络问题 |
+| `spawn-failed` | `failed to start`、`Permission denied (os error 13)`、`(os error 193)` | 权限或无效可执行文件 |
+| `protocol-failed` | `initialize failed`、`no initialize response`、`method not found` | ACP adapter 版本/实现问题 |
+| `unknown` | 兜底 | 展示原始错误 |
+
+hint 文案不在 wire 类型里，前端按分类映射 `doctor.agent.hints.*` i18n key。探测不随设置窗关闭而取消，由 30s initialize 超时兜底。
+
+### 网络连通性（`doctor_check_network`）
+
+`system/network/mod.rs` `diagnose_network`：按当前应用的全局代理设置（`effective_proxy_url`），并行探测六个常用站点/论文源：
+
+| 端点 | 探测 URL |
+|---|---|
+| Baidu | `https://www.baidu.com/` |
+| Google | `https://www.google.com/generate_204` |
+| Google Scholar | `https://scholar.google.com/` |
+| GitHub | `https://api.github.com/` |
+| arXiv | `https://export.arxiv.org/api/query?id_list=1706.03762&max_results=1` |
+| Semantic Scholar | `https://api.semanticscholar.org/graph/v1/paper/ARXIV:1706.03762?fields=title` |
+
+- 8s 超时，`buffered(6)` 并行探测，按固定顺序返回；
+- 使用 `BROWSER_USER_AGENT` 与 `DEFAULT_REDIRECT_LIMIT`，与导入/下载流程的 HTTP 客户端行为一致；
+- 任何 HTTP 响应（1xx–5xx）都算 `reachable`，仅 transport 失败（DNS、连接、TLS、代理错误、超时）标记为 `timeout` / `unreachable`；
+- 返回每个端点的状态码、耗时与当前生效代理，方便判断代理是否生效。
+
 ## 入口
 
 - 桌面：设置 → 知识库诊断；远程 Vault 当前显示不可用。
 - CLI：`agentero doctor`、`agentero doctor fix aliases`、`agentero doctor fix visual-marks`、`agentero doctor fix catalog-duplicates`、`agentero -y doctor fix …`（CLI 诊断同样尊重 `.agentero/doctor.json` 忽略列表）。
-- Host：`doctor_check`、`doctor_apply_aliases`、`doctor_ignore_aliases`、`doctor_set_dirty_paths`、`doctor_plan_wikilinks`、`doctor_apply_wikilinks`、`doctor_apply_visual_marks`、`doctor_fix_catalog_duplicates`。
+- Host：`doctor_check`、`doctor_apply_aliases`、`doctor_ignore_aliases`、`doctor_set_dirty_paths`、`doctor_plan_wikilinks`、`doctor_apply_wikilinks`、`doctor_apply_visual_marks`、`doctor_fix_catalog_duplicates`；host 级：`doctor_check_host`、`doctor_check_agents`、`doctor_check_network`。
 
-代码：`src-tauri/src/features/vault/doctor/`（聚合入口）、`src-tauri/src/features/markdown/wiki/doctor.rs`（双链修复）、`src-tauri/src/features/pdf/marks/doctor.rs`（视觉批注修复）、`src/lib/doctor/`、`src/components/settings/panes/doctor-pane.tsx`。
+代码：`src-tauri/src/features/vault/doctor/`（聚合入口）、`src-tauri/src/features/markdown/wiki/doctor.rs`（双链修复）、`src-tauri/src/features/pdf/marks/doctor.rs`（视觉批注修复）、`src-tauri/src/features/agent/doctor.rs`（主机运行环境）、`src-tauri/src/features/agent/doctor_agents.rs`（Agent ACP 诊断）、`src-tauri/src/features/system/network/`（网络连通性）、`src/lib/doctor/`、`src/components/settings/panes/doctor-pane.tsx`。

@@ -121,6 +121,14 @@ pub async fn list_acp_sessions(
                         if !seen.insert(session_id.clone()) {
                             continue;
                         }
+                        // Some ACP agents (e.g. codex-acp) return sessions whose cwd is
+                        // a parent or sibling of the requested vault. Filter to the
+                        // requested cwd and its subdirectories so the history popover
+                        // only shows conversations belonging to the current vault.
+                        let session_cwd = PathBuf::from(s.cwd.to_string_lossy().as_ref());
+                        if session_cwd != cwd && !session_cwd.starts_with(&cwd) {
+                            continue;
+                        }
                         sessions.push(AcpSessionInfo {
                             session_id,
                             cwd: s.cwd.to_string_lossy().to_string(),

@@ -39,6 +39,7 @@ export type ToolPart = ToolUIPart | DynamicToolUIPart;
 export type ToolHeaderProps = {
 	title?: string;
 	className?: string;
+	swapIconOnHover?: boolean;
 } & (
 	| { type: ToolUIPart["type"]; state: ToolUIPart["state"]; toolName?: never }
 	| {
@@ -72,7 +73,7 @@ const statusIcons: Record<ToolPart["state"], ReactNode> = {
 
 export const getStatusBadge = (status: ToolPart["state"], label: string) => (
 	<Badge
-		className="h-5 gap-1 rounded-full bg-black/5 px-1.5 py-0 text-[10px] font-normal text-foreground dark:bg-white/10"
+		className="h-5 gap-1 rounded-full bg-black/5 px-1.5 py-0 text-caption font-normal text-foreground dark:bg-white/10"
 		variant="secondary"
 	>
 		<span className="[&>svg]:size-3">{statusIcons[status]}</span>
@@ -86,6 +87,7 @@ export const ToolHeader = ({
 	type,
 	state,
 	toolName,
+	swapIconOnHover = false,
 	...props
 }: ToolHeaderProps) => {
 	const { t } = useTranslation("aiElements");
@@ -96,17 +98,42 @@ export const ToolHeader = ({
 		<CollapsibleTrigger
 			className={cn(
 				// Left-aligned compact header (not space-between)
-				"flex w-full items-center justify-start gap-1.5 px-2 py-1 text-left",
+				"flex w-full items-center justify-start gap-2 px-2 py-1 text-left text-muted-foreground transition-colors hover:text-foreground",
+				swapIconOnHover && "group/tool-header",
 				className,
 			)}
 			{...props}
 		>
-			<ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground transition-transform -rotate-90 group-data-[state=open]:rotate-0" />
-			<WrenchIcon className="size-3.5 shrink-0 text-muted-foreground" />
+			{swapIconOnHover ? (
+				<span className="relative flex size-4 shrink-0 items-center justify-center">
+					<ChevronDownIcon
+						className={cn(
+							"absolute size-4 text-muted-foreground opacity-0 transition-all",
+							"group-hover/tool-header:opacity-100",
+							"-rotate-90 group-data-[state=open]:rotate-0",
+						)}
+					/>
+					<WrenchIcon
+						className={cn(
+							"absolute size-4 text-muted-foreground transition-opacity",
+							"group-hover/tool-header:opacity-0",
+						)}
+					/>
+				</span>
+			) : (
+				<>
+					<ChevronDownIcon className="size-4 shrink-0 text-muted-foreground transition-transform -rotate-90 group-data-[state=open]:rotate-0" />
+					<WrenchIcon className="size-4 shrink-0 text-muted-foreground" />
+				</>
+			)}
 			<span className="min-w-0 truncate font-medium text-xs">
 				{title ?? derivedName}
 			</span>
-			{getStatusBadge(state, t(statusLabelKeys[state]))}
+			{state === "output-denied" || state === "output-error" ? (
+				<span className="ml-auto">
+					{getStatusBadge(state, t(statusLabelKeys[state]))}
+				</span>
+			) : null}
 		</CollapsibleTrigger>
 	);
 };
@@ -132,7 +159,7 @@ export const ToolInput = ({ className, input, ...props }: ToolInputProps) => {
 
 	return (
 		<div className={cn("space-y-1 overflow-hidden", className)} {...props}>
-			<h4 className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
+			<h4 className="font-medium text-caption text-muted-foreground uppercase tracking-wide">
 				{t("tool.parameters")}
 			</h4>
 			<div className="rounded bg-muted/50 text-xs">
@@ -171,12 +198,12 @@ export const ToolOutput = ({
 
 	return (
 		<div className={cn("space-y-1", className)} {...props}>
-			<h4 className="font-medium text-[10px] text-muted-foreground uppercase tracking-wide">
+			<h4 className="font-medium text-caption text-muted-foreground uppercase tracking-wide">
 				{errorText ? t("tool.error") : t("tool.result")}
 			</h4>
 			<div
 				className={cn(
-					"overflow-x-auto rounded text-[11px] [&_table]:w-full",
+					"overflow-x-auto rounded text-caption [&_table]:w-full",
 					errorText
 						? "bg-destructive/10 text-destructive"
 						: "bg-muted/50 text-foreground",

@@ -13,7 +13,7 @@
 1. 执行 `/bump <version>`，同步检查 `package.json`、`src-tauri/tauri.conf.json`、`src-tauri/Cargo.toml`、`crates/agentero-core/Cargo.toml`、`cli/Cargo.toml`、`src-tauri/ios-project.yml` 和 `Cargo.lock`。
 2. 执行 `/commit`，将版本 bump 作为独立的 `chore(release): bump version to <version>` commit。
 3. 确认 tag `v<version>` 指向该版本 bump commit，且 tag 去掉 `v` 后与所有版本字段一致。
-4. 推送 tag，等待 `.github/workflows/release.yml` 构建 Tauri installers 和 CLI artifacts。
+4. 推送 tag，等待 `.github/workflows/release.yml` 构建 Tauri installers 和 CLI artifacts。构建前确认 repository secret 已配齐：updater 签名（见下）与内置 provider 的 `AGENTERO_BUILTIN_API_KEY`（见 §内置 Provider 构建期注入）。
 5. 在 Draft Release 中确认桌面安装包、应用内版本、CLI `--version` 和 CLI 文件名没有混用不同版本；确认 `latest.json` 与 updater `.sig` 资产齐全后才发布 Release。
 
 `/bump` 和 `/commit` 默认只修改工作区或创建本地 commit，不会自动创建 tag、push 或发布 Release。
@@ -68,6 +68,26 @@ GitHub Actions 必须配置以下 repository secrets；`release.yml` 会在创�
 ```bash
 pnpm tauri signer generate --password '<strong password>' --write-keys /secure/path/agentero-updater.key
 ```
+
+### 内置 Provider 构建期注入（`AGENTERO_BUILTIN_*`）
+
+翻译、arXiv 推荐 embedding 与 PDF 正文 OCR 的内置 provider（id `agentero`）凭证在**编译期**编入 Host，不来自运行时配置。完整语义见 [`../backend/builtin-provider.md`](../backend/builtin-provider.md)。
+
+| 变量 | 兜底 | 发布构建 |
+|---|---|---|
+| `AGENTERO_BUILTIN_API_KEY` | 无 | **必须注入**；缺失则内置 provider 报告不可用，UI 隐藏/禁用，默认回落免费翻译引擎与本地正文解析 |
+| `AGENTERO_BUILTIN_BASE_URL` | `https://api.qiyuanchen.top/v1` | 可选 |
+| `AGENTERO_BUILTIN_TRANSLATE_MODEL` | `tencent/Hunyuan-MT-7B` | 可选 |
+| `AGENTERO_BUILTIN_EMBEDDING_MODEL` | `BAAI/bge-m3` | 可选 |
+| `AGENTERO_BUILTIN_OCR_MODEL` | `PaddlePaddle/PaddleOCR-VL-1.5` | 可选 |
+
+约定与坑：
+
+- **key 绝不入库**：发布构建的 key 只以 GitHub Actions repository secret 形式存在，注入方式与 `POSTHOG_KEY` 同一套（见 [`../backend/telemetry.md`](../backend/telemetry.md) §开关语义）。不写进仓库、`tauri.conf.json`、workflow 文件或任何 Release 资产说明。仓库根 `.env` 已 gitignore，只作为本地验证的便利（见下条），同样不得提交或复制到任何被追踪的文件里。
+- **注入位置**：`release.yml` 的 `Build Tauri installers` 步骤（`tauri-apps/tauri-action@v1`）的 `env:` 块，紧邻已有的 `AGENTERO_POSTHOG_KEY: ${{ secrets.POSTHOG_KEY }}` 一行。secret 缺失时为空串，`option_env!` 把空串当未设置，构建不会失败——所以**漏配 secret 不会报错，只会静默产出一个没有内置 provider 的安装包**，验收时必须显式检查（见 [`release-checklist.md`](release-checklist.md) §0.2）。
+- **`.env` 与自动重编均已支持**：`src-tauri/build.rs` 的 `forward_build_env()` 为全部 `AGENTERO_BUILTIN_*` 发 `cargo:rerun-if-env-changed`，并在环境变量缺失时回退读仓库根 `.env`（gitignored）。本地验证内置路径既可 `AGENTERO_BUILTIN_API_KEY=<your-key> pnpm tauri dev`，也可写进 `.env`；显式环境变量优先。改值会触发重编，不会拿到上一次构建烤进去的旧值。
+- **编译期语义的运维后果**：轮换**客户端侧** key 或改 model id 都需要发新版；网关侧轮换**上游** key 不需要发版。
+- **不要把它写成「安全」**：内嵌在已发布二进制里的 key 对拿到安装包的人仍然可提取（`strings`，或用户在自己机器上抓自己的流量）。网关（model 白名单、per-IP 限流、花费上限）限制的是损失面，不能阻止提取。对外文案与 Release notes 不应声称用户拿不到 key。
 
 ### macOS 签名与公证（店外分发）
 

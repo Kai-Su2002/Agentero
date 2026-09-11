@@ -3,8 +3,13 @@
  * Architecture mirrors zotero-pdf-translate's pluggable TranslateService table.
  */
 
-/** Free MT engines (no paid API keys). */
+/**
+ * Free MT engines (no user-supplied API keys). `agentero` is the built-in
+ * provider: the Host injects its compiled-in credential, so the frontend keeps
+ * no BYOK config for it and it reuses the keyless free-engine plumbing.
+ */
 export type FreeTranslateProviderId =
+	| "agentero"
 	| "google"
 	| "googleapi"
 	| "deeplx"
@@ -114,6 +119,7 @@ export type TranslateService = {
 
 /** Ordered list for settings UI (free engines). */
 export const FREE_MT_PROVIDER_IDS: FreeTranslateProviderId[] = [
+	"agentero",
 	"tencenttransmart",
 	"huoshanweb",
 	"deeplx",

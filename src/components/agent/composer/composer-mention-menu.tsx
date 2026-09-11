@@ -103,7 +103,7 @@ export function ComposerMentionMenu({
 									</span>
 									{showPathHint ? (
 										<span
-											className="block truncate text-[11px] text-muted-foreground"
+											className="block truncate text-caption text-muted-foreground"
 											title={path}
 										>
 											{path}

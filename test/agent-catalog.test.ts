@@ -4,6 +4,7 @@ import {
 	defaultAgentChoiceValue,
 	NO_DEFAULT_AGENT_CHOICE,
 	showUninstallAgent,
+	showUpdateAgent,
 } from "@/components/settings/panes/agent-catalog";
 import type {
 	AgentDescriptor,
@@ -109,6 +110,59 @@ describe("buildDefaultAgentChoices", () => {
 		const choices = buildDefaultAgentChoices(state);
 
 		expect(defaultAgentChoiceValue(state, choices)).toBe("catalog:codex-acp");
+	});
+});
+
+describe("showUpdateAgent", () => {
+	it("shows Upgrade only when a newer silent-update target is known", () => {
+		expect(
+			showUpdateAgent(
+				entry({
+					canInstall: true,
+					binaryAvailable: true,
+					updateAvailable: true,
+				}),
+			),
+		).toBe(true);
+	});
+
+	it("hides Upgrade when versions are equal or unknown", () => {
+		expect(
+			showUpdateAgent(
+				entry({
+					canInstall: true,
+					binaryAvailable: true,
+					updateAvailable: false,
+				}),
+			),
+		).toBe(false);
+		expect(
+			showUpdateAgent(
+				entry({
+					canInstall: true,
+					binaryAvailable: true,
+					updateAvailable: undefined,
+				}),
+			),
+		).toBe(false);
+		expect(
+			showUpdateAgent(
+				entry({
+					canInstall: true,
+					binaryAvailable: false,
+					updateAvailable: true,
+				}),
+			),
+		).toBe(false);
+		expect(
+			showUpdateAgent(
+				entry({
+					canInstall: false,
+					binaryAvailable: true,
+					updateAvailable: true,
+				}),
+			),
+		).toBe(false);
 	});
 });
 

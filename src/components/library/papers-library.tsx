@@ -82,6 +82,8 @@ export type PapersLibraryProps = {
  * full catalog (and re-render workspace subscribers of `query`).
  */
 const SEARCH_DEBOUNCE_MS = 250;
+/** Hide header search/actions while scrolling; restore after this idle gap. */
+const HEADER_SCROLL_IDLE_MS = 450;
 
 export function PapersLibrary({
 	papers,
@@ -267,7 +269,41 @@ export function PapersLibrary({
 		[sortKey, sortDir, tagFilter],
 	);
 
-	const scrollRef = useRef<HTMLDivElement>(null);
+	const scrollRef = useRef<HTMLDivElement | null>(null);
+	const detachScrollRef = useRef<(() => void) | null>(null);
+	/** True only while the table is scrolling; idle restores search/actions. */
+	const [headerCompact, setHeaderCompact] = useState(false);
+	/** Bind scroll listener when the table scroller mounts (after loading). */
+	const setScrollEl = useCallback((el: HTMLDivElement | null) => {
+		detachScrollRef.current?.();
+		detachScrollRef.current = null;
+		scrollRef.current = el;
+		if (!el) {
+			setHeaderCompact(false);
+			return;
+		}
+		let idleTimer: ReturnType<typeof setTimeout> | null = null;
+		const onScroll = () => {
+			setHeaderCompact((prev) => (prev ? prev : true));
+			if (idleTimer) clearTimeout(idleTimer);
+			idleTimer = setTimeout(() => {
+				idleTimer = null;
+				setHeaderCompact(false);
+			}, HEADER_SCROLL_IDLE_MS);
+		};
+		el.addEventListener("scroll", onScroll, { passive: true });
+		detachScrollRef.current = () => {
+			if (idleTimer) clearTimeout(idleTimer);
+			el.removeEventListener("scroll", onScroll);
+		};
+	}, []);
+	useEffect(
+		() => () => {
+			detachScrollRef.current?.();
+			detachScrollRef.current = null;
+		},
+		[],
+	);
 	const uiScale = useUiScale();
 	const rowVirtualizer = useVirtualizer({
 		count: rows.length,
@@ -313,7 +349,7 @@ export function PapersLibrary({
 		body = (
 			<>
 				<div
-					ref={scrollRef}
+					ref={setScrollEl}
 					className={cn(
 						"agentero-scroll-both min-w-0",
 						empty ? "h-auto" : "min-h-0 flex-1",
@@ -338,6 +374,7 @@ export function PapersLibrary({
 							sortKey={sortKey}
 							sortDir={sortDir}
 							onSort={handleSort}
+							compact={headerCompact}
 							searchEnabled={Boolean(onQueryChange)}
 							inputValue={inputValue}
 							onInputChange={onSearchInputChange}
@@ -402,7 +439,7 @@ export function PapersLibrary({
 						</tbody>
 					</table>
 					{!empty ? (
-						<p className="sticky left-0 px-3 py-2 text-muted-foreground text-xs">
+						<p className="sticky left-0 border-border/40 border-t px-3 py-2 text-muted-foreground text-xs tracking-wide">
 							{t("papersLibrary.count", {
 								count: rows.length,
 								formatted: new Intl.NumberFormat(i18n.language).format(

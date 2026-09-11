@@ -99,6 +99,10 @@
 			"label": "网络代理",
 			"systemDetected": "检测到系统代理（{{url}}）——开关关闭时将自动使用。"
 		},
+		"githubMirror": {
+			"label": "GitHub 镜像",
+			"description": "从内置公开镜像中选择一个，用于 Skill 导入时回退 GitHub 直连。"
+		},
 		"easyScholar": {
 			"section": "EasyScholar",
 			"keyLabel": "Key",
@@ -199,8 +203,9 @@
 			"value": "{{size}} px"
 		},
 		"fontFamily": {
-			"default": "默认",
+			"default": "默认（系统）",
 			"system": "系统 UI",
+			"geist": "Geist",
 			"serif": "衬线",
 			"mono": "等宽",
 			"search": "搜索字体…",
@@ -233,6 +238,11 @@
 		},
 		"embedding": {
 			"section": "Embedding 模型",
+			"source": {
+				"label": "来源",
+				"builtin": "Agentero 内置",
+				"custom": "自定义接口"
+			},
 			"baseUrl": {
 				"label": "Base URL"
 			},
@@ -345,10 +355,13 @@
 		},
 		"uninstallDialog": {
 			"title": "卸载 {{name}}？",
-			"lead": "Agentero 将执行以下卸载步骤：",
+			"lead": "选择要移除的内容：",
+			"removeAgent": "移除 Agent CLI",
+			"removeAcp": "移除 ACP 适配器",
 			"dirsLabel": "要删除的目录",
 			"copyAria": "复制到剪贴板",
 			"registryOnly": "仅移除 Agentero 注册项，磁盘上的文件保留。",
+			"customConfirm": "从 Agentero 中移除此自定义 Agent？",
 			"confirm": "卸载"
 		},
 		"remote": {
@@ -366,6 +379,7 @@
 		"title": "翻译",
 		"provider": {
 			"label": "默认服务",
+			"agentero": "Agentero 内置",
 			"deeplx": "DeepLX",
 			"huoshanweb": "火山翻译 Web",
 			"tencenttransmart": "腾讯交互翻译",
@@ -380,6 +394,9 @@
 			"probeOk": "可用",
 			"probeFail": "不可用",
 			"probeProbing": "正在检测可用性…"
+		},
+		"errors": {
+			"noBuiltinKey": "当前构建未启用内置翻译。"
 		},
 		"targetLang": {
 			"label": "目标语言",
@@ -445,6 +462,7 @@
 		"parserBackend": {
 			"label": "正文解析引擎",
 			"local": "本地解析",
+			"agentero": "Agentero 内置",
 			"paddle": "Paddle",
 			"mineru": "MinerU",
 			"openaiCompatible": "OpenAI 兼容"
@@ -521,6 +539,9 @@
 		"remoteUnavailable": "当前版本仅支持诊断本地 Vault。",
 		"openVault": "请打开本地 Vault 后运行诊断。",
 		"sections": {
+			"host": "主机运行环境",
+			"agents": "Agent ACP 连通性",
+			"network": "网络连通性",
 			"vault": "Vault 结构",
 			"catalog": "Catalog 结构",
 			"wikilinks": "双链语义",
@@ -528,11 +549,73 @@
 			"visualMarks": "视觉批注"
 		},
 		"sectionHints": {
+			"host": "提示性检查 ACP Agent 使用的 Node.js 与 npm（路径与版本）。",
+			"agents": "对每个已注册 Agent 重新执行 ACP initialize 探测（不发送 prompt），慢速 Agent 可能需要 30 秒。",
+			"network": "按当前代理设置探测论文源与常用站点的连通性。",
 			"vault": "检查顶层 papers/、notes/、.agentero/ 目录是否齐全。",
 			"catalog": "检查 .agentero/catalog.sqlite 是否存在，以及 schema 是否与当前应用一致。",
 			"wikilinks": "检查笔记中的本地双链是否可解析（缺失、歧义、无效标题锚点）。",
 			"aliases": "检查论文 NOTES.md 是否具备至少两个可区分的 frontmatter aliases。",
 			"visualMarks": "将旧版 agent-trace 批注升级为嵌套 visual v2（纯批注也可单独保存）。"
+		},
+		"host": {
+			"toolStatus": {
+				"available": "可用",
+				"missing": "未找到",
+				"unusable": "无法运行"
+			}
+		},
+		"network": {
+			"probing": "正在探测…",
+			"none": "未配置探测端点。",
+			"status": {
+				"reachable": "可达",
+				"timeout": "超时",
+				"unreachable": "不可达"
+			},
+			"hints": {
+				"timeout": "请检查代理与网络后重试。",
+				"unreachable": "请检查 DNS、防火墙或代理设置。"
+			},
+			"endpoints": {
+				"baidu": "百度",
+				"google": "谷歌",
+				"google-scholar": "谷歌学术",
+				"github": "GitHub",
+				"arxiv": "arXiv",
+				"semantic-scholar": "Semantic Scholar"
+			},
+			"latency": "{{ms}} ms",
+			"proxy": "代理：{{proxy}}"
+		},
+		"agent": {
+			"probing": "正在探测 Agent…",
+			"none": "尚未注册 Agent。",
+			"ready": "可用",
+			"locationMissing": "未找到",
+			"authLabel": "登录",
+			"authStatus": {
+				"authenticated": "已登录",
+				"unauthenticated": "未登录",
+				"not-applicable": "不适用",
+				"unknown": "未知"
+			},
+			"categories": {
+				"command-missing": "命令缺失",
+				"not-logged-in": "未登录",
+				"timeout": "超时",
+				"spawn-failed": "启动失败",
+				"protocol-failed": "协议失败",
+				"unknown": "其他"
+			},
+			"hints": {
+				"command-missing": "安装对应 CLI（设置 → Agent）或修正 PATH 后重新诊断。",
+				"not-logged-in": "在终端用该 Agent 自带 CLI 登录（如 codex login）后重新诊断。",
+				"timeout": "检查代理/网络设置与 Agent 冷启动耗时。",
+				"spawn-failed": "进程无法启动，检查可执行权限与命令路径。",
+				"protocol-failed": "进程已启动但 ACP 握手失败，请更新 ACP adapter。",
+				"unknown": "查看上方原始错误信息。"
+			}
 		},
 		"visualMarks": {
 			"select": "选择 {{path}}",
@@ -597,7 +680,10 @@
 		"logs": {
 			"label": "运行日志",
 			"open": "打开日志文件夹",
-			"openFailed": "无法打开日志文件夹。"
+			"openFailed": "无法打开日志文件夹。",
+			"clear": "清理日志",
+			"clearDone": "已清理日志",
+			"clearFailed": "无法清理日志。"
 		},
 		"update": {
 			"idle": "检查 Agentero 是否有新版本",
@@ -644,7 +730,8 @@
 			"installFailed": "无法安装 CLI 命令",
 			"uninstallFailed": "无法移除 CLI 命令",
 			"statusFailed": "无法读取 CLI 状态",
-			"openReleaseFailed": "无法打开发布页"
+			"openReleaseFailed": "无法打开发布页",
+			"syncFailed": "已安装的 CLI 未能自动同步到当前版本，请到 设置 → 关于 手动更新"
 		},
 		"finder": {
 			"label": "访达集成",

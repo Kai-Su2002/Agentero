@@ -175,6 +175,8 @@ function createHarness() {
 			notifyError: (...args: unknown[]) => errors.push(args),
 		},
 		"@/lib/pdf/layout": layout,
+		// Identity stub: the hook only maps known Host markers, else passes through.
+		"@/lib/translate": { displayTranslateError: (message: string) => message },
 	};
 	const exported = {} as { usePdfLayoutTranslate: (options: Options) => View };
 	runInNewContext(hookCode, {

@@ -913,13 +913,15 @@ mod tests {
             Err(e) => report.push(("local PDF import".into(), false, e.to_string())),
         }
 
-        fn is_network_error(e: &AppError) -> bool {
+        // External API flakiness (network / 429) must not fail CI.
+        fn is_transient_external_error(e: &AppError) -> bool {
             let msg = e.to_string().to_lowercase();
             msg.contains("error sending request")
                 || msg.contains("timed out")
                 || msg.contains("connection refused")
                 || msg.contains("could not connect")
                 || msg.contains("dns error")
+                || msg.contains("rate limited")
         }
 
         // 2) Magic wand arXiv (network)
@@ -943,11 +945,11 @@ mod tests {
                     format!("path={} pdf={}", r.path, r.pdf),
                 )),
                 Err(e) => {
-                    if is_network_error(&e) {
+                    if is_transient_external_error(&e) {
                         report.push((
                             "magic-wand arXiv".into(),
                             true,
-                            format!("skipped (network unavailable): {e}"),
+                            format!("skipped (external unavailable): {e}"),
                         ));
                     } else {
                         report.push(("magic-wand arXiv".into(), false, e.to_string()));
@@ -984,11 +986,11 @@ mod tests {
                     ),
                 )),
                 Err(e) => {
-                    if is_network_error(&e) {
+                    if is_transient_external_error(&e) {
                         report.push((
                             "bib/RIS catalog import".into(),
                             true,
-                            format!("skipped (network unavailable): {e}"),
+                            format!("skipped (external unavailable): {e}"),
                         ));
                     } else {
                         report.push(("bib/RIS catalog import".into(), false, e.to_string()));
@@ -1016,11 +1018,11 @@ mod tests {
                             format!("pdf={} tex={} msgs={:?}", r.pdf, r.tex, r.messages),
                         )),
                         Err(e) => {
-                            if is_network_error(&e) {
+                            if is_transient_external_error(&e) {
                                 report.push((
                                     "download assets".into(),
                                     true,
-                                    format!("skipped (network unavailable): {e}"),
+                                    format!("skipped (external unavailable): {e}"),
                                 ));
                             } else {
                                 report.push(("download assets".into(), false, e.to_string()));

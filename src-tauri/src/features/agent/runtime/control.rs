@@ -61,7 +61,7 @@ impl Default for AgentRunController {
 
 /// Cooldown before background ACP spawns (warm / list sessions) retry an agent
 /// whose last background spawn failed. Prevents every panel mount from
-/// re-spawning a CLI that cannot start a session (e.g. Antigravity not signed in).
+/// re-spawning a CLI that cannot start a session.
 const WARM_GATE_COOLDOWN: Duration = Duration::from_secs(120);
 
 pub struct AgentWarmGate {
@@ -121,26 +121,26 @@ mod tests {
     #[test]
     fn warm_gate_blocks_during_cooldown_and_clears_on_success() {
         let gate = AgentWarmGate::new();
-        assert_eq!(gate.blocked("antigravity"), None);
+        assert_eq!(gate.blocked("test-agent"), None);
 
-        gate.record_failure("antigravity", "new_session timed out after 15s");
+        gate.record_failure("test-agent", "new_session timed out after 15s");
         assert_eq!(
-            gate.blocked("antigravity"),
+            gate.blocked("test-agent"),
             Some("new_session timed out after 15s".to_string())
         );
         assert_eq!(gate.blocked("other"), None);
 
-        gate.clear("antigravity");
-        assert_eq!(gate.blocked("antigravity"), None);
+        gate.clear("test-agent");
+        assert_eq!(gate.blocked("test-agent"), None);
     }
 
     #[test]
     fn warm_gate_expires_after_cooldown() {
         let gate = AgentWarmGate::with_cooldown(Duration::ZERO);
-        gate.record_failure("antigravity", "boom");
-        assert_eq!(gate.blocked("antigravity"), None);
+        gate.record_failure("test-agent", "boom");
+        assert_eq!(gate.blocked("test-agent"), None);
         // Expired entry is removed, not just ignored.
-        assert_eq!(gate.blocked("antigravity"), None);
+        assert_eq!(gate.blocked("test-agent"), None);
     }
 
     #[test]

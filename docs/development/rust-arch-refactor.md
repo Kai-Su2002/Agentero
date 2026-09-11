@@ -1,38 +1,206 @@
 # Rust 端架构重构计划（2026-09）
 
-状态：**进行中** —— P0 未开始。
+状态：**规划已更新，实施未开始**。最后更新：2026-09-08。
 
-来源：三轮架构评审（模型交叉 + 16 个审计/核实 sub-agent，2026-09-06）。文中所有关键论断均已逐条核实，含文件行号证据；被推翻的论断也已记录，避免后续重复调研或误信。
+来源：2026-09-06 三轮架构审计；2026-09-08 由 3 个 sub-agent 分别复核应用边界、存储一致性、运行时与集成，主评审补充核实论文入库及解析链路。本次为静态代码评审，未运行行为测试。历史 V 编号保留，旧 P0–P6 执行顺序由本文新计划替代。
 
-## 使用方式
+## 核心判断与目标
 
-- 完成一项就把 `- [ ]` 改成 `- [x]`，并在该项末尾追加 commit hash（如 `✅ abc1234`）。
-- 阶段内任务尽量相互独立；标注 ⛓ 的任务存在前置依赖，先完成被依赖项。
-- 任意时刻可暂停：每个任务自含「问题 / 证据 / 做法 / 验收」，新会话读本文档即可恢复上下文，无需重新调研。
-- 发现计划与代码现实不符时（重构过程中代码会漂移），直接更新对应条目并注明日期，不要留着过期信息。
+现有 `agentero-core` / desktop / CLI 三分结构和 feature-first 方向值得保留。主要缺口是共享了底层函数，却没有共享完整业务流程：相同操作可能因桌面、CLI、远端入口不同而执行不同的数据维护规则。
 
-## 一句话诊断
+本轮围绕六条主线：**共享应用用例、提交与恢复、Vault 派生状态、论文准备与提取、任务生命周期、Agent 运行上下文**。验收优先看业务一致性、失败恢复和资源归属；删行数、文件长度、trait 数量与 crate 数量仅作辅助指标。
 
-分层的"形"已就位（core/host 分离、依赖方向经核实为零违规：`features → integration` 0 引用、`agentero-core → tauri` 0 引用），但每个抽象都有"逃生舱口"——`VaultFs` 只有 remote 用、JobCenter 只有 paper 用、错误编码只有 1.4% 在用。**本轮重构的性质是收敛平行实现，不是清理垃圾。**
+- 保持 local-first：Catalog SQLite 是结构化 metadata 的事实来源；笔记和源文件仍以盘上文件为准；sidecar 是需要可靠传播的投影。
+- 复用现有 rename 事务、JobCenter runner/取消清理、HostHooks 的依赖倒置方向，以及 settings 的装配与订阅能力。
+- 按用例逐片迁移，保留 wire 兼容，不先做全仓库目录搬迁或万能框架。
+- 每项完成后勾选并记录 commit hash、实际验证；实施时更新关联 backend/frontend 文档。
+- 下文类型名是建议职责名，不是必须照搬的最终 API；A–F 是工作流编号，依赖与批次见进度总览。
 
-## 核实裁决记录（先读这个，防止重复调研）
+## 本次对旧计划的修正
 
-### 已确认的重大问题
+| 旧方向或表述 | 2026-09-08 决策 |
+|---|---|
+| 先完成 IPC 包络与宏，再做核心重构 | IPC 整理不是共享用例的前置，后移到收尾 |
+| 先把本地操作全面改为 async `VaultFs` | 先统一业务规划与提交契约，按需适配 IO；保留本地路径能力 |
+| trash 统一是纯机械、最安全的起点 | 存在 manifest、回滚与远端发布差异；先复用现有移动事务，再处理 trash |
+| CLI 可保留移动后提示修复双链的降级 | CLI 与桌面共用移动不变量；不以提示代替正确性 |
+| 扩大 HostHooks 成完整宿主面 | 收窄事件出口；后续工作由明确的用例结果与执行策略表达 |
+| 所有缓存失效都依赖 UI | CapsCache 已由 Host watcher 失效；需要迁移的是 Wiki 等剩余对账责任 |
+| MinerU 完全没有复用 | 已复用请求编排，缺少在途执行与提取产物的共享 |
+| JobKind 必须变字符串、进度和取消按类型数量归一 | 保留类型约束；先分离业务策略，共享资源所有权，不强并运行模型 |
+| 行数下降、取消类型归一是核心验收 | 改为跨入口契约、故障恢复、取消边界和重复执行测试 |
+
+## A · 共享完整业务用例
+
+**问题与证据：** 桌面及 Connector 已共用 `src-tauri/src/features/paper/catalog/commands.rs::paper_move_service`（550 行），调用现有 `run_local_rename_transaction`；CLI 的 `cli/src/commands/paper.rs` 仍走 core `catalog/mod.rs::move_paper_under`（66 行），只移动文件并更新 Catalog。业务服务放在 commands 层，也迫使其他入口引用传输层。关联 V2–V9、V38。
+
+- [ ] **A1 共享移动用例（首个架构切片）**
+  - 在现有 core 的对应业务域建立 application/service 入口，复用已有 Wiki 规划、执行和回滚，不再造 rename 引擎。
+  - Desktop 传入当前索引与 dirty paths；CLI 构造所需索引并明确无本进程编辑状态。Connector 调用服务而非 `commands`。
+  - 验收：同一 fixture 经桌面服务和 CLI 后，文件、Catalog、`[[...]]` 双链结果一致；失败不遗留半移动状态；桌面脏文档保护保留。
+- [ ] **A2 统一 trash/restore 操作计划**（依赖 A1 的用例边界；恢复策略与 B 协作）
+  - 收敛本地与远端的校验、恢复 manifest、执行顺序和失败结果；IO 执行器保留能力差异。
+  - 验收：移动后 manifest 写失败、Catalog 更新失败、远端发布失败均有明确可恢复结果；同表测试覆盖两种后端。
+- [ ] **A3 收敛论文身份与 Vault 能力解析**
+  - `PaperUnit` / `PaperLayout` 统一论文 marker、主 PDF、正文源、支撑材料分类，供 rescan、caps、Doctor、树与同步消费；`attachments/` 不是身份 marker。
+  - 在适配边界解析本地/远端目标，共享服务只依赖所需能力；不让 core 持有 integration 的具体远端 session 类型。
+  - 验收：本地与远端同目录结构得到相同分类；保留有依据的旧 Vault 兼容行为，Windows 路径归一和越界校验一致。
+- [ ] **A4 统一入库用例与入口适配**（依赖 B 的提交契约）
+  - 本地导入、remote commit、Connector 两条远端路径、Zotero migrate 共用去重、ID 分配、提交结果及失败语义；来源 metadata/linkage、Connector 时限留在入口策略。
+  - Catalog 与目录共同参与路径碰撞检查；远端发布及附件延迟明确表达。
+  - 验收：不同入口去重、ID 冲突和部分失败的结果一致；保留 Connector 协议时限。能力覆盖后再退役 RemoteImportOps/RemoteTrashOps 和合并孪生命令，不先删除倒置接缝。
+
+## B · 数据提交、投影与恢复契约
+
+**问题与证据：** core `catalog/papers.rs:391` 在 DB 提交后独立写 sidecar，`:1001` 起的字段操作读整行再 upsert；Host `integration/remote/catalog_mirror.rs:105` 发布时裸读 SQLite 主文件。`integration/sync/engine.rs:466` 从拉取的文件重建 Catalog，说明投影失败会影响跨设备传播。关联 V1、V10、V11、V33、V35。
+
+- [ ] **B1 字段级事务与可重试投影**（以前置 R1/R2 为基础）
+  - 以 `PaperMutation` 或等价用例保存字段 patch 语义，读改写在一个 DB 事务内完成；不把所有更新统一成全行覆盖。
+  - 同事务记录待投影版本，由有序 projector 写 sidecar；失败可重试，旧版本不得覆盖新版本。同步扫描前排空相关投影或显式报告未就绪。
+  - 验收：并发改不同字段不丢值；投影失败、乱序及重启后可恢复；Catalog 始终是结构化 metadata 的事实来源。
+- [ ] **B2 明确远端 snapshot/publish 边界**
+  - 以一致快照发布 Catalog，保持冲突检查；将连接、work-root 和待发布投影纳入远端会话生命周期。
+  - 修正 remote commit 先上传目录、后在 staging 生成 sidecar 的顺序缺口（`integration/remote/paper_commit.rs:84`）。
+  - 验收：活跃连接写入后 push/pull 数据完整；sidecar 到达正确目标；失败不误报已发布；断开清退连接后才能清理临时目录。
+- [ ] **B3 文件操作恢复与数据库策略复用**
+  - 移动、trash、入库沿现有补偿能力补齐小型操作记录，明确提交点、可取消点及幂等恢复；仅在需要时引入 journal。
+  - 复用 SQLite 连接配置与迁移执行工具，但保留 Catalog、Usage、Feeds、WikiCache 各自生命周期和合理 journal mode。
+  - 验收：关键步骤故障注入和恢复重试通过；旧库迁移行为保持。无需全局数据库注册表或跨 SQLite/文件/SFTP 的万能 ACID 事务。
+
+## C · Vault 会话拥有派生状态维护
+
+**问题与证据：** Host watcher 按 window label 注册；`features/vault/watcher/mod.rs:106` 已直接失效 caps，但 `src/App.tsx:288` 仍把 Wiki 变化转成后端重建请求。sync、rename 另有对账入口。关联 V34、V35。
+
+- [ ] **C1 按 Vault 维护变更协调器**
+  - 合并同 Vault 的 watcher 所有权；接收用例 changeset 与外部文件事件，按需驱动 caps、Wiki 和 Catalog 对账，再广播给窗口。
+  - 明确订阅、连接和任务在 Vault session 关闭时的清退；CLI 未运行 Host 时不假定常驻 watcher，必要不变量由共享用例直接维护，Host 再次打开时对账。
+  - 验收：多个窗口共享一次维护结果；Host 无对应窗口但会话活跃时仍能处理外部写入；重新打开后可恢复派生状态。
+- [ ] **C2 明确对账与编辑冲突边界**（依赖 C1，接入 A/B 的变更结果）
+  - 内部写入和 watcher 回声通过合并、幂等、版本检查去重，不依赖固定静默时间。
+  - UI 继续处理 dirty editor 冲突；普通磁盘事件不能无条件用文件投影覆盖权威 Catalog，也不能擅自重写手写笔记。
+  - 验收：内部移动不会重复改链；外部编辑、同步拉取、多窗口与关闭重开均有契约测试。无需全局持久化事件总线。
+
+## D · 论文准备与共享提取
+
+**问题与证据：** core `paper_import/mod.rs:224` 从 `progress.app` 推导解析调度；Host `paper/import/job_runners.rs:235` 分别安排正文与版面。MinerU 的 `body_engines/mineru.rs:22` 与 `layout/hosted/mineru.rs:409` 共用请求函数却独立启动提取。关联 V12、V31、V39。
+
+- [ ] **D1 PaperPreparation 统一后续工作计划**（接入 A4 的明确结果；与 E1 协作）
+  - 依据最终论文身份、已有资产、缺失产物及配置生成任务依赖；commit/download/recognize 返回结果，不通过进度观察者隐式安排工作。
+  - Desktop 策略入 JobCenter；CLI 明确等待或跳过可选派生任务，不依赖 `None` 同时表达无 UI 与无调度。
+  - 收窄 HostHooks，事件通知与业务 spawn 分离；配置在用例/任务边界注入，保留 settings 装配与订阅模式。
+  - 验收：识别后的稳定路径、Connector 附件就绪、下载后的解析顺序有同一计划来源；无进度监听也不改变必需业务步骤。
+- [ ] **D2 DocumentExtraction 共享执行与产物**
+  - 先为相同 MinerU 请求共享在途执行，正文与版面分别转换结果；再按收益添加可重建缓存。
+  - 复用键覆盖 PDF 内容摘要、provider/服务地址、模型及相关选项、必要的凭据隔离身份和产物版本，不写入明文密钥；明确 force 重算与消费者取消。
+  - 验收：兼容配置下同一 PDF 双消费者只启动一次提取；配置不同不误复用；取消一个消费者不破坏其他消费者。Paddle 不同模型保持独立。
+
+## E · 调度内核与任务资源生命周期
+
+**问题与证据：** `features/jobs/mod.rs:417` 集中匹配业务并发，`:1549` 起包含论文后续调度；已存在 runner 注册和取消 RAII。`integration/sync/commands.rs:211` 的占用直到 await 后手工释放，而 `scheduler.rs:53` 直接 abort。关联 V13、V14、V28–V30。
+
+- [ ] **E1 JobCenter 退出论文业务策略**（与 D1 协作）
+  - 论文域构建 JobSpec / PipelinePlan，拥有参数、后续工作和配额策略；调度内核只管理作用域、去重键、资源配额、依赖、执行与终态。
+  - 保留已有 runner 注册、backfill probe、panic settle 与取消登记，不重写调度器；不预设必须把 JobKind enum 改为裸字符串。
+  - 验收：新增业务任务不修改中央业务 match；既有 fingerprint、Renderer offer/report、timeout 和终态行为兼容。
+- [ ] **E2 薄运行作用域与释放契约**（从 R3 的 sync lease 起步）
+  - `RunLease` 管理占用/取消登记，任务作用域管理子任务、协作取消及有界等待；区分停止周期触发与取消在途工作。
+  - 逐步覆盖同步、Agent 运行及服务句柄；同步退出 flush 与正常同步共享必要的占用规则。
+  - 验收：取消、错误、任务 abort 后资源可再次获取；应用退出与配置重启可预测。`spawn_blocking` 和远端写入明确可取消边界，不能宣称 abort 可终止所有操作。
+- [ ] **E3 按职责复用服务生命周期**
+  - MCP/Connector 可共享 listener、generation、shutdown、join；保留各自 Router、鉴权和协议状态。Bridge 重连、MCP tunnel 子进程监督保留专用模型。
+  - 进度共享通用观察字段与适配器，保留领域载荷；Agent、周期同步和长期服务不强塞 JobCenter。
+  - 验收：stop/restart 能等待旧 listener 释放，旧任务不能覆盖新状态；协议兼容测试通过。
+
+## F · Agent 运行上下文
+
+**问题与证据：** `features/agent/service.rs:140` 要求 WebviewWindow；Bridge `integration/bridge/host.rs:41,79,938` 寻找桌面窗口并监听手写事件列表。远端主进程可以经 SSH 启动，但 `agent/acp/terminal.rs:124` 仍创建本机进程。关联 V15–V19、V21、V22、V40。
+
+建议职责：`AgentRunContext { execution_target, event_sink, interaction_policy, cancellation }`，避免聚合成所有 managed state 的万能上下文。
+
+- [ ] **F1 显式事件与交互目标**
+  - 窗口与 Bridge 各自提供事件出口，服务不再查找任意窗口或依赖 `listen_any` 转发；权限与 ask-user/elicitation 明确接收方。
+  - 验收：服务可在不创建 Webview 的情况下测试；隔离不同会话的输出，保持 stream flush 顺序、完成事件与交互回答关联。无交互目标时明确策略，不默许自动审批。
+- [ ] **F2 完整 ExecutionTarget**（依赖 F1 上下文；可独立于 A–D 推进）
+  - 统一主进程启动、cwd、terminal executor 和 ACP capabilities；远端终端执行在远端，未支持时明确拒绝。
+  - 验收：本地/远端主进程与终端位置一致；Windows 子进程选项保留；不静默回退到本机执行。
+- [ ] **F3 收回命令编排并统一连接装配**（依赖 F1/F2）
+  - warm/probe/lifecycle 进入现有 Agent service；probe/warm/run/history 共用连接装配，保留各模式权限和恢复策略。
+  - 验收：commands 仅转换参数与结果；provider session ID、恢复回放抑制和取消的 wire 行为不回归。runtime 可留在 desktop crate，不立即拆独立 ACP crate。
+
+## R · 前置正确性修复
+
+小范围修复可单独提交，不等待架构重构；以下均未实施。安全与正确性修复不因其规模小而推迟。
+
+- [ ] **R1 WAL 一致快照**（旧 P0-1）：用 SQLite 支持的一致快照机制导出；若采用 checkpoint + 读文件，必须协调写连接、检查 checkpoint 结果并保证读取窗口，不能认为新开短连接就自动安全。活跃 WAL 连接 write→push→pull 的 LocalFs 测试进入 CI，无需真实 SSH。
+- [ ] **R2 字段原子更新**（旧 P0-7）：局部 UPDATE 或单事务读改写，尤其 add/remove tags 必须保护集合操作；事务内回读返回完整 record。验证并发不同字段和标签集合更新。
+- [ ] **R3 sync 占用 RAII**（旧 P0-2）：guard 释放占用；abort 后可再次同步，作为 E2 的第一个落点。
+- [ ] **R4 Agent 交互清理与转发**（旧 P0-3/P0-4）：超时/取消移除 pending，补齐 Bridge ask-user/elicitation 请求转发；晚到回答保持 `resolved:false`，完整交互链路验证后再由 F1 替换临时转发。
+- [ ] **R5 论文附件分类**（旧 P0-5）：附件 PDF/TeX 不成为主资产；测试锁定 AGENTS.md 约定，不未经确认搬动历史用户文件。
+- [ ] **R6 文件授权与会话清退**（旧 P0-6/P0-8 连接项）：规范化路径并校验已授权 Vault 范围；远端断开前释放 work-root 连接和任务。验证正常打开流程及越界拒绝。
+
+## S · 后置整理与条件性工作
+
+这些条目保留为 backlog，不是 A–F 的统一前置。历史细节可查本文件 Git 历史和附录 V 编号。
+
+- [ ] **S1 IPC 契约来源**（旧 P1-1/P1-2/P4-6）：单一命令注册表、iOS 命令契约、明确返回包络与公开事件载荷；随服务迁移逐步收敛，避免一次性全量 breaking change。
+- [ ] **S2 错误和路径边界**（旧 P1-4/P1-6/P4-7）：优先替换影响控制流的字符串嗅探，补 NotFound/Conflict/Cancelled 语义与路径类型；边界校验不能等待全仓库 newtype 迁移。
+- [ ] **S3 机械收尾**（旧 P1-3/P1-5/P6-1/P6-2/P6-3 及 P0-8 清理项）：按实际收益整理包装宏、计时、别名、glob、重复 helper、死 JobKind 与过期注释；边界稳定后搬 tauri-free 模块。命令宏、platform 目录和新的 crate 均非必选。
+- [ ] **S4 资产与进程工具**（旧 P4-3/P4-4/P6-4）：按需求复用下载校验、解包、多源回退、进度/取消与 SSH 选项；保持 `.partial` 原子替换和 Windows 行为。现有 terminal 单任务拥有 Child、MCP tunnel generation 机制作为模板。
+- [ ] **S5 Agent 探测与取消细节**（旧 P5-10）：复核当前 PATH/登录 shell 解析后考虑缓存和阻塞隔离；内部 typed cancellation 不直接改变既有客户端 stop_reason 契约。
+- [ ] **S6 队列恢复评估**（旧 P3-5）：明确哪些任务允许重试、输入如何持久化后，再决定是否存储 pending/interrupted jobs；不持久化不可序列化执行器，不混入 usage 事实日志，不把所有在途任务自动重跑。
+
+## 进度与依赖总览
+
+| 批次 | 工作 | 主要依赖 | 状态 |
+|---|---|---|---|
+| 前置修复 | R1–R6 | 各项独立；按影响优先处理 R1/R2/R3 | 未开始 |
+| 第一批 | A1 移动用例，随后 A2/A3 | 复用已有 rename；A2 与 B3 明确恢复契约 | 未开始 |
+| 第二批 | B1–B3、A4、C1/C2 | B 以前置数据修复为基础；A4/C 接入提交结果 | 未开始 |
+| 第三批 | D1/D2、E1 | D1 与 E1 先对齐计划接口；D2 可独立试点 | 未开始 |
+| 可独立推进 | E2/E3、F1–F3 | E2 从 R3 起步；F 内部按事件→执行→装配 | 未开始 |
+| 后置 | S1–S6 | 主线边界稳定、或具体需求证明收益 | 未开始 |
+
+首个架构改动建议选择 **A1**：范围可控，已有实现可复用，又能用 CLI/桌面对比证明业务语义收敛。R 中的数据与安全问题先行或穿插处理，不要求所有 R 完成后才能开始独立主线。
+
+## 旧任务归并索引
+
+| 旧任务 | 新归属 |
+|---|---|
+| P0-1…P0-8 | R1–R6；死变体和注释清理归 S3 |
+| P1-1/P1-2/P1-3/P1-4/P1-5/P1-6 | S1/S1/S3/S2/S3/S2；解析调度 helper 随 D1 |
+| P2-1/P2-2/P2-3/P2-4/P2-5/P2-6 | A3/A2/A3/A4+B/A4/A4 |
+| P3-1/P3-2/P3-3/P3-4/P3-5 | E1+D1/E1/E3/E2+F/S6；取消强制搬目录和字符串 ID 要求 |
+| P4-1/P4-2/P4-3/P4-4/P4-5/P4-6/P4-7 | B3/E3/S4/S4/C/S1/S2；不保留 Bridge 长期监听窗口的建议 |
+| P5-1/P5-2/P5-3/P5-4/P5-5 | A3/A1+A2/D1/D2/D1 |
+| P5-6/P5-7/P5-8/P5-9/P5-10 | F3/F3/F1/F2/S5+F |
+| P6-1/P6-2/P6-3/P6-4 | S3/S3/S3/S4 |
+
+## 明确保留的边界
+
+不扩大 HostHooks 为万能宿主对象，不引入覆盖所有 feature 的 VaultService，不强并 ACP/Bridge/Connector wire 协议。不为了搬模块引入 ConfigProvider，不要求所有本地 IO 走 async trait，不把 UI 未保存内容的决策交给后台对账。继续保留 `core::http`、`run_blocking`、settings 订阅、JobCenter 既有 runner/清理能力与 feature-first 语义目录。
+
+相关路线图：[crate 拆分记录](crate-split-roadmap.md)、[开发索引](index.md)。本文为未实施架构计划；已实现行为仍以 `docs/backend/`、`docs/frontend/` 和代码为准。
+
+## 附录：历史证据与裁决（V 编号保持稳定）
+
+以下保留 2026-09-06 的审计快照，并在本次核实涉及的条目中修正表述。未重新统计的数量、行号与绝对性论断不代表 09-08 全仓库验证结果；实施前须按符号定位复核。简写 `catalog/`、`paper_import/` 等数据域路径位于 `crates/agentero-core/src/features/paper/`；Host 的 `remote/`、`sync/`、`bridge/` 位于 `src-tauri/src/integration/`。
+
+### 问题证据快照
 
 | # | 论断 | 关键证据 |
 |---|---|---|
-| V1 | **远端 catalog 推送丢数据（WAL）**：push 只读主文件字节，全仓库 0 次 checkpoint；push 紧跟 commit 且缓存连接存活 → **首次修改即丢**；disconnect 删 work 目录连 WAL 一起删 → 永久丢失 | `core/sqlite.rs:16`（强制 WAL）、`catalog/schema.rs:155`（进程级缓存连接）、`remote/catalog_mirror.rs:116`（裸 `fs::read`）、`remote/session.rs:88`（删 work 目录）；唯一 roundtrip 测试 `#[ignore]` |
+| V1 | **远端 catalog 发布绕开 WAL 一致快照**：`push` 裸读主文件，而写入连接启用 WAL 且长期缓存，可能遗漏尚未 checkpoint 的已提交修改。09-08 静态复核确认路径；不沿用“首次修改必丢”的绝对结论 | `crates/agentero-core/src/sqlite.rs:16`、`catalog/schema.rs` 的连接缓存、`src-tauri/src/integration/remote/catalog_mirror.rs:105`；需用活跃连接 roundtrip 测试验证 |
 | V2 | VaultFs 双轨制：`dyn VaultFs` 13 处全在 `integration/remote/**`，features 0 使用；`LocalFs` 生产实例仅 1 处（local-sim） | `core/fs/mod.rs:27`、`remote/session.rs:120` |
 | V3 | remote 分支共 **28 处 / 10 文件**（23 处 `parse_remote_handle` 调用 + 5 处裸 `"remote:"` 比较） | 分布：trash×5、import×4、connector×11、jobs×1、zotero×1、launch×1、mcp×1、sync×1 |
 | V4 | `remote_*` 命令 21 个（remote/commands.rs 18 + agent 3），其中**真孪生 5 个**：`remote_paper_{get,list,set_tags,set_is_read,rescan}` ↔ `paper_*` | `app/handlers.rs:155-175` |
 | V5 | 3 个 `Remote*Ops` trait 无本地实现，调用点 `if remote { ops } else { 直调 }` | `RemoteImportOps`（features/paper/import/remote_ops.rs:22）、`RemoteTrashOps`（features/vault/trash/remote_ops.rs:17）、`RemoteAgentHosts`（features/agent/remote_host.rs:57） |
 | V6 | trash 整体复制分叉：结构体、校验函数、5 个操作全部重写，仅共享结果类型与 catalog 行助手 | core `vault/trash/mod.rs` vs `remote/trash_bridge.rs`（自带头注释"Semantics match local"） |
-| V7 | CLI move 只动文件+SQL，不处理双链；桌面走重命名事务（双链重写+脏文件拒绝+回滚）。CLI 移动后链接种留在盘上，修复依赖桌面端开着且手动确认 | core `catalog/mod.rs:66` vs src-tauri `catalog/commands.rs:578`（`run_local_rename_transaction`）；CLI 入口 `cli/src/commands/paper.rs:689` |
+| V7 | CLI move 只动文件与 SQL；桌面和 Connector 已共用包含双链更新的移动事务，但服务仍放在 `commands.rs`。09-08 确认：需要统一完整用例，不能把 Connector 本地移动报告为另一分叉 | `catalog/mod.rs:66`、`src-tauri/src/features/paper/catalog/commands.rs:550`、`integration/connector/state.rs:766`、`cli/src/commands/paper.rs:689` |
 | V8 | caps 误判 attachments：附件 PDF 可成主 PDF（read_dir 顺序不定，可能抢在 source/ 前）；附件 `.tex` 置 `has_tex` 压制 ParseBody。与 AGENTS.md attachments 约定冲突 | `core/paper/capabilities.rs:146,148` |
-| V9 | 本地/远端 rescan marker 不同：本地 `NOTES.md∨metadata.json`；远端另加 `highlights.md`/`PAPER.md`/`source|assets|marks` 目录 + 从 NOTES 刮标题 + 恒刷 `updated_at` | `catalog/papers.rs:811` vs `remote/commands.rs:581-613` |
+| V9 | 本地/远端 rescan marker 不同：本地 `NOTES.md∨metadata.json`；远端另加 `highlights.md`/`PAPER.md`/`source\|assets\|marks` 目录 + 从 NOTES 刮标题 + 恒刷 `updated_at` | `catalog/papers.rs:811` vs `remote/commands.rs:581-613` |
 | V10 | `set_tags`/`set_is_read`/`add_tags`/`remove_tags` 均为读全行→改→全行 upsert，两次独立拿锁，并发覆盖窗口 | `catalog/papers.rs:1001-1056` |
-| V11 | sidecar 尽力写：DB 写成功后投影失败仅 log | `papers.rs:391-395`、`sidecar.rs:14-33` |
-| V12 | MinerU 双重提取：正文引擎与版面引擎各自 fresh client+batch，零共享；JobCenter 去重键含 kind 标签注定抓不住；两 job 确实同时入队 | `body_engines/mineru.rs:22`、`layout/hosted/mineru.rs:409,465,476`；fingerprint `jobs/mod.rs:61-62` |
+| V11 | Catalog 提交后独立写 sidecar，投影失败只 log，写入顺序也未由同一事务保护；sidecar 又参与同步传播，需要有序、可重试的投影契约 | `catalog/papers.rs:391`、`catalog/sidecar.rs:17`、`src-tauri/src/integration/sync/engine.rs:466` |
+| V12 | MinerU 正文与版面已共用 HTTP 编排函数，但分别调用并启动 provider 提取，未共享执行结果；两类任务可分别入队 | `body_engines/mineru.rs:22`、`layout/hosted/mineru.rs:409`、`paper/import/job_runners.rs:235`；不是“完全没有代码复用” |
 | V13 | sync 注销泄漏：`try_begin`/`end` 无 abort 防护（全仓库无 Drop/scopeguard 兜底），scheduler abort 跳过 `end()` → 直到重启永远 "sync already running" | `sync/commands.rs:211,229`、`sync/scheduler.rs:53` |
 | V14 | gate 超时泄漏：三个 gate 的 pending map 只在 `resolve()` 删除，300s 超时路径不清理（晚到回答优雅返回 `resolved:false`，不崩） | `runtime/gates.rs:24,71,115`、`acp/interaction.rs:345,388,448` |
 | V15 | bridge 事件缺口：`agent:ask-user-request` / `agent:elicitation-request` **不在**转发列表，但回答端 RPC 存在 → 移动端这两个 RPC 是死代码，300s 自动取消。`agent:permission-request` 已转发（无缺口） | `bridge/host.rs:41-49`（转发表）、`host.rs:964-985`（回答端） |
@@ -49,17 +217,17 @@
 | V26 | `events_contract.rs` 1248 行 + 手写 Rust 源码扫描器；42 事件（`:360` 的"43"注释过期）；57 个 emit 点 | `app/events_contract.rs:905-915` |
 | V27 | OpTimer 覆盖 50/196 命令；jobs 全部 20 个命令、agent、feeds、catalog 大部无计时 | `core/log_util.rs` |
 | V28 | jobs/mod.rs 2845 行；JobKind 14 变体（严格 paper 11 + LibraryIo 边缘）；并发上限 9/14 硬编码字面量；**发现 3 个死变体**：`LayoutTranslate`/`PageCount`/`WikiReindex` 无 runner 无 enqueue | `features/jobs/mod.rs:35-50,417-442` |
-| V29 | 7 套进度机制 / 6 套取消机制并存（bridge progress 甚至裸 `&str`；三个同形结构体靠注释同步） | 详见 P3 任务清单 |
+| V29 | 历史审计记录多套进度与取消机制；应统一资源释放和观察契约，保留 Agent、周期同步、队列任务各自语义，不以类型数量归一为验收 | 本次主线 E；旧 P3-3/P3-4 的迁移对象包括 sync、Zotero sync、安装器、Connector、Bridge 和下载进度 |
 | V30 | JobCenter 无持久化，崩溃丢队列 | `jobs/mod.rs:247-266`（无 Serialize） |
 | V31 | `probe_command` 薄重复包装（函数体逐字节相同，均委托同一 core `resolve_command`；测试不同）；`spawn_parse_after_import` 5 处定义（1 trait 声明+1 impl+1 固有方法+2 自由函数） | `core/process/discover.rs:150` vs `agent/registry/discovery.rs:9`；`core/app_handle.rs:29,69`、`host_hooks.rs:27`、refs 两处 |
 | V32 | 错误分类学空壳：`AppError::message` 937 处 vs `domain` 13 处；3 处靠嗅探文本决策（CLI 子串退出码、`VaultFs::exists` grep "not found"、connector `contains("SESSION_EXISTS")`） | `cli/src/error.rs:107-133`、`core/fs/mod.rs:44-62`、`connector/server.rs:329` |
 | V33 | 存储管道四套写法：4 种 SQLite 连接策略 / 4 套迁移梯子；mirror 连接无 busy_timeout；`CatalogMirror::open` 生产零调用 | `usage/schema.rs:116`、`feeds/mod.rs:524`、`wiki/cache.rs:302`（DELETE 模式）、`catalog_mirror.rs:96-102` |
-| V34 | 失效依赖 UI 活性：watcher 只向 webview 发事件，由 React 回调 Host 命令触发重建；多窗口重复重建；headless 写入无 Host 侧对账 | `features/vault/watcher/mod.rs:104-112`、`App.tsx:288-305` |
+| V34 | Wiki 更新仍经 React 回调 Host，watcher 按窗口管理；但 CapsCache 已由 watcher 直接失效。09-08 修正“全部失效依赖 UI”的表述 | `src-tauri/src/features/vault/watcher/mod.rs:104`（106 行失效 caps）、`src/App.tsx:288`、watcher 的 window-label 注册表 |
 | V35 | 远端 work-root 连接永不清退：`vault_release` 按本地路径 canonical 匹配，`remote:<id>` 永不命中；disconnect 也不清；远端 session 的 sidecar 写进临时 work 目录而非远端 vault | `app/vault_session/lifecycle.rs:34`、`remote/session.rs:88` |
 | V36 | core/host 边界：src-tauri 14 处 glob 重导出；core 12 个扁平别名且**自用 ~150 处**（src-tauri 侧反而语义路径 83 处/33 文件、扁平 0 处）；`#[path]` 重挂载恰 2 处（cli_install、open_request） | `core/features/mod.rs:16-31`、`src-tauri/features/mod.rs:12-13,21-22` |
 | V37 | 两个下载器互补残缺（**非**重复实现）：install/download.rs 有 sha256+解包+chmod 无多源回退无进度无取消；model_assets 有多源回退+节流+取消无校验和。两者都已有 `.partial`+rename（不会留损坏产物） | `agent/install/download.rs`、`layout/model_assets/mod.rs:21,193-243` |
 | V38 | Zotero 两个家：core codec+io 1189 行（tauri-free）vs host db.rs 1651 + sync 1352；db.rs 是事实上的 paper source 却无 trait（手工拼 Zotero API JSON 喂 `map_zotero_item_to_record`） | `features/paper/zotero/db.rs:1-6,390` |
-| V39 | settings 直读 6 模块/10 处（非传闻的 8 features）：paper/import×4、body_engines、layout/hosted、recommend×2、translate、mcp | 详见 P5 |
+| V39 | 历史审计记录 settings 直读 6 模块/10 处；按用例或任务边界显式传配置，保留装配层读取及已有订阅模式 | paper/import、body_engines、layout/hosted、recommend、translate、mcp；本次主线 D |
 | V40 | acp/ 层不纯：import `AgentEventEmitter` 并直接发 UI 事件（一跳之隔，无直接 tauri:: import） | `acp/updates.rs:7,407-422`、`acp/interaction.rs:5-6,334-437` |
 
 ### 已推翻 / 修正的论断（不要再按原说法执行）
@@ -74,289 +242,3 @@
 | import-tmp 永不清理 | REFUTED：前端 `cleanupImportTempPaths` finally 清理；仅崩溃孤儿无 host 清扫（降级为可选任务） |
 | glob 17 处 / 别名 11 个 / 事件 43 个 | 精确值 **14 / 12 / 42** |
 | OpTimer "20/39 文件" | 50/196 命令；文件口径 20/**40** |
-
----
-
-## P0 · 正确性修复（立即做，独立小 PR，互不依赖）
-
-> 全部是核实过的真 bug。每项一个 PR，改完即可发布，不等重构。
-
-- [ ] **P0-1 远端 catalog WAL 推送修复**（V1）
-  - 做法：`CatalogMirror::push` 读字节前对 work 库执行 `PRAGMA wal_checkpoint(TRUNCATE)`；或推送走专用短连连接（开→checkpoint→读→关）。推荐后者：顺带修 V35 的连接清退。
-  - 验收：用 `LocalFs` 复刻 write→push→pull roundtrip 进 CI（非 ignore）；远端 `set_tags` 后 pull 回读一致。
-  - 参考：`session.rs:449` 的 `#[ignore]` 冒烟测试就是会被此 bug 打败的用例，改造它。
-
-- [ ] **P0-2 sync 注销 RAII 防护**（V13）
-  - 做法：`try_begin` 返回 guard（Drop 兜底 `end()`），`perform_sync` 持有；abort 时 Drop 保证注销。
-  - 验收：scheduler abort 后同 vault 可再次 `sync_now`；`sync_get_status` 不再永久 `running:true`。
-
-- [ ] **P0-3 gate 超时清理 pending**（V14）
-  - 做法：`interaction.rs` 三处超时分支补 `gate.remove(&id)`（gates 增加 remove 公有方法）。
-  - 验收：超时后三个 map 归零；晚到回答仍优雅 `resolved:false`。
-
-- [ ] **P0-4 bridge 转发补 2 事件**（V15）
-  - 做法：`FORWARDED_AGENT_EVENTS`（`bridge/host.rs:41-49`）加入 `agent:ask-user-request`、`agent:elicitation-request`。payload 已带 sessionId，过滤器天然兼容，两行改动。
-  - 验收：移动端发起 agent run 后能收到并回答 ask-user / elicitation。
-
-- [ ] **P0-5 caps 排除 attachments/**（V8）
-  - 做法：`probe_paper_caps` 二趟子目录扫描跳过 `attachments/`（PDF 与 tex 均不计数）；对齐 AGENTS.md 论文单元约定。
-  - 验收：`attachments/supplementary.pdf` 不再成为 `pdf_path`；`attachments/x.tex` 不再置 `has_tex`；补两个单测锁定行为。
-  - 注意：老 Vault 兼容——若历史数据曾把主 PDF 放 attachments（需查证），保留一次迁移探测或 doctor 检查。
-
-- [ ] **P0-6 fs_scope 加固**（V24）
-  - 做法：`vault_allow_fs_scope` 执行前 canonicalize + 存在性校验；与当前已打开 vault（`vault_session` 状态）做前缀断言后才授予。
-  - 验收：渲染层传任意路径（如 `/`）不再扩大 scope；正常打开 vault 流程不回归。
-
-- [ ] **P0-7 tag/is_read 单事务化**（V10）
-  - 做法：`set_tags`/`set_is_read`/`add_tags`/`remove_tags` 改为单条 `UPDATE papers SET tags_json=?…WHERE path=?`（tags 解析/规范化后整体写回），去掉 get→upsert 全行覆盖。
-  - 验收：并发写不同字段不互相覆盖；返回值仍为完整 `PaperRecord`（可 SELECT 回读）。
-
-- [ ] **P0-8 杂项小修**
-  - [ ] 远端 work-root 连接清退：`RemoteRegistry::disconnect` 调 `evict_catalog_conn(work_root)`（V35）
-  - [ ] `events_contract.rs:360` "43" 过期注释改 42
-  - [ ] 删除 JobKind 3 个死变体 `LayoutTranslate`/`PageCount`/`WikiReindex`（V28；确认 bindings 再生成后 TS 侧无引用）
-
----
-
-## P1 · IPC 契约统一（机械高收益，为后续铺路）
-
-- [ ] **P1-1 单一命令注册表**（V25）
-  - 做法：tauri-specta `Builder` 同时产出运行时 `invoke_handler` 与 bindings.ts；删 `handlers.rs` 与 `bindings_test.rs` 的双份手工清单。iOS 分支用独立 builder 保持干净。
-  - 前置子项：`bridge_status` 改名解冲突
-    - [ ] iOS 侧 `bridge_status` → `bridge_client_status`（`bridge/client_commands.rs:46`），前端 iOS 调用点同步改名
-    - [ ] iOS 5 个命令纳入 bindings.ts（解除 `bindings_test.rs:8-13` 排除）
-  - 验收：`pnpm tauri dev` 全命令可调；bindings.ts 再生成 diff 仅含预期变化；加一个新命令只改一处。
-
-- [ ] **P1-2 包络统一为 `ApiResult<T>`**（V23）
-  - 做法：94 个 `Result<ApiResult<T>, String>` 命令改用 `State<'_, Arc<T>>` + clone 消 borrow 变通；7 个 `Result<(), String>`（menu/window/watcher）改 `ApiResult<()>`。前端删 `callApiResult`/`callResult`，只留 `callApi`。
-  - 验收：196 命令单一返回形态；前端 3 helper → 1；bindings.ts 类型收敛。
-
-- [ ] **P1-3 命令包装宏**（V27）
-  - 做法：`macro_rules!`（展开为真实 fn，tauri-specta 兼容）统一：`#[tauri::command]` + `#[specta::specta]` + OpTimer（`stringify!` 自动命名）+ `finish_result` 错误映射 + 可选 blocking 标志走 `run_blocking`。
-  - 验收：OpTimer 50/196 → 全覆盖；先迁 jobs/commands.rs（20 命令零计时的最大户）验证宏形态，再批量。
-
-- [ ] **P1-4 路径 newtype**（V24 关联）
-  - 做法：`VaultPath`/`PaperRelPath` 实现 `Deserialize`，归一化 + 拒 `..` + 分隔符统一在一处；命令 args 从 `vault_path: String` 渐进换类型（56 个 args 结构，机械替换）；合并两份 `vault_path_arg`；14 处手搓 `trim_matches('/').replace('\\',"/")` 替换为 `sanitize_vault_rel`。
-  - 验收：`set_tags` 等带 rel-path 入参的命令无法注入 `..`；Windows 混合分隔符场景单测通过。
-
-- [ ] **P1-5 重复定义收敛**（V31）
-  - [ ] 删 `agent/registry/discovery.rs:9` 的 `probe_command` 薄包装，调用点直用 core 版
-  - [ ] `spawn_parse_after_import` 5 处定义收敛：trait 默认实现 + 桌面覆盖保留，删 2 个自由函数重复
-
-- [ ] **P1-6 错误语义构造器**（V32）
-  - 做法：`AppError` 增加 `not_found(what)` / `conflict` / `cancelled` / `invalid_arg` 构造器（稳定 snake_case code，wire 格式不变，渐进迁移）；改掉 3 处嗅探：
-    - [ ] CLI 退出码改按 `code()` 映射（`cli/src/error.rs:107-133`）
-    - [ ] `VaultFs::exists` 默认实现改按错误 code 判断 NotFound（`core/fs/mod.rs:44-62`，Ambiguous 分支返回 Err 而非 false）
-    - [ ] connector `SESSION_EXISTS` 改 `AppError::conflict` code（`connector/server.rs:329`）
-  - 验收：三处嗅探单测改为 code 断言；新命令错误天然带 code。
-
----
-
-## P2 · trait Vault 统一双轨（核心战役，按切片推进）
-
-> 目标：`Vault` 端口 + `CommitSink` 统一本地/远端；消 28 处分支、3 个 Remote*Ops、trash 分叉、rescan 分叉、4 份 commit 拷贝、5 个孪生命令。前置：P0-1（先把数据丢修了再动结构）。
-
-- [ ] **P2-1 VaultTarget 分发收敛**（V3/V5）
-  - 做法：仿 agent 侧已有的 `resolve_target()` 模式（`agent/service.rs:173`），在 core 建 `VaultTarget`（`Local(PathBuf)` / `Remote(session)`）+ `resolve_target(vault_path)` 单一入口；28 处 if-remote 分支改为模式匹配调用。
-  - 验收：`parse_remote_handle` 生产调用点归零（或仅剩 resolve_target 内部 1 处）；行为不变。
-
-- [ ] **P2-2 trash 统一**（V6，最安全先行者）
-  - 做法：core trash 五操作参数化 `fs: &dyn VaultFs`（语义已对齐，纯机械）；`trash_bridge.rs` 降为远端 session 组装 + `catalog.push` 钩子；补齐差异项（远端 restore 的 best-effort mkdir 保留为策略）。
-  - 验收：`trash_bridge.rs` 删至 ~100 行组装层；本地/远端 trash 行为单测同表驱动。
-
-- [ ] **P2-3 rescan marker 统一**（V9）
-  - 做法：抽 `paper_marker(dir) -> bool` + 收编规则到 core 一处；本地/远端共用；远端"NOTES 刮标题"与"恒刷 updated_at"作为远端策略参数保留或删除（倾向删除，向本地语义对齐）。
-  - 验收：同一目录结构本地/远端 rescan 结果一致；现有两边测试合并为参数化测试。
-
-- [ ] **P2-4 CommitSink 统一提交内核**（4 份拷贝 → 1）
-  - 现状四份：core `paper_commit`（权威内核）、`remote/paper_commit.rs:38`（无去重/回滚/事件）、connector item remote（`connector/import.rs:151-199`，catalog/上传顺序还与前者相反）、connector standalone remote（`import.rs:664-718`）；外加 Zotero migrate 自拼第 5 份（`zotero/db.rs:470`，无回滚无事件）。
-  - 做法：
-    - [ ] `remote_paper_commit` 补齐与本地内核相同的策略面（`DedupePolicy` / `RemoteAssetsPolicy` / `events: bool` / staging RAII 回滚）
-    - [ ] connector 两份远端拷贝改为 `connector_paper_meta` + 一次 `remote_paper_commit` 调用（connector 15s 超时契约用 `push_catalog: false` + 事后显式 push 表达，API 已支持）
-    - [ ] Zotero migrate 接入 `paper_commit`（`PaperCommitOptions` 增 `source_metadata`/`linkage`/`skip_assets` 可选项），migrate 特有的 collection 迁移/幂等回填留在外层
-    - [ ] 统一 `paper:imported` 事件进内核（远端 payload 的 `vault_id` 编码 `remote:<sid>/<path>`），删 command 层 2 处手工补发
-    - [ ] 统一 ID 分配碰撞域：`unique_remote_paper_path` 补查镜像 catalog（本地版已是"目录存在 OR catalog 有行"）
-  - 验收：四/五条路径入库行为一致（失败回滚、事件、去重、ID 后缀）；净删 ≥300 行。
-
-- [ ] **P2-5 孪生命令合并**（V4）
-  - 做法：`remote_paper_{get,list,set_tags,set_is_read,rescan}` 并入 `paper_*` 按 `VaultTarget` 分发（前端已在传 `remote:<id>` handle）；前端删 `isRemoteVaultHandle()` 分派层，改消费 `FsCaps`（bindings 已序列化、前端零消费——V 确认）。
-  - 验收：5 个 `remote_paper_*` 命令删除；前端 paper API 层单路径；`remote_list/read/write/mkdir/remove/write_bytes` 6 个 FS 命令保留（镜像的是前端 fs 插件，非孪生，不动）。
-
-- [ ] **P2-6 Remote*Ops 退役**（V5）
-  - 做法：`VaultTarget` 覆盖 import/trash 能力后，`RemoteImportOps`/`RemoteTrashOps` 删除；`RemoteAgentHosts` 保留（agent 侧的 `resolve_target` 模式已验证良好，等 P5-5 ExecutionTarget 时再评估合并）。
-  - 验收：features 对 integration 的倒置仍为零直接依赖（保持铁律）。
-
----
-
-## P3 · Jobs 去业务化 + 进度/取消统一
-
-> 原则：**不为拆而拆 2845 行**；先去业务化 + 迁 platform，体积自然缓解。新 layer：`src-tauri/src/platform/`（features → platform → core，反向禁止）。
-
-- [ ] **P3-1 迁移 + 分层**
-  - [ ] `features/jobs/` → `platform/jobs/`（含 commands 壳评估：壳留 features 或随迁，倾向随迁）
-  - [ ] `features/system/settings` 存储层 → `platform/settings/`（commands 壳留守，修"8 个 feature 依赖 settings"的倒置观感；实际直读仅 6 模块/10 处，随 P5 收敛）
-  - 验收：依赖方向 features → platform → core 无反向（加一个 cargo-deny 或 grep CI 检查）。
-
-- [ ] **P3-2 JobKind 注册化**（V28）
-  - 做法：JobKind 退化为稳定字符串 ID + `JobSpec { id, concurrency, exec_host, fingerprint }` 注册表（注册机制已有：`register_runner` `app/mod.rs:181-186`）；**推广 `set_layout_backend_source` 注入模式**（核实确认为好设计）。
-  - 搬迁：`job_reconcile_paper`/`job_reconcile_vault`/`job_papers_needing_assets`/`validate_job_paper`/`spawn_parse_body_after_assets`/`spawn_recognize_metadata` → `features/paper/backfill/`。
-  - 验收：新增一种 job 只需在所属 feature 注册，不改 platform 代码；jobs/mod.rs 显著缩量。
-
-- [ ] **P3-3 进度统一 `ProgressPayload { phase, done, total, unit }`**（V29，7 → 1）
-  - 收编顺序（按风险从低到高）：
-    - [ ] sync engine `Progress<'a> = &dyn Fn(&str, usize, usize)`（`sync/engine.rs:65`）
-    - [ ] zotero sync `impl Fn(usize, usize, &str)`（注意参数序相反，`zotero/sync/mod.rs:73`）
-    - [ ] agent lifecycle 安装器 750ms 节流 emit（`registry/lifecycle.rs:841,898`，合成百分比 `5+elapsed*2` 一并删）
-    - [ ] connector `connector:progress`（保留 wire 协议不变，内部载荷统一）
-    - [ ] bridge `bridge:progress`（裸 `&str` → 结构体，iOS 侧同步）
-    - [ ] 三个同形结构体合并（`AssetDownloadProgress` / `CitingScanProgress` / model_assets `ProgressEvent`，靠注释同步的字段对齐改为单一类型）
-  - 验收：进度载荷类型数 7 → 1；前端 job 面板对所有来源显示一致。
-
-- [ ] **P3-4 取消统一**（V29，6 族 → 2）
-  - 保留：JobCenter per-job `CancellationToken`（唯一 tokio_util 用户）+ `core::cancel` probe（**方向是对的**：JobCenter 提供探针、core 消费）。
-  - [ ] agent lifecycle cancel set 并入 job token
-  - [ ] agent gates oneshot 超时并入统一取消语义（保留 300s 预算）
-  - 验收：`is_task_cancelled` 单一注册表；liteparse/terminal 的 kill 逻辑不变（已良好）。
-
-- [ ] **P3-5 JobCenter 最小持久化**（V30）
-  - 做法：job 队列入 `usage.sqlite` 同款轻量 SQLite（或独立 jobs.sqlite），崩溃重启后未完成 job 标记 interrupted 可重入。
-  - 验收：进程 kill 后重启，队列可见且可重跑；正常路径零额外 IO（变更时写）。
-
----
-
-## P4 · 横切基础设施（与 P2/P3 并行推进）
-
-- [ ] **P4-1 sqlite 统一入口**（V33）
-  - [ ] `core::sqlite` 升级为唯一连接入口：`Db` 注册表（Catalog/Usage/Feeds/WikiCache/Mirror），统一 busy_timeout、按逻辑库声明 journal mode（wiki cache 保持 DELETE 需有注释理由）
-  - [ ] mirror 连接补 PRAGMA（busy_timeout；journal 随 P0-1 决策）
-  - [ ] 统一迁移 runner：`migrate(conn, DbId, &[Migration])` 事务化 + 统一 duplicate-column 容忍 + 统一 future-version 报错（4 套梯子：catalog/usage/feeds/wiki-cache 各自手搓）
-  - 验收：新增一个数据库只写 DDL + Migration 列表；现有迁移行为有快照测试锁定。
-
-- [ ] **P4-2 LoopbackServer 泛型**
-  - 做法：抽 `LoopbackServer<S>`（端口配置、bind-await、oneshot shutdown、状态快照、状态事件常量）；MCP 与 Connector 两个 controller（结构相同的 ~250 行）迁移，各留 Router/领域状态。
-  - 顺带：connector `AddrInUse` 的硬编码中文提示改 error kind（i18n 走前端）。
-  - 验收：两 controller 删至各自领域逻辑；端口冲突行为一致。
-
-- [ ] **P4-3 process supervisor**（以 MCP tunnel 的 generation-counter 模式为模板，全仓库最佳实现）
-  - [ ] `core::process::supervisor`：`SpawnSpec { cmd, args, env, stdio, windows_flags, timeout, cancel, on_progress }`，async + sync-stop 双入口
-  - [ ] 迁移：agent lifecycle 安装器（std 100ms 轮询）、PDF worker、`agent_exec::remote_which`
-  - 不迁：ACP 子进程（外部 crate 管）、terminal（已教科书级）
-  - 验收：子进程生命周期模式 4 → 2（supervisor + terminal）。
-
-- [ ] **P4-4 SSH 选项统一**
-  - 做法：`remote::ssh_cli_opts()` 单一 `-o` 参数向量 + SessionBuilder 调优（现 3 套：SftpFs 15s+ServerAlive、remote_which 15s+ServerAlive、agent tunnel **30s 无 ServerAlive 可挂死**）；`SSH_CONNECT_TIMEOUT` 定义两遍合一。
-  - 验收：agent tunnel SSH 获得心跳；常量单一来源。
-
-- [ ] **P4-5 Host 侧 VaultEventBus**（V34）
-  - 做法：tokio broadcast channel；watcher/sync/connector/import/remote session 发布；订阅者：wiki 索引调度、caps 失效、catalog 对账；单一桥转发所有窗口。
-  - 验收：多窗口打开同 vault 只重建一次索引；renderer 不在场时 headless 写入（CLI/agent 子进程）也能触发 Host 对账；React hook 只剩纯视图反应。
-
-- [ ] **P4-6 事件 payload 公有化**（V26）
-  - 做法：所有 emit payload 改公有命名结构体（derive specta::Type），删 `events_contract.rs` 的手写镜像与 ~500 行源码扫描器（编译器接管不变量）；bridge host 的 `listen_any`+JSON 重解析暂保留（解耦合理，profile 出现热点再改 typed tap）。
-  - 验收：events_contract.rs 缩至事件名常量表 + 少量形状测试；payload 漂移在编译期暴露。
-
-- [ ] **P4-7 错误 code 全面化**（V32 续 P1-6）
-  - 做法：高频文件机会主义迁移（bridge/host、mineru、parse、translate 是 message() 大户）；`ErrorBody.details` 去掉 `#[specta(skip)]` 补进 TS 类型（前端 wiki rename 恢复路径已依赖 details，手工 RuntimeErrorBody 可删）。
-  - 验收：`AppError::message` 新增调用为零（grep CI 或 clippy 检查）；zh-CN 错误 toast 可按 code 映射（前端 `translateHostError`，缺 key 回退原文）。
-
----
-
-## P5 · Paper 域与 Agent 域
-
-### Paper
-
-- [ ] **P5-1 PaperUnit / PaperLayout 领域类型**（P0-5 的架构化版本）
-  - 做法：统一回答"论文根在哪 / 文件属于哪篇论文 / 主 PDF 是什么 / 哪些是正文源 / 哪些是支撑材料"；树、rescan、Doctor、CapsCache、同步消费同一分类；保留老 Vault 兼容探测。
-  - 验收：caps 分类逻辑单点；新增资产类型或改目录布局只改一处。
-
-- [ ] **P5-2 move/trash/restore 用例统一**（V7）
-  - 做法：CLI move 接入 `run_local_rename_transaction`（或显式 headless 降级：移动 + 输出"存在 stale 双链，运行 doctor 修复"提示）；`commit_paper`/`move_paper`/`trash_paths`/`restore_item` 形成带预检/操作计划/补偿规则的用例层，各入口只做参数转换与自身策略（connector 时限、zotero linkage、桌面脏文件信息）。
-  - 验收：CLI 与桌面移动后双链状态一致（测试同表驱动）。
-
-- [ ] **P5-3 解析调度收敛 PaperPreparation**
-  - 现状 11 处入队点（paper_commit、core download、DownloadAssets runner、recognize 完成、reconcile×4、jobs spawn helper、桌面 refs、remote bridge）；且 `parse_app` 从下载进度上下文的 `app` 字段偷取（`paper_import/mod.rs:224-228`），`Deferred` 策略硬编码 None 抑制调度。
-  - 做法：`PaperPreparation` 依据最终身份/已有资产/缺失产物/入口策略生成任务计划；commit/download/recognize 返回明确结果由用例安排后续；`HostHooks` 的业务 spawn 回调逐步退场。
-  - 验收：入队点 11 → ≤3；"识别完成路径稳定后再解析"与"connector 附件齐再处理"成为显式策略字段。
-
-- [ ] **P5-4 DocumentExtraction 共享提取**（V12）
-  - 做法：MinerU 正文+版面共享一次 provider 执行与原始产物（复用键：PDF 内容摘要+服务地址+模型+选项）；先合并进行中的相同请求，再做可重建缓存；按消费者管理取消；Paddle 不同模型保持独立执行。
-  - 验收：同一 PDF 双引擎场景只上传/计费一次。
-
-- [ ] **P5-5 settings 直读收敛**（V39）
-  - 做法：6 模块/10 处直读改为 job 参数注入或既有 subscribe 反应（paper/import 的 4 处优先，runner 收 `NoteShellMode`/backend 作为参数）。
-  - 验收：features 对 `AppSettingsStore` 的 State 依赖清零（settings 壳与装配层除外）。
-
-### Agent
-
-- [ ] **P5-6 service 单一入口**（V18）
-  - [ ] `agent_warm` 编排下沉 `service::warm`（对齐 run_once/list_sessions 模式）
-  - [ ] `agent_probe` 改调 `service::probe_catalog`，删逐字复制的内联版
-  - [ ] lifecycle 补 service 包装（`run_lifecycle`/`cancel_lifecycle`）
-  - 验收：commands 层只剩参数转换；service.rs 成为唯一编排者。
-
-- [ ] **P5-7 AgentCtx 聚合 + 连接装配收敛**（V19）
-  - [ ] 5 个分散 managed state（Registry/RunController/WarmGate/3 gates）聚合为 `AgentCtx` 按域分组，命令签名从 7 个 State 参数降为 1-2 个
-  - [ ] 5 处连接装配抽 `agent_connection::build(spec) -> Client`（builder+terminal handler+deny-permission+connect_with 样板）
-  - 验收：新增 agent 命令不再手拼 5 个 State；装配点 5 → 1。
-
-- [ ] **P5-8 runtime 与窗口解耦**（V17）
-  - 做法：`RunEventSink` trait（`emit(event, payload)`），窗口实现（emit_to webview）与 bridge 实现（直接进转发通道）各自适配；`accept_run_once` 去 `WebviewWindow` 参数；bridge 删 `get_webview_window("main")` 狩猎与 `listen_any` 窃听。
-  - 验收：无桌面窗口（headless/仅移动端连接）可运行 agent；事件路由由调用方身份决定。
-
-- [ ] **P5-9 ExecutionTarget 统一执行环境**（V16/V22）
-  - 做法：`ExecutionTarget` 同时决定主进程启动（本地 spawn / ssh stdio）、cwd、terminal executor、声明的 ACP capabilities；远端 run 的 `terminal/create` 走 SSH exec 或明确返回 unsupported；删 `is_ssh()`/`is_local_sim()` 4 处调用点分支（改多态）。
-  - 验收：远端 agent 的终端命令在远端执行（或明确报不支持）；flag 分支归零。
-
-- [ ] **P5-10 agent 杂项**
-  - [ ] PATH 探测缓存（TTL 或 registry 快照）+ `spawn_blocking`，消 `agent_run_once` 全量重扫（V20）
-  - [ ] 取消改 typed error（`AppError::cancelled`，P1-6 构造器）替代 `Ok + stop_reason:"cancelled"`（V21）
-  - [ ] acp/ 层纯化：`updates.rs`/`interaction.rs` 的 UI emit 经由注入的事件口而非直接持 `AgentEventEmitter`（为后续抽独立 acp crate 铺路）（V40）
-
----
-
-## P6 · core/host 收尾（纯机械，最后做）
-
-- [ ] **P6-1 别名与 glob 清理**（V36）
-  - [ ] 删 core `features/mod.rs` 12 个扁平别名；core 内部 ~150 处自用迁移到语义路径（`crate::features::catalog` → `crate::features::paper::catalog` 等，rg 可机械替换）
-  - [ ] src-tauri 14 处 `pub use …::*` glob 改具名模块重导出（`pub use agentero_core::features::vault as svc;`）或显式清单
-  - 验收：任一符号 grep 只有一个规范路径；core 的 pub 面不再无差别暴露给 host。
-
-- [ ] **P6-2 物理搬运归位**
-  - [ ] `app/open_request/` → `features/open_request/`（app/ 只留 desktop 命令壳）
-  - [ ] `features::cli_install`（`#[path]` 挂载自 `agent/install/`）独立目录或并入 `system/`；消磁盘位置与模块身份不一致
-  - 验收：全仓库 `#[path]` 重挂载数 2 → 0。
-
-- [ ] **P6-3 tauri-free 模块下沉 core**（核实：**无需 ConfigProvider**，settings 读取都在 commands 壳）
-  - [ ] `features/markdown/search`（373 行，已 tauri-free 且零 settings）
-  - [ ] `features/paper/import/recognize`（1416 行，配置已以函数参数存在，仅需去 desktop cfg gate）
-  - [ ] `features/paper/discovery/recommend` mod（807 行）
-  - [ ] `features/paper/discovery/coolpapers` mod+page（860 行；`proxy.rs` 绑 tauri URI scheme，留守）
-  - 验收：~3.4k LOC 回归 core；CLI 可直接消费（recommend/recognize 接入 headless 命令为可选后续）。
-
-- [ ] **P6-4 下载器合并 `core::asset::ensure_asset()`**（V37）
-  - 做法：合并两者互补特性（sha256 校验+解包+chmod+多源回退+节流进度+取消），保持 `.partial`+rename 原子性；`core/fs/store.rs::atomic_write` 不适用流式大文件，新写流式变体。
-  - 验收：agent 安装与模型下载共用一个模块；两个旧文件删除。
-
----
-
-## 明确不做（防止 scope creep）
-
-1. **不为拆而拆 jobs/mod.rs**——去业务化 + 迁 platform 后体积自然缓解。
-2. **不统一三个 wire 协议**（ACP 外部版本化 / bridge E2EE 二进制帧 / connector REST）——强行统一零收益，只抽 `rpc::PendingTable` 级别的关联机制（已并入 P4-3/4 范围外，需要时单独立项）。
-3. **不引入 ConfigProvider trait**——核实证明四个"滞留"模块本就 tauri-free，直接搬（P6-3）。
-4. **不动**：`core::http` 客户端工厂、`HostHooks` 倒置缝、settings 订阅反应模式、MCP tunnel 监督者、ACP terminal 管理、`core/time.rs`、`run_blocking` 纪律、`set_layout_backend_source` 注入模式（这些是全仓库最佳实践，是其他统一工作的模板）。
-5. **不做 crate 三拆**（infra/domain 分离）——待 P2-P6 业务边界收敛后按 `docs/development/crate-split-roadmap.md` Phase 3 另行评估。
-
-## 进度总览
-
-| 阶段 | 主题 | 任务数 | 状态 |
-|---|---|---|---|
-| P0 | 正确性修复 | 8 | 未开始 |
-| P1 | IPC 契约统一 | 6 | 未开始 |
-| P2 | trait Vault 统一 | 6 | 未开始 |
-| P3 | Jobs 去业务化 | 5 | 未开始 |
-| P4 | 横切基础设施 | 7 | 未开始 |
-| P5 | Paper 域 + Agent 域 | 10 | 未开始 |
-| P6 | core/host 收尾 | 4 | 未开始 |
-
-推进节奏建议：P0 全部 → P1-1/P1-2 → P2-1/P2-2（trash 最安全）→ 其余按需并行。P0 与任何阶段可穿插。

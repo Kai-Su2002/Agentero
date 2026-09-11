@@ -309,7 +309,7 @@ export function DoctorWikilinkSection({
 
 			{wikiReviewMode && agentPrompt ? (
 				<div className="mb-5 space-y-2 px-0.5">
-					<p className="text-[13px] text-muted-foreground leading-relaxed">
+					<p className="text-sm text-muted-foreground leading-relaxed">
 						{t("doctor.wikilink.agentHint")}
 					</p>
 					<div className="overflow-hidden rounded-xl border bg-card">
@@ -338,7 +338,7 @@ export function DoctorWikilinkSection({
 								</Button>
 							</div>
 						</div>
-						<pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+						<pre className="max-h-32 overflow-auto whitespace-pre-wrap break-words px-3 py-2 font-mono text-caption leading-relaxed text-muted-foreground">
 							{agentPrompt}
 						</pre>
 					</div>

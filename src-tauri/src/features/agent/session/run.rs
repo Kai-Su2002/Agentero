@@ -502,25 +502,23 @@ impl RunOnceContext {
             )));
         }
 
+        let session_id = session.acp_session_id.clone();
         let prompt_response = tokio::select! {
             response = connection
-                .send_request(PromptRequest::new(
-                    session.acp_session_id.clone(),
-                    content_blocks,
-                ))
-                .block_task() => response.map_err(|e| acp_err(format!("prompt: {e}")))?,
+                .send_request(PromptRequest::new(session_id.clone(), content_blocks.clone()))
+                .block_task() => response.map_err(|e| acp_err(format!("prompt: {e}"))),
             () = wait_for_cancellation(&mut cancellation) => {
                 let _ = connection
-                    .send_notification(CancelNotification::new(session.acp_session_id.clone()));
-                return Ok(self.cancel_completed(Some(session.acp_session_id.to_string())));
+                    .send_notification(CancelNotification::new(session_id.clone()));
+                return Ok(self.cancel_completed(Some(session_id.to_string())));
             }
-        };
+        }?;
 
         if let Ok(mut s) = self.stop_reason.lock() {
             *s = Some(format!("{:?}", prompt_response.stop_reason));
         }
 
-        Ok(self.finalize(&session.acp_session_id))
+        Ok(self.finalize(&session_id))
     }
 
     /// Connect phase: `initialize`, then open a session via `session/resume`,

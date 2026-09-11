@@ -72,7 +72,18 @@ export function usePdfNoteEditor({
 		setRailEdit((current) => (current?.id === state.id ? current : state));
 	}, []);
 
-	const closeRailEdit = useCallback(() => setRailEdit(null), []);
+	const closeRailEdit = useCallback(() => {
+		setRailEdit((current) => {
+			if (current?.isNew) {
+				if (current.kind === "visual") {
+					deleteVisualTraceById(current.id);
+				} else {
+					deleteHighlightAnnotation(current.pageIndex, current.id);
+				}
+			}
+			return null;
+		});
+	}, [deleteHighlightAnnotation, deleteVisualTraceById]);
 
 	const openEditorForAnnotation = useCallback(
 		(id: string) => {
@@ -102,14 +113,28 @@ export function usePdfNoteEditor({
 
 	const saveRailEdit = useCallback(
 		(comment: PageAnnotationComment, text: string) => {
-			if (comment.kind === "visual") {
-				updateVisualComment(comment.id, text);
+			const trimmed = text.trim();
+			if (comment.isNew && !trimmed) {
+				if (comment.kind === "visual") {
+					deleteVisualTraceById(comment.id);
+				} else {
+					deleteHighlightAnnotation(comment.pageIndex, comment.id);
+				}
 			} else {
-				updateHighlightComment(comment.pageIndex, comment.id, text);
+				if (comment.kind === "visual") {
+					updateVisualComment(comment.id, trimmed);
+				} else {
+					updateHighlightComment(comment.pageIndex, comment.id, trimmed);
+				}
 			}
 			setRailEdit((current) => (current?.id === comment.id ? null : current));
 		},
-		[updateHighlightComment, updateVisualComment],
+		[
+			updateHighlightComment,
+			updateVisualComment,
+			deleteHighlightAnnotation,
+			deleteVisualTraceById,
+		],
 	);
 
 	const deleteRailComment = useCallback(
@@ -146,5 +171,6 @@ export function railEditFromComment(
 		color: comment.color,
 		anchorY: comment.anchorY,
 		rects: comment.rects,
+		isNew: comment.isNew,
 	};
 }

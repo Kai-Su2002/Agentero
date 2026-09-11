@@ -12,6 +12,7 @@ import {
 import { useTranslation } from "react-i18next";
 import { broadcastAgentAttachContext } from "@/lib/agent/context-attach";
 import { copyTextToClipboard } from "@/lib/core/clipboard";
+import { displayPath } from "@/lib/core/path";
 import { isTauri } from "@/lib/core/tauri";
 import { isPaperDirectory } from "@/lib/paper";
 import { LIBRARY_VIRTUAL_PATH, TRASH_VIRTUAL_PATH } from "@/lib/paper/api";
@@ -171,7 +172,7 @@ export function useTreeContextMenu({
 	const copyPath = useCallback(
 		(path: string) => {
 			setMenu(null);
-			void copyTextToClipboard(path, {
+			void copyTextToClipboard(displayPath(path), {
 				successMessage: t("fileTree.copiedPath"),
 				errorMessage: t("fileTree.copyPathFailed"),
 				successNotify: { duration: 2000 },

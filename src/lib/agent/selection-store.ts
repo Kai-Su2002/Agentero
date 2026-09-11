@@ -10,6 +10,7 @@
  */
 
 import { createStore } from "zustand/vanilla";
+import { stripSystemReminder } from "@/lib/agent/prompt-display";
 import { toVaultRelative } from "@/lib/core/path";
 import type { PdfVisualNormalizedRect } from "@/lib/pdf-visual/types";
 import { vaultStore } from "@/lib/vault/store";
@@ -59,7 +60,9 @@ export function publishSelection(input: {
 	rects?: PdfVisualNormalizedRect[];
 	paperAbsPath?: string;
 }): void {
-	const text = input.text.trim().slice(0, MAX_SELECTION_CHARS);
+	const text = stripSystemReminder(input.text.trim())
+		.trim()
+		.slice(0, MAX_SELECTION_CHARS);
 	if (!text) {
 		clearActiveSelection(input.origin);
 		return;

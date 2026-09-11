@@ -30,6 +30,8 @@ import { cn } from "@/lib/core/utils";
 import { normalizeMarkdownMath } from "@/lib/markdown/math-normalize";
 
 import { ExternalLink } from "./external-link";
+import { PlainCodeBlock } from "./plain-code-block";
+import { PlainTable } from "./plain-table";
 
 export type MessageProps = HTMLAttributes<HTMLDivElement> & {
 	from: UIMessage["role"];
@@ -350,10 +352,14 @@ export const MessageResponse = memo(
 				className={cn(
 					// Keep the renderer's height content-driven. `size-full` sets
 					// height: 100%, which can clip later blocks in auto-sized embeds.
-					"w-full min-w-0 select-text [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+					"w-full min-w-0 select-text text-base leading-relaxed [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
 					className,
 				)}
-				components={{ a: ExternalLink }}
+				components={{
+					a: ExternalLink,
+					code: PlainCodeBlock,
+					table: PlainTable,
+				}}
 				linkSafety={{ enabled: false }}
 				plugins={streamdownPlugins}
 				{...props}

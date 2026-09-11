@@ -58,6 +58,11 @@ export {
 	stageRemoteArxivPaper,
 } from "@/lib/paper/remote-paper";
 export {
+	hasTitleMath,
+	parseTitleMath,
+	type TitleMathSegment,
+} from "@/lib/paper/title-math";
+export {
 	formatAuthorsShort,
 	formatPaperTreeLabel,
 	PAPER_TREE_LABEL_MODES,

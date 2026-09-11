@@ -5,8 +5,10 @@ import {
 	useRef,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { PDF_FLOAT_CARD } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
 import type { ScreenPoint } from "@/components/viewer/pdf/types";
 import type { PromptImage } from "@/lib/agent/api";
+import { cn } from "@/lib/core/utils";
 import type { CrossrefKind } from "@/lib/pdf/citation-dest-keys";
 
 const CARD_WIDTH = 320;
@@ -73,16 +75,21 @@ export function PdfCrossrefPreview({
 			ref={rootRef}
 			role="dialog"
 			aria-label={t("crossref.previewLabel")}
-			className="fixed z-50 w-[320px] rounded-xl border border-border/80 bg-background/98 p-2 shadow-xl ring-1 ring-black/5 backdrop-blur-sm dark:ring-white/10"
+			data-pdf-chrome
+			className={cn(
+				"fixed z-50 w-[320px] p-2",
+				PDF_FLOAT_CARD,
+				"motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:duration-150 motion-reduce:animate-none",
+			)}
 			style={{ left, top }}
 			onPointerEnter={onPointerEnter}
 			onPointerLeave={handlePointerLeave}
 		>
 			<div className="mb-1.5 flex items-center justify-between gap-2 px-1">
-				<span className="font-medium text-[11px] text-foreground">
+				<span className="font-medium text-caption text-foreground">
 					{kindLabel}
 				</span>
-				<span className="text-[10px] text-muted-foreground tabular-nums">
+				<span className="text-caption text-muted-foreground tabular-nums">
 					{t("figures.page", { page })}
 				</span>
 			</div>

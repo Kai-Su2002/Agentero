@@ -21,7 +21,7 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
   环境变量（`SHELL -lic 'env -0'`）以及 `AgentDescriptor.env`。这样 macOS/Linux 上从
   GUI 启动 Agentero 也能读到 `.zshrc` / `.bashrc` 里 `export` 的 `OPENAI_API_KEY`、
   `OPENAI_BASE_URL` 等变量；`AgentDescriptor.env` 优先级最高，可覆盖 shell 值（#478）。
-- 统一接口：OpenCode、OpenClaw、Hermes、Antigravity、Claude ACP、Codex ACP、Qoder、Grok、Pi、Dsh（DeepSeek Harness）、Kimi Code、自定义 `command`/`args`/`env`。
+- 统一接口：OpenCode、OpenClaw、Hermes、Claude ACP、Codex ACP、Qoder、Grok、Pi、Dsh（DeepSeek Harness）、Kimi Code、自定义 `command`/`args`/`env`。
 - Dsh：ACP 服务端是 `@deepseek-ai/dsh-acp-demo`（npm 包），与依赖插件一起固定
   `0.1.1-rc.2`。安装/启动三处入口，检测按序回退：
   1. App 管理目录 `~/.agentero/dsh-acp/node_modules/.bin/dsh-acp-demo`（设置页「安装」按钮，
@@ -53,9 +53,6 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
   `## Context` / `## Skills` / `## Extensions` 清单）当作普通 agent message 推送。Host
   在本轮首个 message chunk 上识别该横幅并丢弃，不写入内容缓冲、不发 `agent:stream`，
   避免它出现在回答之前。
-- Antigravity（`agy-acp`）：spawn 时注入 `NO_BROWSER=true`（用户显式配置则不覆盖），避免未登录时
-  `new_session` 反复拉起浏览器 OAuth；登录须在终端完成（BYOA）。
-- Gemini CLI 与旧版 `agy --acp` 调用已被 Google Antigravity CLI 的社区 ACP 适配器 `agy-acp` 取代；Agentero 在启动时会将旧版 Gemini / `agy --acp` 注册项迁移为 `agy-acp`。
 - 设置页会将 ACP 探测中的认证错误（如 `invalid_grant` / `failed to authenticate` /
   `authentication required` / `not logged in`）
   显示为「未登录」，其他握手或进程错误仍显示为「ACP 失败」。
@@ -142,6 +139,7 @@ cursor 不再推进（`next == prev`）时视为走完，避免死循环。
 | `agent_respond_elicitation` | 回答 form elicitation（Codex `request_user_input`） |
 | `agent_respond_ask_user` | 回答 Grok `_x.ai/ask_user_question` |
 | `agent_run_tool_lifecycle` | 静默安装/升级/卸载 catalog CLI（及 Claude/Codex ACP 适配器）；本机 lifecycle 串行执行，设置页在对应 Agent 行内展示安装 / 扫描 / 探测进度（#250），Windows 使用唯一临时 `.bat` 并按 UTF-8/GBK 解码错误输出；`uninstall` 做 best-effort npm 卸载 + 受管目录删除（不改 shell rc），成功后联动删除 catalog 注册项；见 [api.md](api.md) 与 [#225](https://github.com/poco-ai/Agentero/issues/225) |
+| `agent_check_catalog_updates` | PATH scan + 版本对比：本地 `detect --version` vs npm latest（或 dsh pin）；写入 `installedVersion` / `latestVersion` / `updateAvailable`。设置页「升级」仅在 `updateAvailable === true` 时显示；hermes 等无稳定 npm 源或探测失败时不显示。不塞进同步 `agent_scan_catalog`（避免 Doctor / 切换器打网络） |
 | `agent_tool_lifecycle_supported` / `agent_tool_install_commands` / `agent_tool_uninstall_info` | 是否支持静默安装；平台手动安装文案；卸载清理项清单（确认对话框展示） |
 
 ACP slash command 不是独立的 `session/compact` RPC。Host 转发 Agent 广播的
@@ -218,7 +216,7 @@ Agentero 是 ACP **Client**：模型 HTTP **不**经 Host 转发，因此只能�
 - 远程 SSH 转发：`AGENTERO_USER_AGENT` / `CODEX_CONFIG` / `MODEL_PROVIDER` / `ANTHROPIC_CUSTOM_HEADERS`。
 - 命令：`agent_set_user_agent`；`agent_scan_catalog` 回传当前值。
 
-说明：是否生效取决于底层 Agent 是否认上述 env/config；OpenCode/Antigravity/Grok 目前仅带 `AGENTERO_USER_AGENT`（多数忽略）。
+说明：是否生效取决于底层 Agent 是否认上述 env/config；OpenCode/Grok 目前仅带 `AGENTERO_USER_AGENT`（多数忽略）。
 
 **new-api 侧（源码）在做什么：**
 

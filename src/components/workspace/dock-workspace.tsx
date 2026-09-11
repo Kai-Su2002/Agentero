@@ -37,6 +37,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { MathText } from "@/components/ui/math-text";
 import {
 	Tooltip,
 	TooltipContent,
@@ -188,7 +189,9 @@ function WorkspaceTab({
 				onPointerLeave?.(event);
 			}}
 		>
-			<span className="dv-default-tab-content">{title}</span>
+			<span className="dv-default-tab-content">
+				<MathText text={title ?? ""} />
+			</span>
 			{canToggleHtml ? (
 				<Tooltip>
 					<TooltipTrigger asChild>

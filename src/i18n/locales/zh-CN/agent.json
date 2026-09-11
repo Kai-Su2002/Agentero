@@ -60,7 +60,6 @@
 	"composer": {
 		"placeholder": "今天想做些什么？",
 		"interruptHint": "按 Esc 中止当前输出",
-		"queueHint": "可继续输入后续问题，当前回复结束后会自动发送（Esc 中止）",
 		"queueLabel": "等待发送",
 		"queueRemove": "从队列移除",
 		"contextInstruction": "请在回答相关问题前读取以下知识库文件：",
@@ -114,6 +113,14 @@
 		"waiting": "正在等待 Agent……"
 	},
 	"thinking": "思考中……",
+	"working": "执行中……",
+	"solving": "求解中……",
+	"streaming": {
+		"thinking": "思考中",
+		"reasoning": "思考过程",
+		"plan": "规划中",
+		"elapsed": "{{count}}秒"
+	},
 	"copy": "复制",
 	"copied": "已复制",
 	"edit": {
@@ -168,9 +175,9 @@
 	},
 	"messages": {
 		"cancelled": "已停止当前运行。",
-		"switchedTo": "已切换到 {{name}}",
 		"desktopOnly": "请打开桌面应用以运行 Agent。",
 		"noAgent": "没有可用的 Agent。请在 设置 → Agent 中配置。",
-		"sessionUnavailable": "无法恢复该 Agent 会话。若有本地回答快照会一并展示。"
+		"sessionUnavailable": "无法恢复该 Agent 会话。若有本地回答快照会一并展示。",
+		"sessionEmpty": "该会话没有可回放的消息。"
 	}
 }

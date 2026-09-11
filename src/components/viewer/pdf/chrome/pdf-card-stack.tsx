@@ -24,12 +24,10 @@ type PdfCardStackProps = {
 		state: SelectionMenuState | null;
 		onHighlight: (color: HighlightColor) => void;
 		onCopy: () => void;
-		onNote: () => void;
 		onAsk: () => void;
 		onAddToChat: () => void;
 		onTranslate: () => void;
-		onClose: () => void;
-		/** Hide highlight / note / translate; keep Copy / Ask / Add-to-chat. */
+		/** Hide highlight / translate; keep Copy / Ask. */
 		readOnly?: boolean;
 	};
 	citationPreview: {
@@ -99,13 +97,12 @@ export function PdfCardStack({
 			{selectionMenu.state ? (
 				<SelectionMenu
 					screen={selectionMenu.state.screen}
+					bottomRight={selectionMenu.state.bottomRight}
 					onHighlight={selectionMenu.onHighlight}
 					onCopy={selectionMenu.onCopy}
-					onNote={selectionMenu.onNote}
 					onAsk={selectionMenu.onAsk}
 					onAddToChat={selectionMenu.onAddToChat}
 					onTranslate={selectionMenu.onTranslate}
-					onClose={selectionMenu.onClose}
 					readOnly={selectionMenu.readOnly}
 				/>
 			) : null}
@@ -153,7 +150,7 @@ export function PdfCardStack({
 			{translate.record && cardScreen ? (
 				<TranslateCard
 					screen={cardScreen}
-					preferRight={cardScreen.preferRight ?? true}
+					preferRight={cardScreen.preferRight ?? false}
 					result={translate.record.result ?? ""}
 					streaming={translate.streaming}
 					error={translate.error ?? translate.record.error ?? null}

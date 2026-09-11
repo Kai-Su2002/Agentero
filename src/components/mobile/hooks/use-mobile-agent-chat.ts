@@ -105,7 +105,7 @@ export function useMobileAgentChat({
 					if (!active || event.sessionId !== sessionRef.current) return;
 					setSending(false);
 					setLines((current) =>
-						appendAssistantLine(current, event.error ?? t("agent.failed")),
+						appendAssistantLine(current, event.error || t("agent.failed")),
 					);
 				}),
 			),

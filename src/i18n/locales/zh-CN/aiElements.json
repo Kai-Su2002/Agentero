@@ -67,6 +67,20 @@
 	"chainOfThought": {
 		"title": "思维链"
 	},
+	"table": {
+		"copy": "复制表格",
+		"copyAsCsv": "复制为 CSV",
+		"copyAsMarkdown": "复制为 Markdown",
+		"copyAsTsv": "复制为 TSV",
+		"download": "下载表格",
+		"downloadAsCsv": "下载为 CSV",
+		"downloadAsMarkdown": "下载为 Markdown",
+		"viewFullscreen": "全屏查看"
+	},
+	"code": {
+		"copy": "复制代码",
+		"download": "下载代码"
+	},
 	"promptInput": {
 		"placeholder": "想了解些什么？",
 		"uploadFiles": "上传文件",

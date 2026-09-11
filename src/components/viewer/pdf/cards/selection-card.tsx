@@ -12,6 +12,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { PDF_FLOAT_CARD } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
 import type { ScreenPoint } from "@/components/viewer/pdf/types";
 import { clamp } from "@/lib/core/math";
 import { cn } from "@/lib/core/utils";
@@ -270,7 +271,7 @@ export function SelectionCard({
 				"fixed z-50 flex flex-col",
 				// Content-sized cards (no body scroll) should not clip children.
 				bodyScroll || lockHeight ? "overflow-hidden" : "overflow-visible",
-				"rounded-xl border border-border/80 bg-background text-foreground shadow-2xl ring-1 ring-black/5 dark:ring-white/10",
+				PDF_FLOAT_CARD,
 				className,
 			)}
 			style={{

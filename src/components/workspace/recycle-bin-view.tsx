@@ -163,7 +163,7 @@ export function RecycleBinView({
 											<div className="truncate text-sm" title={item.rel}>
 												{item.name}
 											</div>
-											<div className="truncate text-[11px] text-muted-foreground">
+											<div className="truncate text-caption text-muted-foreground">
 												{item.rel} · {formatWhen(item.deletedAt)}
 											</div>
 										</div>

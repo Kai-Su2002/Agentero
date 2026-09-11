@@ -5,7 +5,9 @@
  * Plain browser / tests: `console.*` fallback.
  */
 
+import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
+import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
 
 type Level = "trace" | "debug" | "info" | "warn" | "error";
@@ -75,6 +77,14 @@ export const logger = {
 		void write("error", `${msg}${serializeFields(fields)}`);
 	},
 };
+
+/** Delete / truncate Host log files under the app log directory. */
+export async function clearLogs(): Promise<number> {
+	if (!isTauri()) return 0;
+	return callApi(() => commands.logsClear(), {
+		fallback: "logs_clear failed",
+	});
+}
 
 /** Dev: mirror Host logs into the webview console. No-op outside Tauri. */
 export async function initLogger(): Promise<void> {

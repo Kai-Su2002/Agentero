@@ -10,6 +10,7 @@ import {
 import {
 	SettingsGroup,
 	SettingsRow,
+	SettingsSectionLabel,
 } from "@/components/settings/settings-layout";
 import {
 	Select,
@@ -73,9 +74,9 @@ export function AgentDefaultBlock({
 
 	return (
 		<>
-			<p className="mb-1.5 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+			<SettingsSectionLabel>
 				{t("agent.defaultAgent.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow
 					label={t("agent.defaultAgent.label")}

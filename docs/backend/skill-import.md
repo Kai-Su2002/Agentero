@@ -37,6 +37,8 @@
 **首版只走 codeload tarball，不依赖本机 git / node**：
 
 1. `GET https://codeload.github.com/{owner}/{repo}/tar.gz/{ref}`（ref 缺省时先经 `api.github.com/repos/{owner}/{repo}` 拿默认分支）；复用 `http_get_bytes_with_progress` 报进度。
+   - 已走 Host 网络代理（`networkProxy*`）。
+   - Settings → 通用 → **GitHub 镜像**（`githubMirrorEnabled` / `githubMirrorBaseUrl`）：从内置预设列表中选择一个 URL 前缀镜像；直连失败（超时/连接错误/5xx/429）时回退 `{base}/https://api|codeload.github.com/...`（如 `https://gh.llkk.cc`）。**4xx（如 404）不回退**。与网络代理正交。
 2. 解压到临时目录（复用 `extract_tar_safe` 系安全逻辑），递归扫描 `**/SKILL.md`：
    - 有子目录约束（tree URL / `--skill`）→ 只取匹配项；
    - repo 根或指定路径发现 Skill → 返回候选列表，前端弹选择（见 §4）。

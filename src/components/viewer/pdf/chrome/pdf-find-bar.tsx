@@ -8,6 +8,8 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { PDF_CHROME_CHIP } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
+import { cn } from "@/lib/core/utils";
 
 type PdfFindBarProps = {
 	open: boolean;
@@ -41,12 +43,19 @@ export function PdfFindBar({
 
 	return (
 		<TooltipProvider delayDuration={200}>
-			<div className="absolute top-12 right-3 z-30 flex items-center gap-1 rounded-lg border border-border/80 bg-background/95 p-1 shadow-md backdrop-blur-sm">
+			<div
+				data-pdf-chrome
+				className={cn(
+					"absolute top-12 right-3 z-30 flex origin-top-right select-none items-center gap-1 rounded-lg p-1 shadow-md",
+					PDF_CHROME_CHIP,
+					"motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:duration-200 motion-reduce:animate-none",
+				)}
+			>
 				<Search className="ml-1 size-3.5 shrink-0 text-muted-foreground" />
 				<input
 					ref={inputRef}
 					type="text"
-					className="w-40 bg-transparent text-xs outline-none"
+					className="w-40 select-text bg-transparent text-sm outline-none"
 					placeholder={t("pdf.findPlaceholder")}
 					value={query}
 					onChange={(e) => onQueryChange(e.target.value)}

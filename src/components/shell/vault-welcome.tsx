@@ -7,6 +7,7 @@ import {
 	RemoteVaultDialog,
 } from "@/components/dialogs/remote-vault-dialog";
 import { Button } from "@/components/ui/button";
+import { displayPath } from "@/lib/core/path";
 import { cn } from "@/lib/core/utils";
 import { vaultDisplayName } from "@/lib/vault";
 import {
@@ -48,7 +49,7 @@ function RecentRow({
 					{badge}
 				</span>
 				<span
-					className="w-full truncate text-[11px] text-muted-foreground"
+					className="w-full truncate text-caption text-muted-foreground"
 					title={subtitle}
 				>
 					{subtitle}
@@ -185,7 +186,7 @@ export function VaultWelcome({
 											<Server className="size-3 shrink-0 text-muted-foreground" />
 										}
 										badge={
-											<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+											<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-caption text-muted-foreground">
 												{t("app:vault.remoteBadge")}
 											</span>
 										}
@@ -214,7 +215,7 @@ export function VaultWelcome({
 										key={path}
 										disabled={busy}
 										title={name}
-										subtitle={path}
+										subtitle={displayPath(path)}
 										onOpen={() => onOpenRecent(path)}
 										onRemove={() => onRemoveRecent(path)}
 										removeAria={t("vault.removeRecent", { name })}

@@ -210,7 +210,7 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 								<>
 									{/* Top-right: "default" tag, status dot, or install icon. */}
 									{isDefault ? (
-										<span className="absolute top-2 right-2 rounded bg-primary px-1 py-0.5 text-[9px] leading-none font-medium text-primary-foreground">
+										<span className="absolute top-2 right-2 rounded bg-primary px-1 py-0.5 text-caption leading-none font-medium text-primary-foreground">
 											{t("agent.default")}
 										</span>
 									) : available ? (
@@ -261,7 +261,7 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 											/>
 										)}
 									</div>
-									<p className="w-full truncate text-[13px] font-medium">
+									<p className="w-full truncate text-sm font-medium">
 										{entry.name}
 									</p>
 									{rowLifecycle ? (
@@ -271,10 +271,10 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 											className="flex w-full flex-col gap-1"
 										>
 											<div className="grid grid-cols-[minmax(0,1fr)_2rem_1rem] items-center gap-1.5">
-												<span className="truncate text-[10px] text-muted-foreground">
+												<span className="truncate text-caption text-muted-foreground">
 													{rowLifecycle.detail}
 												</span>
-												<span className="text-right font-mono text-[9px] text-muted-foreground tabular-nums">
+												<span className="text-right font-mono text-caption text-muted-foreground tabular-nums">
 													{rowLifecycle.progress == null
 														? ""
 														: `${Math.round(rowLifecycle.progress)}%`}

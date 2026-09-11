@@ -184,16 +184,6 @@ pub fn builtin_templates() -> Vec<AgentTemplateInfo> {
             install_command: None,
         },
         AgentTemplateInfo {
-            id: AgentTemplate::Antigravity.as_str().to_string(),
-            name: "Antigravity".to_string(),
-            description: "Google Antigravity CLI via the community `agy-acp` ACP adapter.".to_string(),
-            command: "agy-acp".to_string(),
-            args: vec![],
-            detect_command: Some("agy-acp".to_string()),
-            install_hint: "Install the agy-acp ACP adapter (npm i -g agy-acp).".to_string(),
-            install_command: Some("npm i -g agy-acp@latest".to_string()),
-        },
-        AgentTemplateInfo {
             id: AgentTemplate::QoderCli.as_str().to_string(),
             name: "Qoder CLI".to_string(),
             description: "Qoder CLI with native ACP (`qodercli --acp`).".to_string(),
@@ -295,9 +285,6 @@ pub fn template_from_id(id: &str) -> AgentTemplate {
     match id {
         "opencode" => AgentTemplate::Opencode,
         "openclaw" => AgentTemplate::OpenClaw,
-        "antigravity" => AgentTemplate::Antigravity,
-        // Backward compatibility: old Gemini registrations map to Antigravity.
-        "gemini" => AgentTemplate::Antigravity,
         "hermes" => AgentTemplate::Hermes,
         "claude-acp" => AgentTemplate::ClaudeAcp,
         "codex-acp" => AgentTemplate::CodexAcp,

@@ -136,7 +136,7 @@ function AgentCatalogEntryRow({
 						<AgentLogo template={entry.templateId} />
 						<span
 							className={cn(
-								"min-w-0 truncate font-medium text-[13px]",
+								"min-w-0 truncate font-medium text-sm",
 								// Dim label only — never the Install button (looks disabled).
 								notInstalled &&
 									!hasLifecycleAction &&
@@ -288,11 +288,11 @@ function AgentCatalogEntryRow({
 			</div>
 			{rowLifecycle ? (
 				<div className="grid grid-cols-[8rem_minmax(0,1fr)_2.5rem_1.5rem] items-center gap-3 pr-2">
-					<span className="truncate text-[11px] text-muted-foreground">
+					<span className="truncate text-caption text-muted-foreground">
 						{rowLifecycle.detail}
 					</span>
 					<Progress value={rowLifecycle.progress ?? 0} className="h-1" />
-					<span className="text-right font-mono text-[10px] text-muted-foreground tabular-nums">
+					<span className="text-right font-mono text-caption text-muted-foreground tabular-nums">
 						{rowLifecycle.progress == null
 							? ""
 							: `${Math.round(rowLifecycle.progress)}%`}
@@ -365,7 +365,7 @@ function AgentCustomAgentRow({
 				<div className="flex min-w-0 flex-1 items-center gap-4">
 					<div className="flex w-32 shrink-0 items-center gap-2">
 						<AgentLogo template={agent.template} />
-						<span className="min-w-0 truncate font-medium text-[13px]">
+						<span className="min-w-0 truncate font-medium text-sm">
 							{agent.name}
 						</span>
 					</div>
@@ -441,7 +441,7 @@ function AgentCustomAgentRow({
 			{editing ? (
 				<div className="space-y-2.5 px-3.5 pb-3">
 					<div className="space-y-1">
-						<Label className="font-normal text-[13px]">
+						<Label className="font-normal text-sm">
 							{t("agent.form.name")}
 						</Label>
 						<Input
@@ -451,7 +451,7 @@ function AgentCustomAgentRow({
 						/>
 					</div>
 					<div className="space-y-1">
-						<Label className="font-normal text-[13px]">
+						<Label className="font-normal text-sm">
 							{t("agent.form.command")}
 						</Label>
 						<Input
@@ -462,7 +462,7 @@ function AgentCustomAgentRow({
 						/>
 					</div>
 					<div className="space-y-1">
-						<Label className="font-normal text-[13px]">
+						<Label className="font-normal text-sm">
 							{t("agent.form.args")}
 						</Label>
 						<Input
@@ -519,7 +519,7 @@ export function RemoteAgentCatalogRow({
 					<AgentLogo template={entry.templateId} />
 					<span
 						className={cn(
-							"min-w-0 truncate font-medium text-[13px]",
+							"min-w-0 truncate font-medium text-sm",
 							notInstalled && "text-muted-foreground",
 							notInstalled && !installAcp && "opacity-50",
 						)}

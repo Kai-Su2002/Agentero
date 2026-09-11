@@ -1,6 +1,8 @@
 # 接入 Agent
 
-Agentero 使用 **BYOA**（Bring Your Own Agent）：Agent 由你安装和登录，Agentero 负责把当前 Vault 的上下文交给它，并展示结果。应用**不**捆绑模型，也**不**要求你在 Agentero 内填写模型 API Key。
+Agentero 使用 **BYOA**（Bring Your Own Agent）：Agent 由你安装和登录，Agentero 负责把当前 Vault 的上下文交给它，并展示结果。Agentero **不**捆绑 Agent，也**不**要求你在应用内填写 Agent 的模型 API Key——Key 由该 Agent CLI 自己持有。
+
+> 与 ACP Agent 无关的另一条通道：官方安装包在构建时打进了内置模型凭证，覆盖翻译、arXiv 每日推荐 embedding 与 PDF 正文 OCR，在设置里选中即可用、无需填 Key。见 [用户指南 §Agent](index.md#agent)。
 
 ## 支持方式
 
@@ -8,7 +10,7 @@ Agentero 使用 **BYOA**（Bring Your Own Agent）：Agent 由你安装和登录
 
 - Claude ACP
 - Codex（经 ACP 适配器）
-- OpenCode、Antigravity、Qoder、Grok、Kimi Code 等兼容 ACP 的 CLI
+- OpenCode、Qoder、Grok、Kimi Code 等兼容 ACP 的 CLI
 - [GenericAgent ACP](genericagent-acp.md)
 - 自定义 `command` / `args` / `env`
 

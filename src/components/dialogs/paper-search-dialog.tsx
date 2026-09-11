@@ -120,7 +120,7 @@ export function PaperSearchDialog({
 												</span>
 											) : null}
 											<span className="flex min-w-0 flex-wrap items-center gap-2 text-muted-foreground text-xs">
-												<span className="max-w-full break-all rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+												<span className="max-w-full break-all rounded bg-muted px-1.5 py-0.5 font-mono text-caption">
 													{candidate.arxivId
 														? `arXiv:${candidate.arxivId}`
 														: candidate.doi}

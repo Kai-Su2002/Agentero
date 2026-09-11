@@ -19,7 +19,7 @@ import { Toolbar, ToolbarButton } from "./primitives";
 /* shrink-0 in the flex editor column — avoid sticky+z-50 so the bar cannot
  * paint over dockview tab chrome if content height overflows. */
 const fixedBarClassName =
-	"h-10 w-full shrink-0 items-center justify-between rounded-none border-b border-b-border bg-background/95 p-1 backdrop-blur-sm supports-backdrop-blur:bg-background/60";
+	"h-9 w-full shrink-0 items-center justify-between rounded-none border-b border-b-border bg-background/95 p-1 backdrop-blur-sm supports-backdrop-blur:bg-background/60";
 
 export type ToolbarAction = {
 	id: string;

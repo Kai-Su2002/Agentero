@@ -99,8 +99,11 @@ fn download_assets_runner(
 
         match result {
             Ok(_) => {
-                // Follow-ups for the freshly-downloaded PDF: PAPER.md + layout.
-                if cache.caps_for(&vault, &path).needs_paper_md() {
+                // Follow-ups only when a local PDF actually exists. TeX-only
+                // downloads (or a failed PDF attempt) must not enqueue layout /
+                // ParseBody — those jobs fail with "No local PDF".
+                let caps = cache.caps_for(&vault, &path);
+                if caps.needs_paper_md() {
                     let snap = center
                         .enqueue_parse_body(&vault, &path, JobLane::Normal, false, None)
                         .await;
@@ -109,16 +112,18 @@ fn download_assets_runner(
                         center.spawn_runner(&app, started);
                     }
                 }
-                let backend = app
-                    .state::<crate::features::system::settings::AppSettingsStore>()
-                    .layout_backend();
-                center.apply_layout_backend(&backend).await;
-                let lsnap = center
-                    .enqueue_layout_analyze(&vault, &path, JobLane::Normal, false)
-                    .await;
-                emit_job_changed(&app, lsnap.clone());
-                if let StartOutcome::Started(started) = center.try_start(&lsnap.id).await {
-                    center.spawn_runner(&app, started);
+                if caps.has_pdf() {
+                    let backend = app
+                        .state::<crate::features::system::settings::AppSettingsStore>()
+                        .layout_backend();
+                    center.apply_layout_backend(&backend).await;
+                    let lsnap = center
+                        .enqueue_layout_analyze(&vault, &path, JobLane::Normal, false)
+                        .await;
+                    emit_job_changed(&app, lsnap.clone());
+                    if let StartOutcome::Started(started) = center.try_start(&lsnap.id).await {
+                        center.spawn_runner(&app, started);
+                    }
                 }
                 RunOutcome::Succeeded
             }
@@ -232,7 +237,8 @@ fn recognize_metadata_runner(
         cache.invalidate(&vault, &path);
         cache.invalidate(&vault, &final_path);
 
-        if cache.caps_for(&vault, &final_path).needs_paper_md() {
+        let final_caps = cache.caps_for(&vault, &final_path);
+        if final_caps.needs_paper_md() {
             let snap = center
                 .enqueue_parse_body(&vault, &final_path, JobLane::Normal, false, None)
                 .await;
@@ -246,16 +252,18 @@ fn recognize_metadata_runner(
             &vault,
             &final_path,
         );
-        let backend = app
-            .state::<crate::features::system::settings::AppSettingsStore>()
-            .layout_backend();
-        center.apply_layout_backend(&backend).await;
-        let lsnap = center
-            .enqueue_layout_analyze(&vault, &final_path, JobLane::Normal, false)
-            .await;
-        emit_job_changed(&app, lsnap.clone());
-        if let StartOutcome::Started(started) = center.try_start(&lsnap.id).await {
-            center.spawn_runner(&app, started);
+        if final_caps.has_pdf() {
+            let backend = app
+                .state::<crate::features::system::settings::AppSettingsStore>()
+                .layout_backend();
+            center.apply_layout_backend(&backend).await;
+            let lsnap = center
+                .enqueue_layout_analyze(&vault, &final_path, JobLane::Normal, false)
+                .await;
+            emit_job_changed(&app, lsnap.clone());
+            if let StartOutcome::Started(started) = center.try_start(&lsnap.id).await {
+                center.spawn_runner(&app, started);
+            }
         }
 
         match outcome {

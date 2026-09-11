@@ -1,7 +1,15 @@
+import { Sparkles } from "lucide-react";
 import { PopoverContent } from "@/components/ui/popover";
 import type { AgentSkill } from "@/lib/agent";
 import type { AcpCommand } from "@/lib/agent/slash-commands";
 import { cn } from "@/lib/core/utils";
+
+function cleanSkillDisplayName(name: string): string {
+	return name
+		.trim()
+		.replace(/^[/$]+/, "")
+		.replace(/^skill\s*:\s*/i, "");
+}
 
 /** Both menus must render inside the composer `Popover` subtree — `PopoverContent` needs its context. */
 export function ComposerSkillMenu({
@@ -39,8 +47,13 @@ export function ComposerSkillMenu({
 					onMouseEnter={() => onSkillActiveIndexChange(index)}
 					onClick={() => onAttachSkill(skill)}
 				>
-					<span className="font-mono text-muted-foreground">$</span>
-					<span className="min-w-0 flex-1 truncate">{skill.name}</span>
+					<Sparkles
+						className="size-3.5 shrink-0 text-muted-foreground"
+						aria-hidden
+					/>
+					<span className="min-w-0 flex-1 truncate">
+						{cleanSkillDisplayName(skill.name)}
+					</span>
 					{skill.description ? (
 						<span className="max-w-40 truncate text-muted-foreground text-xs">
 							{skill.description}

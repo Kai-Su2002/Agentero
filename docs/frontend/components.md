@@ -11,6 +11,8 @@ Chat / Agent / 文件树 AI UI **统一使用** [AI Elements](https://elements.a
 
 常用：`conversation`、`message`、`prompt-input`、`sources`、`reasoning`、`file-tree`、queue 等。
 
+Agent / Reasoning 消息里的 Markdown：`Streamdown` + `PlainTable` / `PlainCodeBlock`（代码块左上角语言标签，悬停复制/下载；无外侧卡片，见 [agent.md](agent.md)#消息-markdown-渲染）。
+
 ## 业务组件目录
 
 | 目录 | 职责 |
@@ -25,7 +27,7 @@ Chat / Agent / 文件树 AI UI **统一使用** [AI Elements](https://elements.a
 | `components/wiki/` | 反链列表 / 引用近邻图（`graph-panel`） |
 | `components/settings/` | 设置页 |
 | `components/dialogs/` | 命令面板、权限、迁移等 |
-| `components/ui/` | shadcn 基础件 |
+| `components/ui/` | shadcn 基础件；`math-text.tsx` 用 KaTeX 渲染标题内联公式（`$\\pi$`） |
 
 ## 状态订阅
 

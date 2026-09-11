@@ -50,6 +50,7 @@ fn opt_out_marker() -> PathBuf {
     agentero_config_dir().join("finder-service.removed")
 }
 
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 fn opted_out() -> bool {
     opt_out_marker().exists()
 }
@@ -170,6 +171,7 @@ pub fn uninstall() -> Result<FinderServiceStatus, AppError> {
 /// Install or refresh the Quick Action if absent or stale (app moved /
 /// updated). Silent by design — the entry is user-level and removable from
 /// Settings → About; a foreign workflow at the same path is left alone.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 pub fn ensure_installed() {
     if !is_macos() || opted_out() {
         return;

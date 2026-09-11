@@ -11,6 +11,7 @@ import {
 	type DocViewPdfProps,
 } from "@/components/workspace/doc-view";
 import { useSettings, useVaultStore } from "@/hooks/use-app-stores";
+import { useNativeSelectAllGuard } from "@/hooks/use-native-select-all-guard";
 import { isMacOS, isTauri } from "@/lib/core/tauri";
 import { isLibraryVirtualPath, isTrashVirtualPath } from "@/lib/paper/api";
 import { refreshLibrary } from "@/lib/paper/library-store";
@@ -69,6 +70,7 @@ export function DocWindowRoot() {
 	const [tab, setTab] = useState<DocTab | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [ready, setReady] = useState(false);
+	useNativeSelectAllGuard();
 
 	const vaultPath = useVaultStore((s) => s.vaultPath);
 	const fontSize = useSettings((s) => s.editorFontSize);
@@ -194,13 +196,16 @@ export function DocWindowRoot() {
 	return (
 		<div className="flex h-screen w-screen flex-col overflow-hidden bg-background">
 			{isMac ? (
-				<header className="flex h-8 shrink-0 items-center border-b bg-muted/40 select-none">
+				<header
+					data-titlebar
+					className="flex h-8 shrink-0 items-center border-b border-border/50 bg-background/75 backdrop-blur-xl backdrop-saturate-150 supports-backdrop-blur:bg-background/65 select-none"
+				>
 					<div
 						className="w-[92px] shrink-0 self-stretch"
 						data-tauri-drag-region
 					/>
 					<div
-						className="min-w-0 flex-1 truncate px-2 text-xs font-medium text-muted-foreground"
+						className="min-w-0 flex-1 truncate px-2 text-sm font-medium text-muted-foreground"
 						data-tauri-drag-region
 					>
 						{title}

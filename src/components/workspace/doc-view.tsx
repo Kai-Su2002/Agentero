@@ -213,7 +213,7 @@ export const DocView = memo(function DocView({
 				onOpenPaper={library.onOpenPaper}
 				onRescan={library.onRescan}
 				rescanning={library.rescanning}
-				className="bg-muted/20"
+				className="bg-background"
 			/>
 		);
 	}
@@ -224,7 +224,7 @@ export const DocView = memo(function DocView({
 				active={active}
 				onChanged={onTrashChanged}
 				reloadSignal={trashReloadSignal}
-				className="bg-muted/20"
+				className="bg-background"
 			/>
 		);
 	}
@@ -234,7 +234,7 @@ export const DocView = memo(function DocView({
 		if (!active) return null;
 		return (
 			<Suspense fallback={<TabLoadingSkeleton />}>
-				<PlazaView path={tab.path} className="bg-muted/20" />
+				<PlazaView path={tab.path} className="bg-background" />
 			</Suspense>
 		);
 	}

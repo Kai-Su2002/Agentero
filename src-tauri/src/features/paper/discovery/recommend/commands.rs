@@ -99,29 +99,39 @@ pub async fn probe_embedding(
     args: ProbeEmbeddingArgs,
 ) -> ApiResult<ProbeEmbeddingResult> {
     // Read managed state before awaiting: the guard must not cross an await.
-    let stored = app.state::<AppSettingsStore>().embedding_config();
+    let settings = app.state::<AppSettingsStore>();
+    let uses_builtin = settings.embedding_is_builtin();
+    let stored = settings.embedding_config();
     let (base_url, api_key, model) = match stored {
         Some(triple) => triple,
         None => return ApiResult::err(AppError::message(ERR_NO_EMBEDDING)),
     };
-    let override_base = args
-        .base_url
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let override_key = args
-        .api_key
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty() && !s.chars().all(|c| c == '*'));
-    let override_model = args
-        .model
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let resolved_base = override_base.unwrap_or(&base_url).to_string();
-    let resolved_key = override_key.map(|s| s.to_string()).or(api_key);
-    let resolved_model = override_model.unwrap_or(&model).to_string();
+    // The built-in key is shared, not the caller's, so an override would let
+    // any webview redirect it to an arbitrary host.
+    let (resolved_base, resolved_key, resolved_model) = if uses_builtin {
+        (base_url, api_key, model)
+    } else {
+        let override_base = args
+            .base_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        let override_key = args
+            .api_key
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.chars().all(|c| c == '*'));
+        let override_model = args
+            .model
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        (
+            override_base.unwrap_or(&base_url).to_string(),
+            override_key.map(|s| s.to_string()).or(api_key),
+            override_model.unwrap_or(&model).to_string(),
+        )
+    };
     if resolved_base.trim().is_empty() || resolved_model.trim().is_empty() {
         return ApiResult::err(AppError::message(ERR_NO_EMBEDDING));
     }

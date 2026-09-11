@@ -23,7 +23,18 @@ const PAGE_TIMEOUT: Duration = Duration::from_secs(90);
 /// Give up when more than this share of pages still fails after one retry.
 const MAX_FAILED_PAGE_RATIO: f64 = 0.3;
 
-pub(crate) struct OpenAiVlmBodyEngine;
+/// One registration of the VLM OCR path. The same engine serves several backend
+/// ids, so it carries the one it was registered under: core's fallback note
+/// quotes the engine id and must name the provider the user selected.
+pub(crate) struct OpenAiVlmBodyEngine {
+    id: &'static str,
+}
+
+impl OpenAiVlmBodyEngine {
+    pub(crate) fn new(id: &'static str) -> Self {
+        Self { id }
+    }
+}
 
 /// Endpoint + model resolved from the provider credentials.
 struct VlmTarget {
@@ -81,7 +92,7 @@ fn resolve_target(ctx: &BodyParseCtx<'_>) -> Result<VlmTarget, AppError> {
 #[async_trait]
 impl BodyParseEngine for OpenAiVlmBodyEngine {
     fn id(&self) -> &'static str {
-        "openaiCompatible"
+        self.id
     }
 
     async fn parse(&self, ctx: &BodyParseCtx<'_>) -> Result<BodyParseOutcome, AppError> {
@@ -92,6 +103,7 @@ impl BodyParseEngine for OpenAiVlmBodyEngine {
         let markdown = ocr_rendered_pages(&pages, guard.path(), ctx, &target).await?;
         Ok(BodyParseOutcome {
             markdown,
+            assets: Vec::new(),
             body_source: "vlm".to_string(),
             body_quality: "medium".to_string(),
         })

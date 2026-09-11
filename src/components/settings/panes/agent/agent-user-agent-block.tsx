@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import {
 	SettingsGroup,
 	SettingsRow,
+	SettingsSectionLabel,
 } from "@/components/settings/settings-layout";
 import { Button } from "@/components/ui/button";
 import {
@@ -66,9 +67,9 @@ export function AgentUserAgentBlock({
 	return (
 		<>
 			{/* Advanced / rare: mid-station User-Agent injection (#207). */}
-			<p className="mb-1.5 mt-4 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+			<SettingsSectionLabel className="mt-4">
 				{t("agent.userAgent.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow
 					label={t("agent.userAgent.label")}

@@ -116,7 +116,7 @@ export function TreeCreateInput({
 				/>
 			</div>
 			{error ? (
-				<p className="pointer-events-none absolute top-full right-0 left-8 z-10 mt-0.5 rounded bg-background/95 px-1 text-destructive text-[0.6875rem] leading-tight shadow-sm">
+				<p className="pointer-events-none absolute top-full right-0 left-8 z-10 mt-0.5 rounded bg-background/95 px-1 text-destructive text-caption leading-tight shadow-sm">
 					{error}
 				</p>
 			) : null}
@@ -219,7 +219,7 @@ export function TreeRenameInput({
 				/>
 			</div>
 			{error ? (
-				<p className="pointer-events-none absolute top-full right-0 left-8 z-10 mt-0.5 rounded bg-background/95 px-1 text-destructive text-[0.6875rem] leading-tight shadow-sm">
+				<p className="pointer-events-none absolute top-full right-0 left-8 z-10 mt-0.5 rounded bg-background/95 px-1 text-destructive text-caption leading-tight shadow-sm">
 					{error}
 				</p>
 			) : null}

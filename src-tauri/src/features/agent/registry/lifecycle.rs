@@ -79,7 +79,6 @@ pub const LIFECYCLE_TEMPLATES: &[&str] = &[
     "openclaw",
     "claude-acp",
     "codex-acp",
-    "antigravity",
     "hermes",
     "grok-build",
     "pi",
@@ -283,21 +282,78 @@ impl ToolLifecycleAction {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UninstallScope {
+    Agent,
+    Acp,
+    All,
+}
+
+impl UninstallScope {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "agent" => Ok(Self::Agent),
+            "acp" => Ok(Self::Acp),
+            "all" => Ok(Self::All),
+            _ => Err(format!("unsupported uninstall scope: {value}")),
+        }
+    }
+}
+
 pub fn supports_lifecycle(template_id: &str) -> bool {
     LIFECYCLE_TEMPLATES.contains(&template_id)
 }
 
+/// Per-scope uninstall payload (host CLI vs ACP adapter).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct UninstallScopeInfo {
+    pub npm_commands: Vec<String>,
+    pub dirs: Vec<String>,
+}
+
 /// What a silent uninstall would remove for a catalog template.
 ///
-/// `npm_commands` are complete `npm uninstall` invocations (including the
-/// `--prefix` mirroring install); `dirs` are Agentero-managed directories.
+/// `agent` covers the host CLI / main binary; `acp` covers the ACP adapter.
 /// `None` means the template has no managed uninstall (e.g. hermes installs
 /// via an official script we cannot reverse).
 #[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct UninstallInfo {
-    pub npm_commands: Vec<String>,
-    pub dirs: Vec<String>,
+    pub agent: UninstallScopeInfo,
+    pub acp: UninstallScopeInfo,
+}
+
+impl UninstallInfo {
+    pub fn is_empty(&self) -> bool {
+        self.agent.npm_commands.is_empty()
+            && self.agent.dirs.is_empty()
+            && self.acp.npm_commands.is_empty()
+            && self.acp.dirs.is_empty()
+    }
+
+    pub fn for_scope(&self, scope: UninstallScope) -> UninstallScopeInfo {
+        match scope {
+            UninstallScope::Agent => self.agent.clone(),
+            UninstallScope::Acp => self.acp.clone(),
+            UninstallScope::All => UninstallScopeInfo {
+                npm_commands: self
+                    .agent
+                    .npm_commands
+                    .iter()
+                    .chain(self.acp.npm_commands.iter())
+                    .cloned()
+                    .collect(),
+                dirs: self
+                    .agent
+                    .dirs
+                    .iter()
+                    .chain(self.acp.dirs.iter())
+                    .cloned()
+                    .collect(),
+            },
+        }
+    }
 }
 
 pub fn uninstall_info(template_id: &str) -> Option<UninstallInfo> {
@@ -312,34 +368,49 @@ pub fn uninstall_info(template_id: &str) -> Option<UninstallInfo> {
     #[cfg(not(target_os = "windows"))]
     let pi_acp = "npm uninstall -g pi-acp --prefix \"$HOME/.local\"".to_string();
 
-    let npm_commands = match template_id {
-        "opencode" => vec!["npm uninstall -g opencode-ai".to_string()],
-        "openclaw" => vec!["npm uninstall -g openclaw".to_string()],
-        "claude-acp" => vec![
-            "npm uninstall -g @anthropic-ai/claude-code".to_string(),
-            claude_acp,
-        ],
-        "codex-acp" => vec![
-            "npm uninstall -g @openai/codex".to_string(),
-            "npm uninstall -g @agentclientprotocol/codex-acp".to_string(),
-        ],
-        "antigravity" => vec!["npm uninstall -g agy-acp".to_string()],
-        "pi" => vec![
-            "npm uninstall -g @earendil-works/pi-coding-agent".to_string(),
-            pi_acp,
-        ],
-        "grok-build" => vec!["npm uninstall -g @xai-official/grok".to_string()],
-        "dsh" => Vec::new(),
-        "kimi-code" => vec!["npm uninstall -g @moonshot-ai/kimi-code".to_string()],
+    let (agent_commands, acp_commands): (Vec<String>, Vec<String>) = match template_id {
+        // Single-package agents: host CLI and ACP are the same binary.
+        "opencode" => (vec!["npm uninstall -g opencode-ai".to_string()], Vec::new()),
+        "openclaw" => (vec!["npm uninstall -g openclaw".to_string()], Vec::new()),
+        "claude-acp" => (
+            vec!["npm uninstall -g @anthropic-ai/claude-code".to_string()],
+            vec![claude_acp],
+        ),
+        "codex-acp" => (
+            vec!["npm uninstall -g @openai/codex".to_string()],
+            vec!["npm uninstall -g @agentclientprotocol/codex-acp".to_string()],
+        ),
+        "pi" => (
+            vec!["npm uninstall -g @earendil-works/pi-coding-agent".to_string()],
+            vec![pi_acp],
+        ),
+        "grok-build" => (
+            vec!["npm uninstall -g @xai-official/grok".to_string()],
+            Vec::new(),
+        ),
+        "dsh" => (Vec::new(), Vec::new()),
+        "kimi-code" => (
+            vec!["npm uninstall -g @moonshot-ai/kimi-code".to_string()],
+            Vec::new(),
+        ),
         // hermes: official-script-only install, nothing we can reverse.
         _ => return None,
     };
-    let dirs = match template_id {
-        "dsh" => vec![dsh_launcher_dir().display().to_string()],
-        "kimi-code" => vec![kimi_launcher_dir().display().to_string()],
-        _ => Vec::new(),
+    let (agent_dirs, acp_dirs): (Vec<String>, Vec<String>) = match template_id {
+        "dsh" => (Vec::new(), vec![dsh_launcher_dir().display().to_string()]),
+        "kimi-code" => (vec![kimi_launcher_dir().display().to_string()], Vec::new()),
+        _ => (Vec::new(), Vec::new()),
     };
-    Some(UninstallInfo { npm_commands, dirs })
+    Some(UninstallInfo {
+        agent: UninstallScopeInfo {
+            npm_commands: agent_commands,
+            dirs: agent_dirs,
+        },
+        acp: UninstallScopeInfo {
+            npm_commands: acp_commands,
+            dirs: acp_dirs,
+        },
+    })
 }
 
 /// Chain best-effort uninstall commands: each failure is non-fatal (idempotent
@@ -370,10 +441,12 @@ fn remove_managed_dir(dir: &std::path::Path) -> Result<(), String> {
 }
 
 /// Uninstall path: npm uninstall chains plus managed directory removal.
+/// `scope` lets the user remove only the host CLI, only the ACP adapter, or both.
 /// Must bypass `run_dsh_lifecycle` — its `prepare_dsh_launcher` recreates the
 /// launcher dir.
-fn run_template_uninstall(
+pub fn run_partial_template_uninstall(
     template_id: &str,
+    scope: UninstallScope,
     app: Option<&AppHandle>,
     task_id: Option<&str>,
     proxy_enabled: bool,
@@ -382,16 +455,17 @@ fn run_template_uninstall(
     let Some(info) = uninstall_info(template_id) else {
         return Ok(());
     };
-    if template_id == "dsh" {
+    if template_id == "dsh" && matches!(scope, UninstallScope::Acp | UninstallScope::All) {
         return remove_managed_dir(&dsh_launcher_dir());
     }
-    if !info.npm_commands.is_empty() {
+    let payload = info.for_scope(scope);
+    if !payload.npm_commands.is_empty() {
         // A fully `|| true` chain would silently succeed when npm is missing.
         if resolve_command("npm").is_none() {
             return Err("npm is not available on PATH; cannot uninstall npm packages".to_string());
         }
         run_tool_lifecycle_silently(
-            &best_effort_chain(&info.npm_commands),
+            &best_effort_chain(&payload.npm_commands),
             app,
             task_id,
             "agent-lifecycle-uninstall",
@@ -399,10 +473,27 @@ fn run_template_uninstall(
             proxy_url,
         )?;
     }
-    for dir in &info.dirs {
+    for dir in &payload.dirs {
         remove_managed_dir(std::path::Path::new(dir))?;
     }
     Ok(())
+}
+
+fn run_template_uninstall(
+    template_id: &str,
+    app: Option<&AppHandle>,
+    task_id: Option<&str>,
+    proxy_enabled: bool,
+    proxy_url: &str,
+) -> Result<(), String> {
+    run_partial_template_uninstall(
+        template_id,
+        UninstallScope::All,
+        app,
+        task_id,
+        proxy_enabled,
+        proxy_url,
+    )
 }
 
 /// Build and run install/update/uninstall for a catalog template. Host decides
@@ -440,7 +531,7 @@ pub fn run_template_lifecycle(
         .unwrap_or(info.command.as_str());
     let host_present = resolve_command(detect).is_some();
     let acp_present = resolve_command(&info.command).is_some();
-    // Same binary for host and ACP (opencode, openclaw, antigravity, hermes, grok via npx).
+    // Same binary for host and ACP (opencode, openclaw, hermes, grok via npx).
     let needs_separate_adapter = info
         .detect_command
         .as_ref()
@@ -550,7 +641,6 @@ fn host_install_command(template_id: &str) -> Result<String, String> {
         match template_id {
             "claude-acp" => Ok("npm i -g @anthropic-ai/claude-code@latest".to_string()),
             "codex-acp" => Ok("npm i -g @openai/codex@latest".to_string()),
-            "antigravity" => Ok("npm i -g agy-acp@latest".to_string()),
             "opencode" => Ok("npm i -g opencode-ai@latest".to_string()),
             "openclaw" => Ok("npm i -g openclaw@latest".to_string()),
             "hermes" => Ok(hermes_install_windows_command()),
@@ -575,7 +665,6 @@ fn host_install_command(template_id: &str) -> Result<String, String> {
                 "npm i -g @anthropic-ai/claude-code@latest",
             )),
             "codex-acp" => Ok("npm i -g @openai/codex@latest".to_string()),
-            "antigravity" => Ok("npm i -g agy-acp@latest".to_string()),
             "opencode" => Ok(chain_or(
                 OPENCODE_INSTALL_UNIX,
                 "npm i -g opencode-ai@latest",
@@ -619,8 +708,6 @@ fn host_update_command(template_id: &str) -> Result<String, String> {
             }
         }
         "codex-acp" => Ok("npm i -g @openai/codex@latest".to_string()),
-        // Antigravity is installed through the community agy-acp npm adapter.
-        "antigravity" => Ok("npm i -g agy-acp@latest".to_string()),
         "openclaw" => Ok(chain_or(
             "openclaw update --yes",
             "npm i -g openclaw@latest",
@@ -751,8 +838,6 @@ npm i -g @anthropic-ai/claude-code@latest
 # Codex + ACP adapter
 npm i -g @openai/codex@latest
 npm i -g @agentclientprotocol/codex-acp@latest
-# Antigravity
-{antigravity}
 # OpenCode
 npm i -g opencode-ai@latest
 # OpenClaw
@@ -771,7 +856,6 @@ npm i -g openclaw@latest
 # Dsh (DeepSeek Harness ACP demo — Agentero writes cordis.yml + runs this)
 {dsh}"#,
             claude_acp = CLAUDE_ACP_INSTALL_COMMAND,
-            antigravity = "npm i -g agy-acp@latest",
             pi_host = PI_HOST_INSTALL_COMMAND,
             pi_acp = PI_ACP_INSTALL_COMMAND,
             hermes = hermes_install_windows_command(),
@@ -789,8 +873,6 @@ npm i -g openclaw@latest
 # Codex + ACP adapter
 npm i -g @openai/codex@latest
 npm i -g @agentclientprotocol/codex-acp@latest
-# Antigravity
-{antigravity}
 # OpenCode
 {opencode} || npm i -g opencode-ai@latest
 # OpenClaw
@@ -808,7 +890,6 @@ npm i -g openclaw@latest
 {dsh}"#,
             claude_host = CLAUDE_INSTALL_UNIX,
             claude_acp = CLAUDE_ACP_INSTALL_COMMAND,
-            antigravity = "npm i -g agy-acp@latest",
             opencode = OPENCODE_INSTALL_UNIX,
             pi_host = PI_HOST_INSTALL_COMMAND,
             pi_acp = PI_ACP_INSTALL_COMMAND,
@@ -869,7 +950,7 @@ fn run_tool_lifecycle_silently(
 
 /// Mirror `store::apply_proxy_to_agent`: inject HTTP_PROXY/HTTPS_PROXY/ALL_PROXY
 /// into the lifecycle child when the Agentero proxy is enabled, so curl/npm
-/// based installers (Antigravity, Kimi, Claude, Grok, Hermes, OpenCode, …)
+/// based installers (Kimi, Claude, Grok, Hermes, OpenCode, …)
 /// can reach the network through the user's configured proxy.
 fn apply_proxy_env_to_command(cmd: &mut Command, proxy_enabled: bool, proxy_url: &str) {
     for key in ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"] {
@@ -1169,7 +1250,6 @@ mod tests {
             .unwrap()
             .contains("codex-acp"));
         assert!(adapter_install_command("pi").unwrap().contains("pi-acp"));
-        assert!(adapter_install_command("antigravity").is_err());
     }
 
     #[test]
@@ -1205,7 +1285,6 @@ mod tests {
     fn manual_text_lists_agents() {
         let text = manual_install_commands_text();
         assert!(text.contains("Claude"));
-        assert!(text.contains("Antigravity"));
         assert!(text.contains("OpenCode"));
         assert!(text.contains("OpenClaw"));
         assert!(text.contains("Hermes"));
@@ -1287,11 +1366,9 @@ mod tests {
                 continue;
             }
             let info = uninstall_info(id).expect(id);
-            assert!(
-                !info.npm_commands.is_empty() || !info.dirs.is_empty(),
-                "{id}"
-            );
-            for cmd in &info.npm_commands {
+            let all = info.for_scope(UninstallScope::All);
+            assert!(!all.npm_commands.is_empty() || !all.dirs.is_empty(), "{id}");
+            for cmd in &all.npm_commands {
                 assert!(!cmd.contains("@latest"), "{id}: {cmd}");
             }
         }
@@ -1302,20 +1379,27 @@ mod tests {
     #[test]
     fn uninstall_commands_mirror_install_packages() {
         let opencode = uninstall_info("opencode").unwrap();
-        assert!(opencode.npm_commands[0].contains("opencode-ai"));
+        assert!(opencode.agent.npm_commands[0].contains("opencode-ai"));
         let codex = uninstall_info("codex-acp").unwrap();
         assert!(codex
+            .agent
             .npm_commands
             .iter()
             .any(|c| c.contains("@openai/codex")));
-        assert!(codex.npm_commands.iter().any(|c| c.contains("codex-acp")));
+        assert!(codex
+            .acp
+            .npm_commands
+            .iter()
+            .any(|c| c.contains("codex-acp")));
         let claude = uninstall_info("claude-acp").unwrap();
         assert!(claude
+            .agent
             .npm_commands
             .iter()
             .any(|c| c.contains("@anthropic-ai/claude-code")));
         assert!(uninstall_info("kimi-code")
             .unwrap()
+            .agent
             .npm_commands
             .iter()
             .any(|c| c.contains("@moonshot-ai/kimi-code")));
@@ -1326,11 +1410,13 @@ mod tests {
     fn uninstall_prefix_mirrors_install() {
         let claude = uninstall_info("claude-acp").unwrap();
         assert!(claude
+            .acp
             .npm_commands
             .iter()
             .any(|c| c.contains("--prefix \"$HOME/.local\"")));
         let pi = uninstall_info("pi").unwrap();
         assert!(pi
+            .acp
             .npm_commands
             .iter()
             .any(|c| c.contains("--prefix \"$HOME/.local\"")));
@@ -1339,10 +1425,33 @@ mod tests {
     #[test]
     fn uninstall_dirs_for_managed_installs() {
         let dsh = uninstall_info("dsh").unwrap();
-        assert!(dsh.npm_commands.is_empty());
-        assert_eq!(dsh.dirs, vec![dsh_launcher_dir().display().to_string()]);
+        assert!(dsh.agent.npm_commands.is_empty());
+        assert!(dsh.acp.npm_commands.is_empty());
+        assert_eq!(dsh.acp.dirs, vec![dsh_launcher_dir().display().to_string()]);
         let kimi = uninstall_info("kimi-code").unwrap();
-        assert_eq!(kimi.dirs, vec![kimi_launcher_dir().display().to_string()]);
+        assert_eq!(
+            kimi.agent.dirs,
+            vec![kimi_launcher_dir().display().to_string()]
+        );
+    }
+
+    #[test]
+    fn uninstall_for_scope_selects_agent_or_acp() {
+        let codex = uninstall_info("codex-acp").unwrap();
+        let agent = codex.for_scope(UninstallScope::Agent);
+        assert!(agent
+            .npm_commands
+            .iter()
+            .any(|c| c.contains("@openai/codex")));
+        assert!(!agent.npm_commands.iter().any(|c| c.contains("codex-acp")));
+        let acp = codex.for_scope(UninstallScope::Acp);
+        assert!(acp.npm_commands.iter().any(|c| c.contains("codex-acp")));
+        assert!(acp
+            .npm_commands
+            .iter()
+            .all(|c| !c.contains("@openai/codex")));
+        let all = codex.for_scope(UninstallScope::All);
+        assert_eq!(all.npm_commands.len(), 2);
     }
 
     #[cfg(target_os = "windows")]

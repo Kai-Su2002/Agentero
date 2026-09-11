@@ -1,6 +1,7 @@
 //! Application translation commands (free MT; Agent path stays on the frontend ACP).
 
-use crate::core::error::{map_err, ApiResult};
+use crate::core::error::{map_err, ApiResult, AppError};
+use crate::features::system::builtin;
 use crate::features::system::settings::{is_translate_api_key_mask, AppSettingsStore};
 use crate::features::translate::{self, TranslateTextArgs, TranslateTextResult};
 use tauri::{AppHandle, Manager};
@@ -13,9 +14,24 @@ pub async fn translate_text(
 ) -> ApiResult<TranslateTextResult> {
     use crate::core::log_util::OpTimer;
 
-    // Commercial BYOK: Host keeps the real key. Frontend may send a `*`-mask or omit.
-    // Resolve before any `.await` so we never hold managed state across await.
+    // Credentials resolve before any `.await` so we never hold managed state across await.
+    if args
+        .provider
+        .trim()
+        .eq_ignore_ascii_case(translate::BUILTIN_PROVIDER_ID)
     {
+        let Some(key) = builtin::api_key() else {
+            return map_err(AppError::domain(
+                translate::ERR_NO_BUILTIN_KEY,
+                "Built-in translation is not available in this build.",
+            ));
+        };
+        let status = builtin::status();
+        args.api_key = Some(key.to_string());
+        args.base_url = Some(status.base_url);
+        args.model = Some(status.translate_model);
+    } else {
+        // Commercial BYOK: Host keeps the real key. Frontend may send a `*`-mask or omit.
         let needs_stored_key = args
             .api_key
             .as_deref()

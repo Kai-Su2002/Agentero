@@ -112,7 +112,7 @@ export function ImageElement(props: PlateElementProps<TImageElement>) {
 					</div>
 				) : null}
 				{active ? (
-					<figcaption className="mt-1 break-all font-mono text-[11px] text-muted-foreground leading-snug">
+					<figcaption className="mt-1 break-all font-mono text-caption text-muted-foreground leading-snug">
 						{sourceText}
 					</figcaption>
 				) : null}

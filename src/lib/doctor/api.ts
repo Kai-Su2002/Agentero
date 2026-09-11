@@ -1,10 +1,13 @@
 import {
+	type AgentAcpDiagnostic_Serialize,
 	type AliasRepairCandidate_Serialize,
 	commands,
 	type DoctorIssue_Serialize,
 	type DoctorReport_Serialize,
 	type DoctorVaultState,
 	type DuplicateRepairResult,
+	type NetworkDoctorReport_Serialize,
+	type NetworkEndpointDiagnostic_Serialize,
 	type VisualMarkCandidate,
 	type WikiCheckIssue_Serialize,
 	type WikilinkRepairPlan_Serialize,
@@ -13,8 +16,22 @@ import {
 } from "@/lib/core/bindings";
 import { callApi, callApiResult } from "@/lib/core/ipc";
 
+export type HostToolStatus = "available" | "missing" | "unusable";
+export type HostToolDiagnostic = {
+	status: HostToolStatus;
+	resolvedPath?: string | null;
+	version?: string | null;
+	detail?: string | null;
+};
+export type HostDoctorReport = {
+	node: HostToolDiagnostic;
+	npm: HostToolDiagnostic;
+	npmPrefix?: string | null;
+};
+
 /** Read models come straight from the generated wire contract. */
 export type DoctorIssue = DoctorIssue_Serialize;
+export type AgentAcpDiagnostic = AgentAcpDiagnostic_Serialize;
 export type AliasRepairCandidate = AliasRepairCandidate_Serialize;
 export type WikiCheckIssue = WikiCheckIssue_Serialize;
 export type { VisualMarkCandidate };
@@ -23,6 +40,9 @@ export type WikilinkRepairSuggestion = WikilinkRepairSuggestion_Serialize;
 export type WikilinkRepairResidual = WikilinkRepairResidual_Serialize;
 export type WikilinkRepairPlan = WikilinkRepairPlan_Serialize;
 export type { DoctorVaultState, DuplicateRepairResult };
+export type NetworkEndpointDiagnostic = NetworkEndpointDiagnostic_Serialize;
+export type NetworkDoctorReport = NetworkDoctorReport_Serialize;
+export type { NetworkStatus } from "@/lib/core/bindings";
 
 type AliasRepairChange = {
 	path: string;
@@ -46,6 +66,23 @@ type VisualMarkRepairChange = {
 
 export function doctorCheck(vaultPath: string): Promise<DoctorReport> {
 	return callApi(() => commands.doctorCheck({ vaultPath }));
+}
+
+export function doctorCheckHost(): Promise<HostDoctorReport> {
+	// Must go through specta `typedError` (same as doctorCheckAgents). Raw
+	// `invoke` returns bare `ApiResult`, which `callApiResult` misreads as a
+	// failed TypedResult and surfaces the "Host command failed" fallback.
+	return callApiResult(() => commands.doctorCheckHost());
+}
+
+/** Re-probe every registered Agent over ACP; may take up to ~30s per agent. */
+export function doctorCheckAgents(): Promise<AgentAcpDiagnostic[]> {
+	return callApiResult(() => commands.doctorCheckAgents());
+}
+
+/** Probe network connectivity to paper sources and common hosts. */
+export function doctorCheckNetwork(): Promise<NetworkDoctorReport> {
+	return callApiResult(() => commands.doctorCheckNetwork());
 }
 
 export function doctorApplyAliases(

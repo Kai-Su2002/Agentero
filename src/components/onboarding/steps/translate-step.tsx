@@ -24,6 +24,10 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+	BUILTIN_PROVIDER_ID,
+	loadBuiltinProviderStatus,
+} from "@/lib/core/builtin";
 import { cn } from "@/lib/core/utils";
 import type {
 	AppSettings,
@@ -133,11 +137,17 @@ export function TranslateStep({
 		}
 	};
 
-	const useSystemDefault = () => {
+	const chooseSystemDefault = async () => {
+		// Awaited at click time, not read from render state: the status starts
+		// unresolved, and guessing would clobber a compiled-in built-in provider
+		// with the static TS default.
+		const status = await loadBuiltinProviderStatus();
 		patch({
 			translate: {
 				...tr,
-				provider: DEFAULT_TRANSLATE_SETTINGS.provider,
+				provider: status?.available
+					? BUILTIN_PROVIDER_ID
+					: DEFAULT_TRANSLATE_SETTINGS.provider,
 			},
 		});
 		onUseDefault();
@@ -202,7 +212,7 @@ export function TranslateStep({
 				<ChoiceCard
 					icon={<Sparkles className="size-5 text-muted-foreground" />}
 					title={t("translate.useDefault")}
-					onClick={useSystemDefault}
+					onClick={() => void chooseSystemDefault()}
 				/>
 			</div>
 		);

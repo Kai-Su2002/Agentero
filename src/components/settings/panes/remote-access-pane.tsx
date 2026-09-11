@@ -332,7 +332,7 @@ function RemoteCacheSettingsBlock() {
 
 	return (
 		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-[13px]">
+			<p className="mb-2 px-0.5 font-medium text-sm">
 				{t("remoteAccess.cache.section")}
 			</p>
 			<SettingsGroup>

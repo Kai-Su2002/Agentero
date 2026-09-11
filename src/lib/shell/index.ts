@@ -17,6 +17,10 @@ export {
 } from "@/lib/shell/feature-window";
 export { moveDocToWindow, moveFeatureToWindow } from "@/lib/shell/leaf";
 export {
+	allowsNativeSelectAll,
+	isNativeSelectAllEvent,
+} from "@/lib/shell/native-select-all";
+export {
 	closeSettingsWindow,
 	openSettingsWindow,
 	toggleSettingsWindow,

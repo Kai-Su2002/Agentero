@@ -3,6 +3,7 @@ import type {
 	PointerEvent as ReactPointerEvent,
 } from "react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import {
 	AgentAskUserSurface,
 	isAskUserSurfaceActive,
@@ -21,10 +22,18 @@ import { cn } from "@/lib/core/utils";
 
 const COMPOSER_DEFAULT_HEIGHT_PX = 208;
 const COMPOSER_MIN_HEIGHT_PX = 88;
-const COMPOSER_COMPACT_WITH_CHIPS_HEIGHT_PX = 104;
 const COMPOSER_MAX_HEIGHT_PX = 360;
 const COMPOSER_COMPACT_THRESHOLD_PX = 160;
+/** Below this app window height, prefer compact as the starting composer size. */
+const WINDOW_COMPACT_THRESHOLD_PX = 600;
 const TRANSCRIPT_MIN_HEIGHT_PX = 160;
+
+function initialComposerHeightPx(): number {
+	if (typeof window === "undefined") return COMPOSER_DEFAULT_HEIGHT_PX;
+	return window.innerHeight < WINDOW_COMPACT_THRESHOLD_PX
+		? COMPOSER_COMPACT_THRESHOLD_PX
+		: COMPOSER_DEFAULT_HEIGHT_PX;
+}
 
 export type { AgentPanelProps } from "@/components/agent/types";
 
@@ -44,6 +53,7 @@ export const AgentPanel = memo(function AgentPanel({
 	onOpenAgentSettings,
 	onOpenSource,
 }: AgentPanelProps) {
+	const { t } = useTranslation("agent");
 	const panel = useAgentPanel({
 		vaultPath,
 		selectedPath,
@@ -56,7 +66,13 @@ export const AgentPanel = memo(function AgentPanel({
 	});
 	const bodyRef = useRef<HTMLDivElement>(null);
 	const [composerHeightPx, setComposerHeightPx] = useState(
-		COMPOSER_DEFAULT_HEIGHT_PX,
+		initialComposerHeightPx,
+	);
+	// Track short-window edge so we only auto-collapse once when crossing below
+	// the threshold — never lock the user out of dragging back to expanded.
+	const windowWasShortRef = useRef(
+		typeof window !== "undefined" &&
+			window.innerHeight < WINDOW_COMPACT_THRESHOLD_PX,
 	);
 
 	const clampComposerHeight = useCallback((height: number) => {
@@ -75,8 +91,17 @@ export const AgentPanel = memo(function AgentPanel({
 	}, []);
 
 	useEffect(() => {
-		const handleResize = () =>
-			setComposerHeightPx((height) => clampComposerHeight(height));
+		const handleResize = () => {
+			const short = window.innerHeight < WINDOW_COMPACT_THRESHOLD_PX;
+			const crossedIntoShort = short && !windowWasShortRef.current;
+			windowWasShortRef.current = short;
+			setComposerHeightPx((height) => {
+				const next = crossedIntoShort
+					? Math.min(height, COMPOSER_COMPACT_THRESHOLD_PX)
+					: height;
+				return clampComposerHeight(next);
+			});
+		};
 		handleResize();
 		window.addEventListener("resize", handleResize);
 		return () => window.removeEventListener("resize", handleResize);
@@ -144,21 +169,16 @@ export const AgentPanel = memo(function AgentPanel({
 		},
 		[clampComposerHeight],
 	);
+	// Compact is driven only by composer height so the resize handle can always
+	// leave or re-enter compact, even when the app window is short.
 	const composerCompact = composerHeightPx <= COMPOSER_COMPACT_THRESHOLD_PX;
-	const hasComposerChips =
-		panel.currentFilePath !== null ||
-		panel.mentionChipPaths.length > 0 ||
-		panel.selectionChips.length > 0 ||
-		panel.visualDrafts.length > 0 ||
-		panel.selectedSkills.length > 0;
+	// Compact mode hugs content (no fixed height) so the shell does not leave a
+	// empty band under the single-line input. Non-compact keeps the resize budget.
 	const composerDisplayHeightPx = composerCompact
-		? hasComposerChips
-			? COMPOSER_COMPACT_WITH_CHIPS_HEIGHT_PX
-			: COMPOSER_MIN_HEIGHT_PX
+		? undefined
 		: composerHeightPx;
 
 	const {
-		t,
 		lines,
 		activeTabId,
 		selected,
@@ -205,7 +225,6 @@ export const AgentPanel = memo(function AgentPanel({
 		labelForPath,
 		removeContextPath,
 		selectedSkills,
-		setSelectedSkillIds,
 		showMentionMenu,
 		mentionBrowseRoot,
 		mentionOptions,
@@ -218,6 +237,7 @@ export const AgentPanel = memo(function AgentPanel({
 		skillOptions,
 		skillActiveIndex,
 		attachSkill,
+		removeSkill,
 		showSlashMenu,
 		slashOptions,
 		slashActiveIndex,
@@ -272,7 +292,10 @@ export const AgentPanel = memo(function AgentPanel({
 	return (
 		<section
 			data-agent-panel
-			className={cn("flex h-full min-h-0 flex-col bg-background", className)}
+			className={cn(
+				"flex h-full min-h-0 select-none flex-col bg-sidebar",
+				className,
+			)}
 			aria-label={title}
 		>
 			<div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -327,7 +350,6 @@ export const AgentPanel = memo(function AgentPanel({
 					<ChatTranscript
 						lines={lines}
 						activeTabId={activeTabId}
-						agentName={selected?.name ?? t("defaultName")}
 						compact={composerCompact}
 						activeTabIsRunning={activeTabIsRunning}
 						submitting={submitting}
@@ -414,11 +436,7 @@ export const AgentPanel = memo(function AgentPanel({
 								labelForPath={labelForPath}
 								onRemoveContextPath={removeContextPath}
 								selectedSkills={selectedSkills}
-								onRemoveSkill={(skillId) =>
-									setSelectedSkillIds((prev) =>
-										prev.filter((id) => id !== skillId),
-									)
-								}
+								onRemoveSkill={removeSkill}
 								showMentionMenu={showMentionMenu}
 								mentionBrowseRoot={mentionBrowseRoot}
 								mentionOptions={mentionOptions}

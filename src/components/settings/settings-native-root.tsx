@@ -126,7 +126,10 @@ export function SettingsNativeRoot() {
 			  so the OS title bar already provides the title and caption buttons.
 			*/}
 			{isMac ? (
-				<header className="flex h-8 shrink-0 items-center border-b bg-muted/40 select-none">
+				<header
+					data-settings-titlebar
+					className="flex h-8 shrink-0 items-center border-b border-sidebar-border/80 bg-sidebar/80 backdrop-blur-xl backdrop-saturate-150 select-none supports-backdrop-blur:bg-sidebar/65"
+				>
 					{/*
 					  Traffic lights: x=14, three ~14px buttons + gaps → ends ~68px.
 					  Keep the same 92px reserved strip as the main title bar so the

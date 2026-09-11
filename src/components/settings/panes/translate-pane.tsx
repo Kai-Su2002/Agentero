@@ -10,6 +10,7 @@ import {
 	SettingsGroup,
 	SettingsRow,
 } from "@/components/settings/settings-layout";
+import { useBuiltinProviderAvailable } from "@/components/settings/use-builtin-provider";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,6 +27,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { BUILTIN_PROVIDER_ID } from "@/lib/core/builtin";
 import { isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
 import type {
@@ -142,6 +144,7 @@ export function TranslatePane({
 }) {
 	const { t } = useTranslation("settings");
 	const tr = settings.translate;
+	const builtinAvailable = useBuiltinProviderAvailable();
 	const patchTranslate = useCallback(
 		(partial: Partial<typeof tr>) =>
 			patch({ translate: { ...tr, ...partial } }),
@@ -153,15 +156,22 @@ export function TranslatePane({
 			tr.providerConfigs[id] ?? EMPTY_PROVIDER_CONFIG,
 		[tr.providerConfigs],
 	);
-	/** Free MT + Agent always; commercial only when configured (or currently selected). */
+	/**
+	 * Free MT + Agent always; commercial only when configured (or currently
+	 * selected). The built-in shows only when its key is compiled in, or when it
+	 * is the stored selection (so a carried-over setting stays visible/disable-able).
+	 */
 	const providers = useMemo(
 		() =>
 			listSelectableProviders().filter((s) => {
+				if (s.id === BUILTIN_PROVIDER_ID) {
+					return builtinAvailable || tr.provider === s.id;
+				}
 				if (!isCommercialTranslateProvider(s.id)) return true;
 				if (tr.provider === s.id) return true;
 				return isCommercialProviderConfigured(s.id, getProviderConfig(s.id));
 			}),
-		[getProviderConfig, tr.provider],
+		[builtinAvailable, getProviderConfig, tr.provider],
 	);
 	/** Free-MT probe status (Agent never probed here). */
 	const [probeMap, setProbeMap] = useState<FreeMtProbeMap>({});
@@ -217,6 +227,8 @@ export function TranslatePane({
 
 		const initial: FreeMtProbeMap = {};
 		for (const id of FREE_MT_PROVIDER_IDS) {
+			// The built-in is never probed; its availability comes from the Host.
+			if (id === BUILTIN_PROVIDER_ID) continue;
 			initial[id] = "probing";
 		}
 		setProbeMap(initial);
@@ -387,13 +399,15 @@ export function TranslatePane({
 						</SelectTrigger>
 						<SelectContent className="max-h-72">
 							{providers.map((s) => {
-								const status: FreeMtProbeStatus | undefined = isFreeMtProvider(
-									s.id,
-								)
-									? (probeMap[s.id] ?? "idle")
-									: isCommercialTranslateProvider(s.id)
-										? (commercialProbeMap[s.id] ?? "idle")
-										: undefined;
+								const isBuiltin = s.id === BUILTIN_PROVIDER_ID;
+								// The built-in has no probe dot; availability comes from the Host.
+								const status: FreeMtProbeStatus | undefined = isBuiltin
+									? undefined
+									: isFreeMtProvider(s.id)
+										? (probeMap[s.id] ?? "idle")
+										: isCommercialTranslateProvider(s.id)
+											? (commercialProbeMap[s.id] ?? "idle")
+											: undefined;
 								const statusLabel =
 									status != null
 										? t(
@@ -403,7 +417,11 @@ export function TranslatePane({
 											)
 										: null;
 								return (
-									<SelectItem key={s.id} value={s.id}>
+									<SelectItem
+										key={s.id}
+										value={s.id}
+										disabled={isBuiltin && !builtinAvailable}
+									>
 										<span className="flex min-w-0 items-center gap-1.5">
 											{status != null && statusLabel != null ? (
 												<ProviderStatusDot kind={status} label={statusLabel} />
@@ -499,7 +517,7 @@ export function TranslatePane({
 								<div className="mb-2 flex items-center justify-between gap-2">
 									<div className="flex min-w-0 items-center gap-1.5">
 										<ProviderStatusDot kind={statusKind} label={statusLabel} />
-										<p className="min-w-0 truncate font-medium text-[13px]">
+										<p className="min-w-0 truncate font-medium text-sm">
 											{t(
 												`translate.provider.${id}` as "translate.provider.google",
 											)}

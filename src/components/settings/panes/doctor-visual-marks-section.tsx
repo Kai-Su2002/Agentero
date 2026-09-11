@@ -120,9 +120,7 @@ export function DoctorVisualMarksSection({
 								}
 							/>
 							<div className="min-w-0 flex-1">
-								<p className="truncate text-[13px]">
-									{draft.markId || draft.path}
-								</p>
+								<p className="truncate text-sm">{draft.markId || draft.path}</p>
 								<p className="truncate text-muted-foreground text-xs">
 									{draft.path}
 								</p>

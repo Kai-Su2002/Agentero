@@ -16,6 +16,7 @@ import {
 } from "@/components/library/library-row-utils";
 import { PaperTagChip } from "@/components/library/paper-tag-chip";
 import { ReadingTitleHeat } from "@/components/library/reading-heatmap";
+import { MathText } from "@/components/ui/math-text";
 import {
 	Tooltip,
 	TooltipContent,
@@ -114,9 +115,7 @@ export const COLUMN_META = {
 				>
 					<ReadingTitleHeat heatmap={ctx.heat} className="line-clamp-1">
 						<span className="flex min-w-0 items-center gap-1">
-							<span className="block truncate" title={p.title}>
-								{p.title}
-							</span>
+							<MathText text={p.title} className="block min-w-0 truncate" />
 							{isMissingLocalPdf(p) ? (
 								<Tooltip>
 									<TooltipTrigger asChild>

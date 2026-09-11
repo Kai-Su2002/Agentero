@@ -20,6 +20,7 @@ import {
 } from "@/components/ai-elements/file-tree";
 import { PLAZA_SOURCE_ICONS } from "@/components/plaza/source-icons";
 import { Button } from "@/components/ui/button";
+import { MathText } from "@/components/ui/math-text";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
 	Tooltip,
@@ -125,7 +126,7 @@ export function PaperTreeRow({
 				/>
 			)}
 			<FileTreeName className="min-w-0 flex-1 truncate" title={label}>
-				{label}
+				<MathText text={label} />
 			</FileTreeName>
 			{showActions ? (
 				<FileTreeActions

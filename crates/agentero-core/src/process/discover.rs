@@ -111,8 +111,8 @@ fn is_executable(path: &Path) -> bool {
     }
 }
 
-/// Resolve `command` on PATH (and common extra dirs). Absolute paths are checked as-is.
-pub fn resolve_command(command: &str) -> Option<PathBuf> {
+/// Resolve `command` against an explicit ordered list of directories.
+pub fn resolve_command_in_paths(command: &str, paths: &[PathBuf]) -> Option<PathBuf> {
     let path = Path::new(command);
     if path.is_absolute() || command.contains('/') || command.contains('\\') {
         return if is_executable(path) {
@@ -122,12 +122,7 @@ pub fn resolve_command(command: &str) -> Option<PathBuf> {
         };
     }
 
-    // Prefer `which` with current PATH first.
-    if let Ok(found) = which::which(command) {
-        return Some(found);
-    }
-
-    for dir in path_entries() {
+    for dir in paths {
         // On Windows, `npm i -g` drops BOTH a bare shell script (for Git Bash)
         // and a `.cmd`/`.exe` shim of the same name. The bare file is not a valid
         // Win32 executable, yet `is_executable` treats any file as runnable, so we
@@ -149,6 +144,21 @@ pub fn resolve_command(command: &str) -> Option<PathBuf> {
     None
 }
 
+/// Resolve `command` on PATH (and common extra dirs). Absolute paths are checked as-is.
+pub fn resolve_command(command: &str) -> Option<PathBuf> {
+    let path = Path::new(command);
+    if path.is_absolute() || command.contains('/') || command.contains('\\') {
+        return resolve_command_in_paths(command, &[]);
+    }
+
+    // Prefer `which` with current PATH first.
+    if let Ok(found) = which::which(command) {
+        return Some(found);
+    }
+
+    resolve_command_in_paths(command, &path_entries())
+}
+
 pub fn probe_command(command: &str) -> Result<PathBuf, String> {
     resolve_command(command).ok_or_else(|| {
         format!("command `{command}` not found on PATH (or common install locations)")
@@ -164,6 +174,9 @@ pub fn probe_command(command: &str) -> Result<PathBuf, String> {
 static LOGIN_SHELL_ENV: OnceLock<Option<HashMap<String, String>>> = OnceLock::new();
 
 /// Parse `env -0` output (null-separated `key=value` entries).
+// Only the unix `login_shell_env` calls this; Windows keeps it compiled for
+// the cross-platform unit tests.
+#[cfg_attr(windows, allow(dead_code))]
 fn parse_env_zero(output: &[u8]) -> HashMap<String, String> {
     let mut map = HashMap::new();
     for chunk in output.split(|&b| b == 0) {

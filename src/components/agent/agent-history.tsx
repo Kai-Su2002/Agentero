@@ -1,6 +1,7 @@
 import { History, Plus } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { isSessionIdPrefixTitle } from "@/components/agent/hooks/use-agent-history";
 import { Button } from "@/components/ui/button";
 import {
 	Popover,
@@ -10,7 +11,7 @@ import {
 	PopoverTitle,
 	PopoverTrigger,
 } from "@/components/ui/popover";
-import type { ChatSessionHistoryItem } from "@/lib/agent/chat-state";
+import type { ChatLine, ChatSessionHistoryItem } from "@/lib/agent/chat-state";
 import { displayHistoryTitle } from "@/lib/agent/prompt-display";
 import { cn } from "@/lib/core/utils";
 
@@ -39,6 +40,22 @@ export function HistorySessionList({
 		<div className="max-h-72 overflow-y-auto p-1.5">
 			{sessionHistory.map((item) => {
 				const isActive = item.id === activeTabId;
+				const firstUserLine = item.lines.find(
+					(line): line is Extract<ChatLine, { kind: "user" }> =>
+						line.kind === "user",
+				);
+				// Ignore historical session-id placeholders so user-prompt
+				// fallback / hydration can surface (#484, Kimi `ses_…`).
+				const providerId = item.providerSessionId?.trim() || "";
+				const storedTitle =
+					isSessionIdPrefixTitle(item.title, item.id) ||
+					(providerId !== "" && isSessionIdPrefixTitle(item.title, providerId))
+						? ""
+						: item.title;
+				const label = displayHistoryTitle(
+					storedTitle || firstUserLine?.text || "",
+					item.id.slice(0, 8),
+				);
 				return (
 					<button
 						key={item.id}
@@ -53,11 +70,10 @@ export function HistorySessionList({
 						onClick={() => onOpen(item)}
 					>
 						<span className="text-muted-foreground text-xs leading-none">
-							{item.agentName} · {t(`history.status.${item.status}`)} ·{" "}
-							{item.id.slice(0, 8)}
+							{item.agentName} · {t(`history.status.${item.status}`)}
 						</span>
 						<span className="line-clamp-2 font-medium text-sm leading-snug">
-							{displayHistoryTitle(item.title, item.id.slice(0, 8))}
+							{label}
 						</span>
 						<span className="text-muted-foreground text-xs leading-none">
 							{item.startedAt}

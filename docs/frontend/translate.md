@@ -1,12 +1,13 @@
 # 翻译
 
-应用级可插拔翻译：免费 MT + 商用 BYOK + BYOA Agent。
+应用级可插拔翻译：内置 provider + 免费 MT + 商用 BYOK + BYOA Agent。
 
 ## 设置
 
 Settings → **翻译**：
 
-- **默认服务** 下拉：免费 MT 与 Agent 始终可选；商用仅列出已配置者。打开下拉时对免费 MT 与已配置商用并行 probe。
+- **默认服务** 下拉：内置 provider（构建里注入了 key 时）、免费 MT 与 Agent 始终可选；商用仅列出已配置者。打开下拉时对免费 MT 与已配置商用并行 probe。
+- **内置 provider**（id `agentero`）：凭证由构建期环境变量编入 Host，卡片**没有任何凭证字段**（无 key / baseUrl / model）。可用性来自 Host 命令 `builtin_provider_status` 的 `available`，**不参与 probe**（探测它会真的发一次翻译请求）；不可用时选项禁用或隐藏，当前已选中它时仍保留在列表里。构建里没有 key 时选中它会拿到 `translate.no_builtin_key` 标记，由 `displayTranslateError`（`src/lib/translate/errors.ts`，仿 `displayAgentError`：子串匹配标记 → `i18n.t(...)`，否则原样返回）在划词翻译与全文翻译的 `notifyError` 调用点转成文案，不裸露标记串。标记能到前端是因为 `invokeTranslateText`（`src/lib/translate/api.ts`）只对**已知**翻译标记逐字抛出 `error.code`，其余情况抛 Host 的人类可读 `message`——`AppError::code()` 还会返回 `io` / `json` / `sqlite` 等通用码，按"非 `message` 即标记"判断迟早会把裸码弹给用户。注入 key 的构建里它是新装默认服务——新装没有 `settings.json`，Host `read_file` 返回 `AppSettings::default()`，所以**首次安装的默认值由 Rust `default_translate_provider()` 决定**；前端 `DEFAULT_TRANSLATE_SETTINGS` 只在浏览器 dev（不可能有 key）里生效。
 - 目标语言、划词自动翻译；开启后，PDF 选区文本提取完成即自动启动翻译并打开结果卡，关闭时仍可从选区菜单手动翻译。
 - **商用 API** 卡片仅填写 key / endpoint / region / model；点「确定」后：
   - 将 API key 写入 Host `settings.json`（Unix 权限 `0600`）；WebView 只保留同长度 `*` 掩码，不再回显明文。
@@ -26,7 +27,7 @@ Settings → **翻译**：
   - **译前归一化**（`normalizeLayoutSourceText`）：文字层是空白折叠后的单行串，先合并行末连字符断词（`repre- sentation` → `representation`，`pre- and` 这类并列保留）、展开 ligature / 去 soft hyphen、清掉落在正文 bbox 里的 arXiv 戳与会议 boilerplate、剥掉句末后粘着的页码与续段前的行号（`Table 2` 这类交叉引用不动，`header` 不做数字剥离）。
   - **跨页/跨栏段落合并**（#340）：一个段落被分栏、分页或图表切开时是多个 region。末尾无句末标点、下一片段以小写开头则判为续段，拼成一个 chain 作为**原子翻译单元**（≤ 4 片段 / 4000 字符），译文再按各片段原文长度加权、在句末→分句→空白边界切回各自 bbox。图题不打断 chain，`header` 打断。chain 内任一片段缺译文即整条重译。
   - **占位符保护**（`src/lib/translate/mask.ts`）：行内公式 / LaTeX 命令 / URL / DOI 先换成 `⟦n⟧` 再发引擎，回填时还原；引擎吞掉占位符则该 chain 用原文重译一次。
-  - 按阅读顺序把 chain **分批**翻译（`buildTranslateBatches`）：批内 payload ≤ 4500 字符（约一页双栏正文），用 `[[n]]` 编号拼成一次请求，让引擎看到上下文；译文按 `[[n]]` 标记切回、逐块写回原 bbox 位置。标记解析不一致时该批**回退为逐段翻译**，保证不丢块。并发 2（Agent 串行）；**每批完成立刻**在 bbox 上盖译文层（非整页等齐）。
+  - 按阅读顺序把 chain **分批**翻译（`buildTranslateBatches`）：批内 payload ≤ 4500 字符（约一页双栏正文），用 `[[n]]` 编号拼成一次请求，让引擎看到上下文；译文按 `[[n]]` 标记切回、逐块写回原 bbox 位置。标记解析不一致时该批**回退为逐段翻译**，保证不丢块。并发 2（Agent 串行）；**每批完成立刻**在 bbox 上盖译文层（非整页等齐）。这里的并发 2 是**前端批次**并发，与内置 provider 在 Host 内对单批做的段级 fan-out（并发 3）正交：选内置时同时在飞的请求最多 2 × 3。
   - 每页纸张右上角外侧常驻窄页签可只翻译本页；页签 hover 不弹出额外文字；本页已有可见译文时，页签切换为隐藏本页译文。隐藏只影响当前 UI 覆盖层，不删除磁盘缓存。
   - 译文按论文写入 `{paper}/source/layout-translate.json`。缓存命中需匹配 provider / 源语言 / 目标语言 / 非密钥服务配置，并逐块校验 region id + 原文（存的是归一化后的原文，归一化规则变化时旧缓存会 miss 一次并重译）；版面或目标语言变化时只复用仍匹配的块。
   - 单页翻译写缓存时按同一 cache key 增量合并，避免只翻译一页时覆盖其它页已经落盘的译文。
@@ -45,10 +46,13 @@ Settings → **翻译**：
 - 批量 payload 额外要求保留 `[[n]]` 标记、顺序与段数，不合并段落。
 - OpenAI-compatible 的 `temperature` 用 0.2（0.0 的直译感太强）。
 
+**内置 provider（`agentero`）不适用以上整套约束**：`tencent/Hunyuan-MT-7B` 是专用 MT 模型而非 instruct 模型，只认它自己的单行模板，Host 改发单条 user message（无 system message），并且**不把 `[[n]]` 喂给模型**——批量对齐依赖指令遵循，对它无效，所以标记由 Host 拆分、逐段请求、按序重组。`⟦n⟧` 占位符仍由前端 `mask.ts` 插入并原样透传。详见 [../backend/builtin-provider.md](../backend/builtin-provider.md) §翻译：Hunyuan-MT。
+
 ## 路径
 
 | 类型 | 路径 |
 |---|---|
+| 内置 provider | Host `translate_text`（`agentero` → Hunyuan-MT，构建期凭证，无凭证卡片） |
 | 免费 MT | Host `translate_text`（腾讯交互翻译 / 火山 Web / DeepLX / Google gtx） |
 | 商用 BYOK | Host `translate_text`（DeepL / Azure / Google Cloud / OpenAI-compatible） |
 | Agent | `agent_run_once` + 翻译 prompt；同一篇文献的多次翻译复用同一个 ACP provider session |

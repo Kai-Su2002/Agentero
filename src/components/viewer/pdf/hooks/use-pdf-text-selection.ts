@@ -14,8 +14,12 @@
  * selection outside the viewer host so it cannot steal a normal copy.
  */
 
+import type { Rect } from "@embedpdf/models";
 import type { useDocumentManagerCapability } from "@embedpdf/plugin-document-manager/react";
-import type { useSelectionCapability } from "@embedpdf/plugin-selection/react";
+import type {
+	FormattedSelection,
+	useSelectionCapability,
+} from "@embedpdf/plugin-selection/react";
 import {
 	type Dispatch,
 	type RefObject,
@@ -27,13 +31,17 @@ import {
 import {
 	anchorFromEmbedSelection,
 	pageElByIndex,
+	rectBottomRightScreen,
 	rectTopCenterScreen,
 } from "@/components/viewer/pdf/coords";
 import {
 	hasNativeSelectionOutsideHost,
 	isEditableClipboardTarget,
 } from "@/components/viewer/pdf/host-dom";
-import type { SelectionMenuState } from "@/components/viewer/pdf/types";
+import type {
+	ScreenPoint,
+	SelectionMenuState,
+} from "@/components/viewer/pdf/types";
 import {
 	clearActiveSelection,
 	publishSelection,
@@ -46,6 +54,35 @@ type SelectionCapabilityProvides = ReturnType<
 type DocumentManagerCapability = ReturnType<
 	typeof useDocumentManagerCapability
 >["provides"];
+
+/** Pick the page the floating menu should track (cursor-end page when known). */
+function menuAnchorPage(
+	pages: FormattedSelection[],
+	preferredPageIndex?: number,
+): FormattedSelection | null {
+	if (!pages.length) return null;
+	if (preferredPageIndex != null) {
+		const match = pages.find((p) => p.pageIndex === preferredPageIndex);
+		if (match) return match;
+	}
+	return pages[pages.length - 1] ?? pages[0] ?? null;
+}
+
+/** Map a formatted selection page to toolbar + add-to-chat screen anchors. */
+function menuScreenPoints(
+	host: HTMLElement | null,
+	anchorPage: FormattedSelection,
+	zoom: number,
+): { screen: ScreenPoint; bottomRight: ScreenPoint } | null {
+	const pageEl = pageElByIndex(host, anchorPage.pageIndex);
+	if (!pageEl) return null;
+	const screen = rectTopCenterScreen(pageEl, anchorPage.rect, zoom);
+	const lastSeg: Rect =
+		anchorPage.segmentRects[anchorPage.segmentRects.length - 1] ??
+		anchorPage.rect;
+	const bottomRight = rectBottomRightScreen(pageEl, lastSeg, zoom);
+	return { screen, bottomRight };
+}
 
 export type UsePdfTextSelectionOptions = {
 	/** EmbedPDF capabilities; owned by `PdfViewerInner` (plugin context). */
@@ -65,8 +102,19 @@ export type UsePdfTextSelectionOptions = {
 export type PdfTextSelection = {
 	selectionMenu: SelectionMenuState | null;
 	setSelectionMenu: Dispatch<SetStateAction<SelectionMenuState | null>>;
+	/**
+	 * True while the pointer is mid drag-select (between EmbedPDF begin/end).
+	 * Used to suppress ephemeral link previews that would otherwise pop while
+	 * the selection sweeps across citation / crossref hit targets.
+	 */
+	isSelecting: boolean;
 	/** Dismiss the menu and drop the underlying PDFium selection. */
 	closeSelectionMenu: () => void;
+	/**
+	 * Recompute toolbar / add-to-chat screen anchors from the live page DOM.
+	 * Call on viewport scroll and zoom so the menu stays glued to the selection.
+	 */
+	rePlaceSelectionMenu: () => void;
 };
 
 export function usePdfTextSelection({
@@ -82,19 +130,47 @@ export function usePdfTextSelection({
 	const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(
 		null,
 	);
+	const [isSelecting, setIsSelecting] = useState(false);
 
 	const closeSelectionMenu = useCallback(() => {
 		setSelectionMenu(null);
 		selectionCap?.clear(docId);
 	}, [selectionCap, docId]);
 
+	const rePlaceSelectionMenu = useCallback(() => {
+		setSelectionMenu((prev) => {
+			if (!prev) return prev;
+			const anchorPage = menuAnchorPage(prev.pages, prev.anchor.page - 1);
+			if (!anchorPage) return prev;
+			const next = menuScreenPoints(
+				hostRef.current,
+				anchorPage,
+				zoomRef.current,
+			);
+			if (!next) return prev;
+			if (
+				next.screen.x === prev.screen.x &&
+				next.screen.y === prev.screen.y &&
+				next.bottomRight.x === prev.bottomRight.x &&
+				next.bottomRight.y === prev.bottomRight.y
+			) {
+				return prev;
+			}
+			return { ...prev, ...next };
+		});
+	}, [hostRef, zoomRef]);
+
 	// Show the selection action menu when a drag-selection ends.
 	useEffect(() => {
 		if (!selectionCap || !docCap) return;
 		const scope = selectionCap.forDocument(docId);
+		const offBegin = scope.onBeginSelection(() => {
+			setIsSelecting(true);
+		});
 		const offEnd = scope.onEndSelection(() => {
 			const pages = selectionCap.getFormattedSelection(docId);
 			if (!pages.length) {
+				setIsSelecting(false);
 				setSelectionMenu(null);
 				return;
 			}
@@ -104,21 +180,27 @@ export function usePdfTextSelection({
 			// toolbar appear off-screen and seem missing.
 			const state = selectionCap.getState(docId);
 			const endPage = state.selection?.end?.page ?? null;
-			const anchorPage =
-				(endPage != null
-					? pages.find((p) => p.pageIndex === endPage)
-					: undefined) ??
-				pages[pages.length - 1] ??
-				pages[0];
-			if (!anchorPage) return;
+			const anchorPage = menuAnchorPage(
+				pages,
+				endPage != null ? endPage : undefined,
+			);
+			if (!anchorPage) {
+				setIsSelecting(false);
+				return;
+			}
 
-			const pageEl = pageElByIndex(hostRef.current, anchorPage.pageIndex);
-			if (!pageEl) return;
-			const screen = rectTopCenterScreen(
-				pageEl,
-				anchorPage.rect,
+			const placed = menuScreenPoints(
+				hostRef.current,
+				anchorPage,
 				zoomRef.current,
 			);
+			if (!placed) {
+				setIsSelecting(false);
+				return;
+			}
+			const { screen, bottomRight } = placed;
+			// Keep isSelecting true across the async quote extract so link
+			// previews cannot flash between mouseup and the selection menu.
 			void (async () => {
 				let quote = "";
 				try {
@@ -135,8 +217,12 @@ export function usePdfTextSelection({
 					"selection",
 					anchorPage.pageIndex,
 				);
-				if (!anchor) return;
-				setSelectionMenu({ screen, anchor, pages });
+				if (!anchor) {
+					setIsSelecting(false);
+					return;
+				}
+				setSelectionMenu({ screen, bottomRight, anchor, pages });
+				setIsSelecting(false);
 				publishSelection({
 					text: quote,
 					sourcePath: paperRelPath ?? paperAbsPath ?? "PDF",
@@ -149,13 +235,16 @@ export function usePdfTextSelection({
 		});
 		const offChange = scope.onSelectionChange((sel) => {
 			if (!sel) {
+				setIsSelecting(false);
 				setSelectionMenu(null);
 				clearActiveSelection("pdf");
 			}
 		});
 		return () => {
+			offBegin();
 			offEnd();
 			offChange();
+			setIsSelecting(false);
 			clearActiveSelection("pdf");
 		};
 	}, [
@@ -208,6 +297,8 @@ export function usePdfTextSelection({
 	return {
 		selectionMenu,
 		setSelectionMenu,
+		isSelecting,
 		closeSelectionMenu,
+		rePlaceSelectionMenu,
 	};
 }

@@ -140,7 +140,7 @@ export function PlazaSkillsView({ className }: { className?: string }) {
 				className,
 			)}
 		>
-			<h1 className="font-medium text-sm">{t("plaza.skills.title")}</h1>
+			<h1 className="font-medium text-base">{t("plaza.skills.title")}</h1>
 			<div className="mt-4 space-y-6">
 				{SKILL_THEMES.map((theme) => (
 					<section key={theme.id}>

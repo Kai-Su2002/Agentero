@@ -46,6 +46,7 @@ import {
 	type ToolAskUserRequest,
 	upsertChatSessionTurn,
 } from "@/lib/agent/chat-state";
+import { stripInlineTokens } from "@/lib/agent/composer-inline-tokens";
 import type { AgentComposerState } from "@/lib/agent/composer-state";
 import {
 	consumeSelections,
@@ -266,22 +267,27 @@ export function useAgentSend({
 		textRaw: string,
 		options?: SendOptions,
 	): Promise<boolean> => {
-		const text = textRaw.trim();
+		// Inline @/$ markers stay in the draft; the user bubble / ACP body is plain.
+		const text = stripInlineTokens(textRaw).trim();
 		const resolvedVisualDrafts = options?.visualDrafts ?? currentVisualDrafts();
 		const hasVisualDrafts = resolvedVisualDrafts.length > 0;
 		const attachedImages = (options?.images ?? []).filter(
 			(img) => img.data.trim().length > 0,
 		);
 		const hasAttachedImages = attachedImages.length > 0;
+		const fromQueue = options?.fromQueue === true;
+		const snap = snapshotComposerState();
+		const hasInlineContext =
+			snap.mentionedPaths.length > 0 ||
+			snap.selectedSkillIds.length > 0 ||
+			(snap.includeSelectedFile && Boolean(selectedVaultPath));
 		if (
-			(!text && !hasVisualDrafts && !hasAttachedImages) ||
+			(!text && !hasVisualDrafts && !hasAttachedImages && !hasInlineContext) ||
 			activeTabIsRunning ||
 			switchingRef.current ||
 			submittingRef.current
 		)
 			return false;
-		const fromQueue = options?.fromQueue === true;
-		const snap = snapshotComposerState();
 		const submittedComposerState = fromQueue
 			? {
 					text: textRaw,
@@ -612,16 +618,23 @@ export function useAgentSend({
 
 	const enqueueMessage = useCallback(
 		(textRaw: string, workflow?: string, images?: PromptImage[]): boolean => {
-			const text = textRaw.trim();
+			const text = stripInlineTokens(textRaw).trim();
 			const liveVisualDrafts = currentVisualDrafts();
 			const attached = (images ?? []).filter((img) => img.data.trim().length);
+			const snap = snapshotComposerState();
+			const hasInlineContext =
+				snap.mentionedPaths.length > 0 ||
+				snap.selectedSkillIds.length > 0 ||
+				(snap.includeSelectedFile && Boolean(selectedVaultPath));
 			if (
-				(!text && !liveVisualDrafts.length && !attached.length) ||
+				(!text &&
+					!liveVisualDrafts.length &&
+					!attached.length &&
+					!hasInlineContext) ||
 				switchingRef.current
 			) {
 				return false;
 			}
-			const snap = snapshotComposerState();
 			const paths = [
 				...(snap.includeSelectedFile && selectedVaultPath
 					? [selectedVaultPath]

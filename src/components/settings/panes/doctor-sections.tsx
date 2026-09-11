@@ -1,7 +1,12 @@
 import { CheckCircle2, TriangleAlert } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import {
+	settingsCardClassName,
+	settingsRowClassName,
+} from "@/components/settings/settings-layout";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/core/utils";
 import type { DoctorIssue, WikiCheckIssue } from "@/lib/doctor/api";
 import {
 	measureMonoText,
@@ -18,6 +23,8 @@ export function DoctorSection({
 	action,
 	/** Cap list height and scroll (wikilinks / aliases with many rows). */
 	scrollable = false,
+	/** Wrap children in a single bordered card (disable for per-item cards). */
+	framed = true,
 	/** Short muted rule under the section (omit on the last block). */
 	showDivider = true,
 	children,
@@ -28,6 +35,7 @@ export function DoctorSection({
 	issueCount: number;
 	action?: ReactNode;
 	scrollable?: boolean;
+	framed?: boolean;
 	showDivider?: boolean;
 	children?: ReactNode;
 }) {
@@ -37,12 +45,20 @@ export function DoctorSection({
 	return (
 		<div className={showDivider ? "mb-2 pb-6" : "mb-5"}>
 			<div className="mb-1 flex items-center gap-3 px-0.5">
-				<p className="min-w-0 flex-1 font-medium text-[13px]">{title}</p>
-				<span className="flex shrink-0 items-center gap-1.5 text-[13px]">
+				<p className="min-w-0 flex-1 font-medium text-sm text-foreground">
+					{title}
+				</p>
+				<span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
 					{ok ? (
-						<CheckCircle2 className="size-4 text-emerald-600" />
+						<CheckCircle2
+							className="size-4 text-emerald-600 dark:text-emerald-500"
+							aria-hidden
+						/>
 					) : (
-						<TriangleAlert className="size-4 text-amber-600" />
+						<TriangleAlert
+							className="size-4 text-amber-600 dark:text-amber-500"
+							aria-hidden
+						/>
 					)}
 					{t("doctor.issueCount", { count: issueCount })}
 				</span>
@@ -54,15 +70,19 @@ export function DoctorSection({
 				</p>
 			) : null}
 			{hasList ? (
-				<div
-					className={
-						scrollable
-							? "max-h-60 overflow-y-auto overflow-x-hidden rounded-xl border bg-card"
-							: "overflow-hidden rounded-xl border bg-card"
-					}
-				>
-					{children}
-				</div>
+				framed ? (
+					<div
+						className={cn(
+							settingsCardClassName,
+							scrollable &&
+								"max-h-60 overflow-y-auto overflow-x-hidden overscroll-y-contain",
+						)}
+					>
+						{children}
+					</div>
+				) : (
+					children
+				)
 			) : null}
 			{showDivider ? (
 				<div className="mt-6 flex justify-center px-6" aria-hidden>
@@ -79,14 +99,18 @@ export function IssueRows({ issues }: { issues: DoctorIssue[] }) {
 			{issues.map((issue) => (
 				<div
 					key={`${issue.code}:${issue.path ?? ""}:${issue.message}`}
-					className="border-b px-3.5 py-2.5 last:border-b-0"
+					className={cn(settingsRowClassName, "items-start")}
 				>
-					<p className="text-[13px] leading-snug">{issue.message}</p>
-					{issue.path ? (
-						<p className="mt-0.5 truncate text-muted-foreground text-xs">
-							{issue.path}
+					<div className="min-w-0">
+						<p className="text-sm leading-snug text-foreground">
+							{issue.message}
 						</p>
-					) : null}
+						{issue.path ? (
+							<p className="mt-0.5 truncate text-muted-foreground text-xs">
+								{issue.path}
+							</p>
+						) : null}
+					</div>
 				</div>
 			))}
 		</>
@@ -104,7 +128,7 @@ export function WikiIssueRows({ issues }: { issues: WikiCheckIssue[] }) {
 				return (
 					<div
 						key={`${issue.source}:${issue.line}:${issue.targetRaw}:${issue.status}:${issue.context ?? ""}`}
-						className="border-b px-3.5 py-2.5 last:border-b-0"
+						className={cn(settingsRowClassName, "items-start")}
 					>
 						<p className="truncate font-mono text-muted-foreground text-xs">
 							{issue.source}:{issue.line}

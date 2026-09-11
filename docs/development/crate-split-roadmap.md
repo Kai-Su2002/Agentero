@@ -68,9 +68,11 @@ parse 引擎同理：远端引擎（MinerU/Paddle/OpenAI-compatible，依赖 `la
 
 ## 下一步（Phase 3 建议）
 
-1. **事件抽象扩展**：把 `HostHooks` 泛化为完整宿主面（vault:open-request、connector、job 事件、window 聚焦），消灭 `wrap()` 手工转换点；命令壳统一在入口构造一次 core `AppHandle`。
-2. **留守域瘦身**：`jobs`（JobCenter 调度核心可下沉，tauri spawn/emit 走 hooks）、`discovery/proxy`（`tauri::http` → 纯 axum/hyper 内核）、`heading_rename`（watcher 协同改回调）。
-3. **core 内路径扁平化**（可选）：`agentero_core::features::X` → `agentero_core::X`，与 Phase 1 顶层模块风格统一；Host 桥接不受影响。
+2026-09-08 更新：实施优先级以 [Rust 架构重构计划](rust-arch-refactor.md) 为准。Phase 1/2 的历史完成状态不变；下列建议尚未实施。
+
+1. **共享应用用例优先**：在现有 core 内按域收敛移动、trash/restore、入库的完整规则；Desktop、CLI、Connector 只做入口适配。先统一行为，再决定剩余模块是否搬迁。
+2. **收窄宿主接缝**：保留 HostHooks 的依赖倒置方向，分离事件通知与业务后续工作；PaperPreparation 显式生成计划，JobCenter 执行。取消把窗口聚焦、Connector、调度全部扩入万能 HostHooks 的旧建议。
+3. **保留语义目录**：继续 feature-first，不预设 core 顶层扁平化、新 platform 层或更多 crate。Agent 先解耦事件目标与执行环境，可以继续留在 desktop crate；别名与物理搬运后置。
 4. **reqwest 双版本对齐**：锁文件中同时存在 `reqwest 0.12.28`（agentero-core / agentero 直接使用）与 `reqwest 0.13.4`（传递依赖引入，如 rmcp 等）。两份 TLS/连接池栈增大包体与审计面；待依赖链（rmcp / tauri 生态）稳定后统一到一个大版本，core 与 Host 必须同步升级以避免 feature 漂移。
 5. **src-tauri 依赖清理**（保守未删）：迁移后 `feed-rs`、`dom_smoothie`、`pulldown-cmark`、`bitflags` 在 `src-tauri/src` 已无直接引用，可在确认无 build 脚本/宏隐式依赖后从 `src-tauri/Cargo.toml` 移除。
 6. **iOS/Android 目标**：core 的 `not(ios/android)` 门（parse/locate/liteparse）与 Host 侧模块 cfg 门需保持同步；mobile 构建恢复时验证 remote bridge 路径。

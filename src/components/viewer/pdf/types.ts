@@ -100,8 +100,26 @@ export type CardScreenPoint = ScreenPoint & {
 };
 
 export type SelectionMenuState = {
+	/** Top-center of the selection — floating toolbar anchor. */
 	screen: ScreenPoint;
+	/** Bottom-right of the last selected line — Add-to-chat pill anchor. */
+	bottomRight: ScreenPoint;
 	anchor: PdfAskAnchor;
+	pages: FormattedSelection[];
+};
+
+/**
+ * Sticky right-rail chip for annotating the current (or just-cleared) text
+ * selection. Hover enters edit; leave with empty text collapses to the icon
+ * card. Commit uses snapped `pages` even if EmbedPDF cleared the live selection.
+ */
+export type SelectionCommentDraft = {
+	/** 1-based page number (matches `commentsByPage` keys). */
+	page: number;
+	/** Normalized Y of the selection top (0–1). */
+	anchorY: number;
+	quote: string;
+	/** EmbedPDF selection pages snapped when the chip was armed. */
 	pages: FormattedSelection[];
 };
 
@@ -166,6 +184,12 @@ export type PageAnnotationComment = {
 	linkAlias: string | null;
 	/** Visual marks with an Agent conversation show a truncated inline preview. */
 	messages?: PageAnnotationCommentMessage[];
+	/**
+	 * True when this card represents a freshly-created note that has not been
+	 * saved yet. If the editor closes without a non-empty comment, the underlying
+	 * mark is removed instead of leaving an empty highlight (#491).
+	 */
+	isNew?: boolean;
 };
 
 /**
@@ -182,4 +206,9 @@ export type RailEditState = {
 	anchorY: number;
 	/** Normalized rects covering the highlighted text / visual region. */
 	rects: PdfAskNormalizedRect[];
+	/**
+	 * True when the editor was opened for a freshly-created note. Closing or
+	 * saving an empty new note deletes the underlying mark (#491).
+	 */
+	isNew?: boolean;
 };

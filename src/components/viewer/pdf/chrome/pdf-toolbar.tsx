@@ -16,6 +16,12 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import {
+	PDF_CHROME_CHIP,
+	PDF_CHROME_VIS,
+	PDF_CHROME_VIS_HIDE,
+	PDF_CHROME_VIS_SHOW,
+} from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
 import { cn } from "@/lib/core/utils";
 import {
 	formatPdfZoomPercentage,
@@ -82,14 +88,17 @@ export function PdfToolbar({
 	return (
 		<div
 			className={cn(
-				"pointer-events-none absolute top-2 right-3 z-20 flex items-center gap-1 transition-opacity duration-200",
-				visible ? "opacity-100" : "opacity-0",
+				"pointer-events-none absolute top-2 right-3 z-20 flex items-center gap-1 origin-top-right",
+				PDF_CHROME_VIS,
+				visible ? PDF_CHROME_VIS_SHOW : PDF_CHROME_VIS_HIDE,
 			)}
 		>
 			<TooltipProvider delayDuration={200}>
 				<div
+					data-pdf-chrome
 					className={cn(
-						"flex h-7 select-none items-center gap-0.5 rounded-lg border border-border/80 bg-background/95 p-0.5 shadow-sm backdrop-blur-sm",
+						"flex h-7 select-none items-center gap-0.5 rounded-lg p-0.5",
+						PDF_CHROME_CHIP,
 						visible ? "pointer-events-auto" : "pointer-events-none",
 					)}
 				>
@@ -119,7 +128,7 @@ export function PdfToolbar({
 							title={t("pdf.zoomPercentage")}
 							size={Math.max(zoomField.length, 1)}
 							style={{ width: `${Math.max(zoomField.length, 1)}ch` }}
-							className="h-6 min-w-[1ch] rounded border border-transparent bg-transparent p-0 text-center font-medium text-muted-foreground text-xs leading-6 tabular-nums outline-none hover:border-border focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
+							className="h-6 min-w-[1ch] rounded border border-transparent bg-transparent p-0 text-center font-medium text-muted-foreground text-sm leading-6 tabular-nums outline-none hover:border-border focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
 							onChange={(event) => onZoomFieldChange(event.target.value)}
 							onFocus={(event) => {
 								zoomFieldFocusedRef.current = true;
@@ -147,7 +156,7 @@ export function PdfToolbar({
 						/>
 						<span
 							aria-hidden="true"
-							className="select-none text-muted-foreground text-xs leading-none"
+							className="select-none text-muted-foreground text-sm leading-none"
 						>
 							%
 						</span>

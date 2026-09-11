@@ -83,7 +83,7 @@ export function MoveDestinationPicker({
 				<div className="space-y-1">
 					<Label
 						htmlFor="move-new-folder"
-						className="text-[10px] text-muted-foreground"
+						className="text-caption text-muted-foreground"
 					>
 						{t("fileTree.movePicker.newFolder")}
 					</Label>
@@ -106,7 +106,7 @@ export function MoveDestinationPicker({
 						/>
 					</div>
 					{typed && !destValid ? (
-						<p className="text-[10px] text-destructive">
+						<p className="text-caption text-destructive">
 							{t("fileTree.movePicker.invalidFolderPath")}
 						</p>
 					) : null}

@@ -101,7 +101,7 @@ export function AnnotationsPanel({
 					{asks.length > 0 ? (
 						<section aria-label={t("annotations.sectionAsks")}>
 							{multiSection ? (
-								<h3 className="mb-1.5 px-1 font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
+								<h3 className="mb-1.5 px-1 font-medium text-xs text-muted-foreground uppercase tracking-wider">
 									{t("annotations.sectionAsks")}
 								</h3>
 							) : null}
@@ -122,7 +122,7 @@ export function AnnotationsPanel({
 					{visualTraces.length > 0 ? (
 						<section aria-label={t("annotations.sectionVisual")}>
 							{multiSection ? (
-								<h3 className="mb-1.5 px-1 font-medium text-[10px] text-muted-foreground uppercase tracking-wider">
+								<h3 className="mb-1.5 px-1 font-medium text-xs text-muted-foreground uppercase tracking-wider">
 									{t("annotations.sectionVisual")}
 								</h3>
 							) : null}
@@ -177,16 +177,16 @@ function AskCard({
 						className="size-3 shrink-0 text-muted-foreground"
 						aria-hidden
 					/>
-					<span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wider tabular-nums">
+					<span className="font-medium text-xs text-muted-foreground uppercase tracking-wider tabular-nums">
 						{t("annotations.pageLabel", { page: ask.page })}
 					</span>
 					{ask.messageCount > 0 ? (
-						<span className="text-[10px] text-muted-foreground/80 tabular-nums">
+						<span className="text-caption text-muted-foreground/80 tabular-nums">
 							{t("annotations.askTurns", { count: ask.messageCount })}
 						</span>
 					) : null}
 				</div>
-				<p className="mt-1.5 line-clamp-2 text-[13px] text-foreground leading-relaxed">
+				<p className="mt-1.5 line-clamp-2 text-sm text-foreground leading-relaxed">
 					{ask.preview}
 				</p>
 			</div>
@@ -248,11 +248,11 @@ function VisualTraceListCard({
 						className="size-3 shrink-0 text-violet-600 dark:text-violet-400"
 						aria-hidden
 					/>
-					<span className="font-medium text-[10px] text-muted-foreground uppercase tracking-wider tabular-nums">
+					<span className="font-medium text-xs text-muted-foreground uppercase tracking-wider tabular-nums">
 						{t("annotations.pageLabel", { page: trace.page })}
 					</span>
 				</div>
-				<p className="mt-1.5 line-clamp-2 text-[13px] text-foreground leading-relaxed">
+				<p className="mt-1.5 line-clamp-2 text-sm text-foreground leading-relaxed">
 					{trace.preview}
 				</p>
 				{trace.thumbnail?.data ? (
@@ -301,7 +301,7 @@ function VisualTraceListCard({
 									)
 								}
 							>
-								<span className="font-mono text-[10px] leading-none">![[</span>
+								<span className="font-mono text-caption leading-none">![[</span>
 							</Button>
 						</>
 					) : null}

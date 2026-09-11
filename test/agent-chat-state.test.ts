@@ -642,6 +642,60 @@ describe("buildOptions / resolveSelected", () => {
 		expect(resolveSelected(opts, "reg-1", registry)?.id).toBe("reg-1");
 		expect(resolveSelected(opts, null, registry)?.isDefault).toBe(true);
 	});
+
+	it("sorts catalog entries alphabetically regardless of input order", () => {
+		const shuffledCatalog: CatalogScanResponse = {
+			...catalog,
+			entries: [
+				{
+					templateId: "opencode",
+					name: "OpenCode",
+					description: "",
+					command: "opencode",
+					args: [],
+					installHint: "",
+					binaryAvailable: true,
+					acpCommandAvailable: true,
+					acpStatus: "ready",
+					registeredId: "opencode-1",
+					isDefault: false,
+				},
+				{
+					templateId: "claude-acp",
+					name: "Claude",
+					description: "",
+					command: "claude",
+					args: [],
+					installHint: "",
+					binaryAvailable: true,
+					acpCommandAvailable: true,
+					acpStatus: "ready",
+					registeredId: "claude-1",
+					isDefault: true,
+				},
+				{
+					templateId: "codex-acp",
+					name: "Codex",
+					description: "",
+					command: "codex",
+					args: [],
+					installHint: "",
+					binaryAvailable: true,
+					acpCommandAvailable: true,
+					acpStatus: "ready",
+					registeredId: "codex-1",
+					isDefault: false,
+				},
+			],
+		};
+		const opts = buildOptions(registry, shuffledCatalog);
+		expect(opts.map((o) => o.name)).toEqual([
+			"Claude",
+			"Codex",
+			"OpenCode",
+			"Reg",
+		]);
+	});
 });
 
 describe("dedupeModelsClient", () => {

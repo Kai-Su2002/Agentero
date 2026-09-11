@@ -4,8 +4,14 @@
  * real API key; the WebView only ever sees a `*` mask.
  */
 
-/** Layout provider ids with remote credentials (shared with the body parser). */
+/**
+ * Layout provider ids with remote credentials (shared with the body parser).
+ * `agentero` is the built-in parser: the Host injects its compiled-in
+ * credential, so it has no user-facing config card. It is a PARSER backend
+ * only — layout analysis stays on the local ONNX model (`LAYOUT_BACKENDS`).
+ */
 export const LAYOUT_PROVIDER_IDS = [
+	"agentero",
 	"paddle",
 	"mineru",
 	"openaiCompatible",
@@ -24,9 +30,12 @@ export type LayoutBackend = (typeof LAYOUT_BACKENDS)[number];
  * PAPER.md body-parse engine (`local` = liteparse; the rest run in the cloud
  * and fall back to local on failure). `openaiCompatible` is per-page VLM OCR
  * through an OpenAI-style `/chat/completions` endpoint (SiliconFlow preset).
+ * `agentero` is the built-in VLM parser (no user credential); it is a parser
+ * backend only and never a layout-analysis backend.
  */
 export const PARSER_BACKENDS = [
 	"local",
+	"agentero",
 	"paddle",
 	"mineru",
 	"openaiCompatible",
@@ -100,6 +109,8 @@ export const LAYOUT_PADDLE_JOBS_URL =
 
 /** Docs / console pages for obtaining keys (settings UI external link). */
 export const LAYOUT_PROVIDER_DOCS_URLS: Record<LayoutProviderId, string> = {
+	// Built-in provider has no key page; the card is never rendered.
+	agentero: "https://github.com/poco-ai/Agentero",
 	paddle: "https://aistudio.baidu.com/account/accessToken",
 	mineru: "https://mineru.net/apiManage/token",
 	openaiCompatible: "https://cloud.siliconflow.cn/i/b9LPNHTG",

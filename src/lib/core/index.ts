@@ -53,7 +53,11 @@ export {
 export { createKeyedCache } from "@/lib/core/keyed-cache";
 export { initLogger, logger } from "@/lib/core/logger";
 export { clamp, clamp01 } from "@/lib/core/math";
-export { prefersReducedMotion, scrollBehavior } from "@/lib/core/motion";
+export {
+	MOTION_MS,
+	prefersReducedMotion,
+	scrollBehavior,
+} from "@/lib/core/motion";
 export {
 	errorMessage,
 	notifyAction,

@@ -30,6 +30,10 @@ const ERROR_SNIPPET_CHARS: usize = 180;
 
 static PROXY_URL: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 static SHARED_CLIENT: OnceLock<RwLock<Option<CachedClient>>> = OnceLock::new();
+/// Optional URL-prefix mirror for GitHub download hosts (Skill import, etc.).
+/// `None` = disabled. Value is a trimmed base without a trailing slash, e.g.
+/// `https://gh.llkk.cc` → requests become `{base}/https://codeload.github.com/...`.
+static GITHUB_MIRROR: OnceLock<RwLock<Option<String>>> = OnceLock::new();
 /// (last detected OS system proxy, when it was checked). `None` timestamp =
 /// never checked.
 static SYSTEM_PROXY: OnceLock<RwLock<(Option<String>, Option<Instant>)>> = OnceLock::new();
@@ -268,6 +272,150 @@ pub fn http_err_snippet(text: &str) -> String {
     text.chars().take(ERROR_SNIPPET_CHARS).collect()
 }
 
+fn github_mirror_slot() -> &'static RwLock<Option<String>> {
+    GITHUB_MIRROR.get_or_init(|| RwLock::new(None))
+}
+
+/// Enable / disable the process-wide GitHub URL-prefix mirror.
+///
+/// When `enabled` is true and `base_url` is non-empty, it must be an absolute
+/// `http`/`https` URL. Empty base while enabled soft-disables (no error) so the
+/// Settings switch can flip before the user pastes a mirror.
+pub fn configure_github_mirror(enabled: bool, base_url: &str) -> Result<(), AppError> {
+    let next = if enabled {
+        let normalized = base_url.trim().trim_end_matches('/').to_string();
+        if normalized.is_empty() {
+            None
+        } else {
+            Some(normalize_github_mirror_base(&normalized)?)
+        }
+    } else {
+        None
+    };
+    let mut guard = github_mirror_slot()
+        .write()
+        .map_err(|_| AppError::message("github mirror lock poisoned"))?;
+    *guard = next;
+    Ok(())
+}
+
+fn normalize_github_mirror_base(base: &str) -> Result<String, AppError> {
+    let parsed = url::Url::parse(base)
+        .map_err(|e| AppError::message(format!("invalid GitHub mirror URL: {e}")))?;
+    match parsed.scheme() {
+        "http" | "https" => {}
+        other => {
+            return Err(AppError::message(format!(
+                "GitHub mirror URL must be http(s), got {other}"
+            )));
+        }
+    }
+    if parsed.host_str().is_none() {
+        return Err(AppError::message("GitHub mirror URL is missing a host"));
+    }
+    // Drop query/fragment; keep origin (+ optional non-root path without trailing /).
+    let mut out = format!(
+        "{}://{}",
+        parsed.scheme(),
+        parsed.host_str().unwrap_or_default()
+    );
+    if let Some(port) = parsed.port() {
+        out.push(':');
+        out.push_str(&port.to_string());
+    }
+    let path = parsed.path().trim_end_matches('/');
+    if !path.is_empty() && path != "/" {
+        out.push_str(path);
+    }
+    Ok(out)
+}
+
+/// Currently configured mirror base, if any.
+pub fn github_mirror_base() -> Option<String> {
+    github_mirror_slot().read().ok().and_then(|g| g.clone())
+}
+
+fn is_github_download_host(host: &str) -> bool {
+    matches!(
+        host,
+        "github.com"
+            | "api.github.com"
+            | "codeload.github.com"
+            | "raw.githubusercontent.com"
+            | "objects.githubusercontent.com"
+            | "gist.githubusercontent.com"
+    )
+}
+
+/// Prefix `canonical` with the mirror base (`{base}/{canonical}`).
+pub fn mirror_github_url(base: &str, canonical: &str) -> Option<String> {
+    let parsed = url::Url::parse(canonical).ok()?;
+    let host = parsed.host_str()?;
+    if !is_github_download_host(host) {
+        return None;
+    }
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return None;
+    }
+    let base = base.trim().trim_end_matches('/');
+    if base.is_empty() {
+        return None;
+    }
+    Some(format!("{base}/{canonical}"))
+}
+
+/// Fetch candidates for a canonical GitHub URL: direct first, then mirror.
+pub fn github_url_candidates(canonical: &str) -> Vec<String> {
+    let mut out = vec![canonical.to_string()];
+    if let Some(base) = github_mirror_base() {
+        if let Some(mirrored) = mirror_github_url(&base, canonical) {
+            if mirrored != canonical {
+                out.push(mirrored);
+            }
+        }
+    }
+    out
+}
+
+/// Whether an HTTP status should trigger trying the next GitHub mirror candidate.
+/// Client errors (4xx except 429) are definitive and must not fall back.
+pub fn should_fallback_github_status(status: reqwest::StatusCode) -> bool {
+    status.as_u16() == 429 || status.is_server_error()
+}
+
+/// Whether a transport / reqwest error should trigger mirror fallback.
+pub fn should_fallback_github_transport(err: &reqwest::Error) -> bool {
+    if let Some(status) = err.status() {
+        return should_fallback_github_status(status);
+    }
+    true
+}
+
+/// Classify `AppError` messages produced by Skill / download helpers for mirror
+/// fallback. Prefer status-aware helpers when the status is still in hand.
+pub fn should_fallback_github_error(err: &AppError) -> bool {
+    let msg = err.to_string();
+    if let Some(rest) = msg.strip_prefix("download HTTP ") {
+        let code = rest
+            .split(|c: char| c.is_whitespace() || c == '/')
+            .next()
+            .and_then(|s| s.parse::<u16>().ok());
+        return matches!(code, Some(c) if c == 429 || (500..600).contains(&c));
+    }
+    if let Some(rest) = msg.strip_prefix("GitHub repository lookup failed: ") {
+        // `StatusCode` Display is like "502 Bad Gateway" or "404 Not Found".
+        let code = rest
+            .split_whitespace()
+            .next()
+            .and_then(|s| s.parse::<u16>().ok());
+        return matches!(code, Some(c) if c == 429 || (500..600).contains(&c));
+    }
+    msg.starts_with("download:")
+        || msg.starts_with("download body:")
+        || msg.starts_with("skill metadata request:")
+        || msg.starts_with("http client:")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -320,5 +468,72 @@ mod tests {
         let body = "x".repeat(ERROR_SNIPPET_CHARS + 40);
         assert_eq!(http_err_snippet(&body).len(), ERROR_SNIPPET_CHARS);
         assert_eq!(http_err_snippet("short body"), "short body");
+    }
+
+    #[test]
+    fn normalize_github_mirror_base_strips_trailing_slash() {
+        assert_eq!(
+            normalize_github_mirror_base("https://gh.llkk.cc/").unwrap(),
+            "https://gh.llkk.cc"
+        );
+        assert_eq!(
+            normalize_github_mirror_base("https://example.test:8443/gh").unwrap(),
+            "https://example.test:8443/gh"
+        );
+    }
+
+    #[test]
+    fn rejects_non_http_github_mirror() {
+        let err = normalize_github_mirror_base("ftp://mirror.test").unwrap_err();
+        assert!(err.to_string().contains("http(s)"));
+    }
+
+    #[test]
+    fn github_url_candidates_direct_then_mirror() {
+        configure_github_mirror(false, "").unwrap();
+        let only = github_url_candidates("https://codeload.github.com/o/r/tar.gz/main");
+        assert_eq!(only.len(), 1);
+
+        configure_github_mirror(true, "https://gh.llkk.cc/").unwrap();
+        let both = github_url_candidates("https://api.github.com/repos/o/r");
+        assert_eq!(
+            both,
+            vec![
+                "https://api.github.com/repos/o/r".to_string(),
+                "https://gh.llkk.cc/https://api.github.com/repos/o/r".to_string(),
+            ]
+        );
+        // Non-GitHub hosts are never mirrored.
+        assert_eq!(github_url_candidates("https://example.com/x").len(), 1);
+        configure_github_mirror(false, "").unwrap();
+    }
+
+    #[test]
+    fn fallback_classifies_status_and_messages() {
+        assert!(should_fallback_github_status(
+            reqwest::StatusCode::TOO_MANY_REQUESTS
+        ));
+        assert!(should_fallback_github_status(
+            reqwest::StatusCode::BAD_GATEWAY
+        ));
+        assert!(!should_fallback_github_status(
+            reqwest::StatusCode::NOT_FOUND
+        ));
+        assert!(!should_fallback_github_status(
+            reqwest::StatusCode::FORBIDDEN
+        ));
+
+        assert!(should_fallback_github_error(&AppError::message(
+            "download: error sending request"
+        )));
+        assert!(should_fallback_github_error(&AppError::message(
+            "download HTTP 502 Bad Gateway"
+        )));
+        assert!(!should_fallback_github_error(&AppError::message(
+            "download HTTP 404 Not Found"
+        )));
+        assert!(!should_fallback_github_error(&AppError::message(
+            "GitHub repository lookup failed: 404 Not Found"
+        )));
     }
 }

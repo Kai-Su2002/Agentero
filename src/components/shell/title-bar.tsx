@@ -72,7 +72,7 @@ export const TitleBar = memo(function TitleBar({
 	return (
 		<header
 			data-titlebar
-			className="flex h-8 shrink-0 items-center border-b select-none"
+			className="flex h-8 shrink-0 items-center border-b border-border/50 bg-background/75 backdrop-blur-xl backdrop-saturate-150 supports-backdrop-blur:bg-background/65 select-none"
 		>
 			{/*
 			  Traffic lights: x=14, three ~14px buttons + gaps → ends ~68px.
@@ -188,15 +188,9 @@ export const TitleBar = memo(function TitleBar({
 											type="button"
 											variant="ghost"
 											size="icon-xs"
-											className="group"
 											aria-label={t("titlebar.settings")}
 										>
-											<Settings
-												className={cn(
-													"size-3.5",
-													"transition-transform duration-200 ease-out group-hover:rotate-90",
-												)}
-											/>
+											<Settings className="size-3.5" />
 										</Button>
 									</DropdownMenuTrigger>
 								</TooltipTrigger>

@@ -60,7 +60,6 @@
 	"composer": {
 		"placeholder": "How can I help you today?",
 		"interruptHint": "Press Esc to interrupt",
-		"queueHint": "Type a follow-up — it waits until the current reply finishes (Esc to stop)",
 		"queueLabel": "Queued",
 		"queueRemove": "Remove from queue",
 		"contextInstruction": "Read these Vault files before answering when relevant:",
@@ -114,6 +113,14 @@
 		"waiting": "Waiting for agent…"
 	},
 	"thinking": "Thinking…",
+	"working": "Working…",
+	"solving": "Solving…",
+	"streaming": {
+		"thinking": "Thinking",
+		"reasoning": "Reasoning",
+		"plan": "Planning",
+		"elapsed": "{{count}}s"
+	},
 	"copy": "Copy",
 	"copied": "Copied",
 	"edit": {
@@ -168,9 +175,9 @@
 	},
 	"messages": {
 		"cancelled": "Stopped the current run.",
-		"switchedTo": "Switched to {{name}}",
 		"desktopOnly": "Open the desktop app to run agents.",
 		"noAgent": "No available agent. Open Settings → Agent to configure one.",
-		"sessionUnavailable": "Could not restore this Agent session. Showing the saved answer snapshot when available."
+		"sessionUnavailable": "Could not restore this Agent session. Showing the saved answer snapshot when available.",
+		"sessionEmpty": "This session has no replayable messages."
 	}
 }

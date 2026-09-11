@@ -9,6 +9,7 @@ Headless Vault / Catalog / Wiki 接口；**不含** BYOA / paper-reader。
 - 可选同版本 CLI 安装（不随桌面安装包打入，减小体积 [#285](https://github.com/poco-ai/Agentero/issues/285)；open/deep-link 仍见 [#165](https://github.com/poco-ai/Agentero/issues/165) / [#166](https://github.com/poco-ai/Agentero/issues/166)）
   - 设置 → 关于：**安装 CLI** 从 GitHub Release 下载与 App **同版本** 的 `agentero-cli-{ver}-{triple}` 归档，校验 `.sha256` 后写入用户目录并创建 PATH shim。POSIX 写 `~/.local/bin/agentero` 软链（不静默改 shell rc）；Windows 写 `agentero-cli.cmd` 并**自动把安装目录加入用户 PATH**（`HKCU\Environment`，广播 `WM_SETTINGCHANGE`，无需重启，新开终端即可用 `agentero-cli`）。下载 404 的错误文案会带上完整资产 URL（含宿主 triple），架构/版本不匹配时自解释；`CliInstallStatus.commandName` 供前端按平台展示验证命令
   - 独立 CLI 归档仍随每次 Release 发布，供无桌面的 headless 机器使用；macOS 亦可通过 Homebrew tap `poco-ai/agentero` 安装 headless CLI
+  - **更新后自动同步**：应用内更新只替换 GUI 包；更新重启后的新进程在 main window 启动时检测已安装 shim（`installed && !shimCurrent`，见 `syncInstalledCliWithApp`），自动重新下载同版本 CLI 并刷新 shim（Host 按编译期 App 版本下载校验，旧进程无法预装新版 CLI，故只能在新进程里同步）。成功静默，失败 `notifyError` Toast；dev 环境与未安装 CLI 时跳过
 
 ## 命令组
 
@@ -101,6 +102,9 @@ agentero translate "Hello world" --to zh-CN --json
 定位跑在与 `PAPER.md` 解析同一套隔离 worker 子进程里（`--agentero-internal-pdf-locate-worker`，
 30s 硬超时），PDFium 卡死不会拖住 CLI。翻译只用免费引擎（`translate_text` 的 FREE_PROVIDERS，
 zh 目标走并行竞速）；商业 BYOK Key 只在桌面 settings 里，CLI 拿不到也不去读。
+内置 provider `agentero` **刻意不在** FREE_PROVIDERS 里，所以 `--provider agentero` 会被拒：
+`--provider` 就是拿这个清单门控的，随后又以 `api_key: None` 调用，加进去等于让 CLI 接受一个
+它无法认证的 provider。内置凭证只编在桌面 Host 二进制里（见 [builtin-provider.md](builtin-provider.md)）。
 
 阅读器侧：打开论文时导入 `annotations.json`，并监听该文件的**外部**变更增量导入，
 所以论文开着时跑 CLI 也能在 1~2 秒内看到黄底（见 [frontend/pdf.md](../frontend/pdf.md)）。

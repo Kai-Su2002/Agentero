@@ -267,9 +267,12 @@ export function useAgentConfig({
 	const refresh = useCallback(async () => {
 		if (!isTauri()) return;
 		try {
-			const [list, scan, discoveredSkills] = await Promise.all([
+			// Scan first: scanCatalog now auto-registers catalog agents that are
+			// on PATH but not yet persisted, so listAgents() returns them without
+			// requiring the user to open Settings first.
+			const scan = await scanCatalog();
+			const [list, discoveredSkills] = await Promise.all([
 				listAgents(),
-				scanCatalog(),
 				listAgentSkills(vaultPath ?? undefined).catch(() => []),
 			]);
 			setRegistry(list);

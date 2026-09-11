@@ -5,9 +5,11 @@ import {
 	type CatalogEntry,
 	type CatalogScanResponse,
 	removeAgent,
+	runPartialUninstall,
 	type ToolLifecycleAction,
 	toolUninstallInfo,
 	type UninstallInfo,
+	type UninstallScope,
 } from "@/lib/agent";
 import { errorText } from "@/lib/core/error";
 import { notifyError, notifySuccess } from "@/lib/core/notify";
@@ -58,18 +60,39 @@ export function useAgentUninstall({
 		setUninstallTarget(target);
 	}, []);
 
-	const onUninstallConfirm = async () => {
+	const onUninstallConfirm = async (scope: UninstallScope) => {
 		const target = uninstallTarget;
 		if (!target || !isTauri()) return;
 		if (target.kind === "catalog") {
 			const info = target.info;
-			const hasPayload =
-				info !== null && (info.npmCommands.length > 0 || info.dirs.length > 0);
+			const hasAgentPayload =
+				info !== null &&
+				(info.agent.npmCommands.length > 0 || info.agent.dirs.length > 0);
+			const hasAcpPayload =
+				info !== null &&
+				(info.acp.npmCommands.length > 0 || info.acp.dirs.length > 0);
+			const hasPayload = hasAgentPayload || hasAcpPayload;
 			if (hasPayload) {
-				// Full uninstall runs the lifecycle (binaries + registry entry).
 				const entry = target.entry;
+				// Full uninstall reuses the existing lifecycle UI (progress + cancel).
+				if (scope === "all") {
+					setUninstallTarget(null);
+					await onToolLifecycle(entry, "uninstall");
+					return;
+				}
+				// Partial uninstall removes only the selected scope.
 				setUninstallTarget(null);
-				await onToolLifecycle(entry, "uninstall");
+				setUninstallBusy(true);
+				try {
+					await runPartialUninstall(entry.templateId, scope);
+					await scanOnce();
+					notifySuccess(t("agent.uninstallSuccess", { name: entry.name }));
+				} catch (e) {
+					notifyError(errorText(e));
+				} finally {
+					setUninstallBusy(false);
+					setUninstallTarget(null);
+				}
 				return;
 			}
 			// Registry-only removal (e.g. hermes has no managed uninstall).

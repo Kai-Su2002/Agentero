@@ -40,12 +40,19 @@ export const commands = {
 	 *  and build namespaced tags.
 	 */
 	easyScholarGetRank: (publicationName: string) => __TAURI_INVOKE<ApiResult<Json>>("easy_scholar_get_rank", { publicationName }),
+	builtinProviderStatus: () => __TAURI_INVOKE<ApiResult<BuiltinProviderStatus>>("builtin_provider_status"),
 	layoutModelStatus: () => __TAURI_INVOKE<ApiResult<LayoutModelStatus>>("layout_model_status"),
 	layoutRemoteAnalyzePdf: (args: LayoutRemoteAnalyzePdfArgs) => __TAURI_INVOKE<ApiResult<LayoutRemoteAnalyzePdfResult>>("layout_remote_analyze_pdf", { args }),
 	layoutRemoteProbe: (args: LayoutRemoteProbeArgs) => __TAURI_INVOKE<ApiResult<LayoutRemoteProbeResult>>("layout_remote_probe", { args }),
 	agentListAgents: () => __TAURI_INVOKE<ApiResult<AgentListResponse_Serialize>>("agent_list_agents"),
 	agentListSkills: (vaultPath: string | null) => typedError<ApiResult<AgentSkill[]>, string>(__TAURI_INVOKE("agent_list_skills", { vaultPath })),
 	agentScanCatalog: () => __TAURI_INVOKE<ApiResult<CatalogScanResponse_Serialize>>("agent_scan_catalog"),
+	/**
+	 *  Scan catalog and compare installed CLI versions against silent-update
+	 *  targets (npm latest / dsh pin). Settings shows Upgrade only when
+	 *  `updateAvailable === true`. Network / `--version` I/O runs on a worker.
+	 */
+	agentCheckCatalogUpdates: () => typedError<ApiResult<CatalogScanResponse_Serialize>, string>(__TAURI_INVOKE("agent_check_catalog_updates")),
 	agentUpsertAgent: (request: UpsertAgentRequest_Deserialize) => __TAURI_INVOKE<ApiResult<AgentOnly_Serialize>>("agent_upsert_agent", { request }),
 	agentEnsureCatalog: (templateId: string, setDefault: boolean) => __TAURI_INVOKE<ApiResult<AgentOnly_Serialize>>("agent_ensure_catalog", { templateId, setDefault }),
 	agentRemoveAgent: (id: string) => __TAURI_INVOKE<ApiResult<Json>>("agent_remove_agent", { id }),
@@ -55,6 +62,13 @@ export const commands = {
 	agentProbe: (id: string) => typedError<ApiResult<ProbeResult_Serialize>, string>(__TAURI_INVOKE("agent_probe", { id })),
 	/**  Ensure catalog agent is registered, then run ACP initialize probe. */
 	agentProbeCatalog: (templateId: string) => typedError<ApiResult<ProbeResult_Serialize>, string>(__TAURI_INVOKE("agent_probe_catalog", { templateId })),
+	doctorCheckHost: () => typedError<ApiResult<HostDoctorReport_Serialize>, string>(__TAURI_INVOKE("doctor_check_host")),
+	/**
+	 *  Re-probe every registered Agent over ACP and return classified failures.
+	 *  Can take up to ~30s per slow agent (probes run with limited concurrency).
+	 */
+	doctorCheckAgents: () => typedError<ApiResult<AgentAcpDiagnostic_Serialize[]>, string>(__TAURI_INVOKE("doctor_check_agents")),
+	doctorCheckNetwork: () => typedError<ApiResult<NetworkDoctorReport_Serialize>, string>(__TAURI_INVOKE("doctor_check_network")),
 	/**  Request cooperative cancellation for a currently streaming ACP session. */
 	agentCancelRun: (sessionId: string) => __TAURI_INVOKE<ApiResult<boolean>>("agent_cancel_run", { sessionId }),
 	jobParseRefsEnqueue: (args: JobEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_parse_refs_enqueue", { args })),
@@ -327,6 +341,7 @@ export const commands = {
 	usageList: (args: UsageListArgs) => __TAURI_INVOKE<ApiResult<UsageEvent_Serialize[]>>("usage_list", { args }),
 	usageSummary: (args: UsageSummaryArgs) => __TAURI_INVOKE<ApiResult<UsageKindCount[]>>("usage_summary", { args }),
 	usageClear: (args: UsageClearArgs) => __TAURI_INVOKE<ApiResult<number>>("usage_clear", { args }),
+	logsClear: () => __TAURI_INVOKE<ApiResult<number>>("logs_clear"),
 	feedsList: () => __TAURI_INVOKE<ApiResult<FeedList>>("feeds_list"),
 	feedsAdd: (args: FeedsAddArgs) => __TAURI_INVOKE<ApiResult<FeedSub>>("feeds_add", { args }),
 	feedsRemove: (args: FeedsIdArgs) => __TAURI_INVOKE<ApiResult<null>>("feeds_remove", { args }),
@@ -379,6 +394,12 @@ export const commands = {
 	 *  Blocking work runs on a worker thread so the async runtime is not stalled.
 	 */
 	agentRunToolLifecycle: (templateId: string, action: string, taskId: string | null) => typedError<ApiResult<Json>, string>(__TAURI_INVOKE("agent_run_tool_lifecycle", { templateId, action, taskId })),
+	/**
+	 *  Silently uninstall only the host CLI, only the ACP adapter, or both for a
+	 *  catalog template. Like `agent_run_tool_lifecycle`, the Host scopes the work
+	 *  from PATH/state — the UI only passes a known template id and scope.
+	 */
+	agentRunPartialUninstall: (templateId: string, scope: string, taskId: string | null) => typedError<ApiResult<Json>, string>(__TAURI_INVOKE("agent_run_partial_uninstall", { templateId, scope, taskId })),
 	/**
 	 *  Request cooperative cancellation of an in-flight tool lifecycle run; the
 	 *  Host supervision loop kills the installer child process.
@@ -573,6 +594,8 @@ export const events = {
 };
 
 /* Types */
+export type AcpFailureCategory = "command-missing" | "not-logged-in" | "timeout" | "spawn-failed" | "protocol-failed" | "unknown";
+
 /**  A single history line reconstructed from ACP `session/load` replay. */
 export type AcpHistoryLine = AcpHistoryLine_Serialize | AcpHistoryLine_Deserialize;
 
@@ -700,6 +723,55 @@ export type AcpSessionInfo_Serialize = {
 export type ActivityRecordArgs = {
 	events: UsageRecord[],
 };
+
+export type AgentAcpDiagnostic = AgentAcpDiagnostic_Serialize | AgentAcpDiagnostic_Deserialize;
+
+export type AgentAcpDiagnostic_Deserialize = {
+	agentId: string,
+	name: string,
+	template: AgentTemplate,
+	command: string,
+	/**  Agent host CLI (`detect_command`), when distinct from the ACP entrypoint. */
+	agentCommand: string | null,
+	agentPath: string | null,
+	agentVersion: string | null,
+	/**  ACP entrypoint resolved path (`command`). */
+	resolvedPath: string | null,
+	/**  ACP entrypoint `--version` output (not the ACP protocol version). */
+	acpVersion: string | null,
+	ok: boolean,
+	failureCategory: AcpFailureCategory | null,
+	error: string | null,
+	authStatus: AgentAuthStatus,
+	agentName: string | null,
+	protocolVersion: string | null,
+	probedAt: string | null,
+};
+
+export type AgentAcpDiagnostic_Serialize = {
+	agentId: string,
+	name: string,
+	template: AgentTemplate,
+	command: string,
+	/**  Agent host CLI (`detect_command`), when distinct from the ACP entrypoint. */
+	agentCommand?: string | null,
+	agentPath?: string | null,
+	agentVersion?: string | null,
+	/**  ACP entrypoint resolved path (`command`). */
+	resolvedPath?: string | null,
+	/**  ACP entrypoint `--version` output (not the ACP protocol version). */
+	acpVersion?: string | null,
+	ok: boolean,
+	failureCategory?: AcpFailureCategory | null,
+	error?: string | null,
+	authStatus: AgentAuthStatus,
+	agentName?: string | null,
+	protocolVersion?: string | null,
+	probedAt?: string | null,
+};
+
+/**  Login / auth state shown on each Agent Doctor card. */
+export type AgentAuthStatus = "authenticated" | "unauthenticated" | "not-applicable" | "unknown";
 
 /**  Collaboration mode selector (Codex `collaboration_mode`: Default / Plan). */
 export type AgentCollaborationEvent = AgentCollaborationEvent_Serialize | AgentCollaborationEvent_Deserialize;
@@ -1063,11 +1135,6 @@ export type AgentTemplate = "opencode" |
  */
 "open-claw" | 
 /**
- *  Google Antigravity CLI with native ACP (`agy --acp`).
- *  Replaces the previous Google Gemini CLI template.
- */
-"antigravity" | 
-/**
  *  Hermes Agent native ACP (`hermes acp`).
  *  Docs: https://github.com/NousResearch/hermes-agent
  */
@@ -1222,6 +1289,10 @@ export type AppSettings_Deserialize = {
 	easyScholarKey?: string,
 	networkProxyEnabled?: boolean,
 	networkProxyUrl?: string,
+	/**  URL-prefix GitHub mirror for Skill import fallback when GitHub is unreachable. */
+	githubMirrorEnabled?: boolean,
+	/**  e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`. */
+	githubMirrorBaseUrl?: string,
 	paperTreeLabelMode?: string,
 	paperTreeSortMode?: string,
 	/**
@@ -1296,6 +1367,10 @@ export type AppSettings_Serialize = {
 	easyScholarKey: string,
 	networkProxyEnabled: boolean,
 	networkProxyUrl: string,
+	/**  URL-prefix GitHub mirror for Skill import fallback when GitHub is unreachable. */
+	githubMirrorEnabled: boolean,
+	/**  e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`. */
+	githubMirrorBaseUrl: string,
 	paperTreeLabelMode: string,
 	paperTreeSortMode: string,
 	/**
@@ -1537,6 +1612,15 @@ export type BridgeStatus = {
 	lastError: string | null,
 };
 
+/**  Non-secret snapshot for Host-side consumers resolving built-in credentials. */
+export type BuiltinProviderStatus = {
+	available: boolean,
+	baseUrl: string,
+	translateModel: string,
+	embeddingModel: string,
+	ocrModel: string,
+};
+
 /**  Status for a common agent row in Settings. */
 export type CatalogAcpStatus = 
 /**  Detect binary missing. */
@@ -1594,6 +1678,15 @@ export type CatalogEntry_Deserialize = {
 	acpAgentName?: string | null,
 	lastProbeError?: string | null,
 	lastProbedAt?: string | null,
+	/**  Normalized local host CLI version (`detect_command --version`), when known. */
+	installedVersion?: string | null,
+	/**  Target version the silent updater can reach (npm latest or dsh pin). */
+	latestVersion?: string | null,
+	/**
+	 *  True only when a newer silent-update target is known. Settings shows
+	 *  the Upgrade button solely when this is `Some(true)`.
+	 */
+	updateAvailable?: boolean | null,
 };
 
 export type CatalogEntry_Serialize = {
@@ -1622,6 +1715,15 @@ export type CatalogEntry_Serialize = {
 	acpAgentName?: string | null,
 	lastProbeError?: string | null,
 	lastProbedAt?: string | null,
+	/**  Normalized local host CLI version (`detect_command --version`), when known. */
+	installedVersion?: string | null,
+	/**  Target version the silent updater can reach (npm latest or dsh pin). */
+	latestVersion?: string | null,
+	/**
+	 *  True only when a newer silent-update target is known. Settings shows
+	 *  the Upgrade button solely when this is `Some(true)`.
+	 */
+	updateAvailable?: boolean | null,
 };
 
 export type CatalogScanResponse = CatalogScanResponse_Serialize | CatalogScanResponse_Deserialize;
@@ -2203,8 +2305,13 @@ export type ElicitationResponseRequest = {
 	content?: { [key in string]: string } | null,
 };
 
-/**  OpenAI-compatible embedding endpoint (BYOK). All-empty = feature disabled. */
+/**
+ *  Embedding endpoint: the built-in provider, or a custom OpenAI-compatible
+ *  one (BYOK). Custom with all-empty fields = feature disabled.
+ */
 export type EmbeddingSettings = {
+	/**  `builtin` | `custom`; empty = unset and inferred from the fields below. */
+	source?: string,
 	baseUrl?: string,
 	apiKey?: string,
 	model?: string,
@@ -2213,6 +2320,8 @@ export type EmbeddingSettings = {
 export type EnabledResponse = {
 	enabled: boolean,
 };
+
+export type EndpointId = "baidu" | "google" | "google-scholar" | "github" | "arxiv" | "semantic-scholar";
 
 export type ErrorBody = {
 	code: string,
@@ -2365,6 +2474,38 @@ export type FsDirEntry = {
 	/**  Vault-relative path using `/`. */
 	path: string,
 };
+
+export type HostDoctorReport = HostDoctorReport_Serialize | HostDoctorReport_Deserialize;
+
+export type HostDoctorReport_Deserialize = {
+	node: HostToolDiagnostic_Deserialize,
+	npm: HostToolDiagnostic_Deserialize,
+	npmPrefix: string | null,
+};
+
+export type HostDoctorReport_Serialize = {
+	node: HostToolDiagnostic_Serialize,
+	npm: HostToolDiagnostic_Serialize,
+	npmPrefix?: string | null,
+};
+
+export type HostToolDiagnostic = HostToolDiagnostic_Serialize | HostToolDiagnostic_Deserialize;
+
+export type HostToolDiagnostic_Deserialize = {
+	status: HostToolStatus,
+	resolvedPath: string | null,
+	version: string | null,
+	detail: string | null,
+};
+
+export type HostToolDiagnostic_Serialize = {
+	status: HostToolStatus,
+	resolvedPath?: string | null,
+	version?: string | null,
+	detail?: string | null,
+};
+
+export type HostToolStatus = "available" | "missing" | "unusable";
 
 export type ImportLocalPdfArgs = {
 	vaultPath: string,
@@ -2761,7 +2902,10 @@ export type LayoutRemoteProgressEvent_Serialize = {
  */
 export type LayoutSettings = {
 	backend?: string,
-	/**  PAPER.md body-parse engine: `local` | `paddle` | `mineru` | `openaiCompatible`. */
+	/**
+	 *  PAPER.md body-parse engine: `local` | `paddle` | `mineru` |
+	 *  `openaiCompatible` | `agentero` (built-in).
+	 */
 	parserBackend?: string,
 	providerConfigs?: { [key in string]: LayoutProviderConfig },
 };
@@ -2981,6 +3125,40 @@ export type MigrateProgress = {
 	total: number,
 	phase: string,
 };
+
+export type NetworkDoctorReport = NetworkDoctorReport_Serialize | NetworkDoctorReport_Deserialize;
+
+export type NetworkDoctorReport_Deserialize = {
+	endpoints: NetworkEndpointDiagnostic_Deserialize[],
+	proxy: string | null,
+};
+
+export type NetworkDoctorReport_Serialize = {
+	endpoints: NetworkEndpointDiagnostic_Serialize[],
+	proxy?: string | null,
+};
+
+export type NetworkEndpointDiagnostic = NetworkEndpointDiagnostic_Serialize | NetworkEndpointDiagnostic_Deserialize;
+
+export type NetworkEndpointDiagnostic_Deserialize = {
+	id: EndpointId,
+	url: string,
+	status: NetworkStatus,
+	statusCode: number | null,
+	latencyMs: number | null,
+	detail: string | null,
+};
+
+export type NetworkEndpointDiagnostic_Serialize = {
+	id: EndpointId,
+	url: string,
+	status: NetworkStatus,
+	statusCode?: number | null,
+	latencyMs?: number | null,
+	detail?: string | null,
+};
+
+export type NetworkStatus = "reachable" | "timeout" | "unreachable";
 
 export type NotesTemplateSeedResult = {
 	created: boolean,
@@ -4231,12 +4409,17 @@ export type TrashVaultArgs = {
 /**
  *  What a silent uninstall would remove for a catalog template.
  * 
- *  `npm_commands` are complete `npm uninstall` invocations (including the
- *  `--prefix` mirroring install); `dirs` are Agentero-managed directories.
+ *  `agent` covers the host CLI / main binary; `acp` covers the ACP adapter.
  *  `None` means the template has no managed uninstall (e.g. hermes installs
  *  via an official script we cannot reverse).
  */
 export type UninstallInfo = {
+	agent: UninstallScopeInfo,
+	acp: UninstallScopeInfo,
+};
+
+/**  Per-scope uninstall payload (host CLI vs ACP adapter). */
+export type UninstallScopeInfo = {
 	npmCommands: string[],
 	dirs: string[],
 };

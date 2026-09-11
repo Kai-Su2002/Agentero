@@ -1,13 +1,7 @@
-import {
-	Check,
-	Copy,
-	Languages,
-	MessageSquare,
-	MessageSquarePlus,
-	NotebookPen,
-} from "lucide-react";
+import { Check, Copy, Languages, MessageSquare } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { AgentLogo } from "@/components/agent/agent-logo";
 import { Button } from "@/components/ui/button";
 import {
 	Tooltip,
@@ -16,64 +10,97 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { ScreenPoint } from "@/components/viewer/pdf/types";
+import { useSettings, useUiStore } from "@/hooks/use-app-stores";
+import { type AgentTemplate, listAgents } from "@/lib/agent";
 import { cn } from "@/lib/core/utils";
 import {
 	HIGHLIGHT_COLORS,
 	type HighlightColor,
 	swatchColorClass,
 } from "@/lib/pdf/highlight/palette";
+import { resolveTranslateAgent } from "@/lib/translate";
 
 type SelectionMenuProps = {
 	/** Screen point near the top-center of the selection (toolbar anchor) */
 	screen: ScreenPoint;
+	/** Screen point at the bottom-right of the last selected line (pill anchor) */
+	bottomRight: ScreenPoint;
 	/** Create a highlight in the chosen color */
 	onHighlight: (color: HighlightColor) => void;
 	/** Copy the selected text to the clipboard */
 	onCopy: () => void;
-	/** Annotate: create a highlight and open its inline note editor */
-	onNote: () => void;
 	onAsk: () => void;
 	/** Pin the selection as an Agent composer context chip and open the chat. */
 	onAddToChat: () => void;
 	onTranslate: () => void;
-	/** Dismiss the menu without acting */
-	onClose: () => void;
-	/** Hide highlight / note / translate (need marks/); keep Copy / Ask / Add-to-chat. */
+	/** Hide highlight / translate (need marks/); keep Copy / Ask. */
 	readOnly?: boolean;
 };
 
-const BAR_W_NORMAL = 340;
-const BAR_W_READONLY = 160;
+const BAR_W_NORMAL = 268;
+const BAR_W_READONLY = 112;
 const BAR_H = 40;
+const PILL_H = 24;
+const PILL_GAP = 4;
 const COPIED_FLASH_MS = 1500;
 
 /**
  * Floating action bar shown next to a text selection: a row of color swatches
- * (highlight), then Copy / Annotate / Ask / Translate.
+ * (highlight), then Copy / Ask / Translate. Annotate lives on the right-rail
+ * selection comment chip instead. Add-to-chat is a small text pill at the
+ * selection's bottom-right corner. Ask uses the configured PDF-Ask agent logo.
  * Copy keeps the bar open and swaps the copy icon for a check briefly.
- * Remote papers are read-only: they keep Copy, Ask, and Add-to-chat but hide
- * persistent highlight / note / translate actions.
+ * Remote papers are read-only: they keep Copy / Ask but hide persistent
+ * highlight / translate actions.
  */
 export function SelectionMenu({
 	screen,
+	bottomRight,
 	onHighlight,
 	onCopy,
-	onNote,
 	onAsk,
 	onAddToChat,
 	onTranslate,
-	onClose,
 	readOnly = false,
 }: SelectionMenuProps) {
 	const { t } = useTranslation("viewer");
 	const [copied, setCopied] = useState(false);
 	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const pdfAskAgentId = useSettings((s) => s.pdfAsk.agentId);
+	const [askTemplate, setAskTemplate] = useState<AgentTemplate | null>(null);
+	// Add-to-chat only when the Agent surface is already visible (rail or popout).
+	const showAddToChat = useUiStore(
+		(s) =>
+			(s.rightSidebarOpen && s.rightSidebarTab === "agent") ||
+			s.featurePoppedOut.agent === true,
+	);
 
 	useEffect(() => {
 		return () => {
 			if (timerRef.current) clearTimeout(timerRef.current);
 		};
 	}, []);
+
+	// Resolve the PDF-Ask agent logo so the Ask button mirrors Settings → PDF Ask.
+	useEffect(() => {
+		let cancelled = false;
+		void listAgents()
+			.then((registry) => {
+				if (cancelled) return;
+				const { agentId } = resolveTranslateAgent(
+					{ agentId: pdfAskAgentId, modelId: "" },
+					registry,
+				);
+				const agent = registry.agents.find((a) => a.id === agentId);
+				setAskTemplate(agent?.template ?? null);
+			})
+			.catch(() => {
+				if (!cancelled) setAskTemplate(null);
+			});
+		return () => {
+			cancelled = true;
+		};
+	}, [pdfAskAgentId]);
 
 	const vw = typeof window !== "undefined" ? window.innerWidth : 1200;
 	const vh = typeof window !== "undefined" ? window.innerHeight : 800;
@@ -88,8 +115,26 @@ export function SelectionMenu({
 		// Menu sits below the selection and may cover body text.
 		overContent = true;
 	}
-	// Keep the toolbar on-screen even if the anchor page is scrolled out of view.
-	top = Math.max(12, Math.min(vh - BAR_H - 12, top));
+	// Keep the toolbar on-screen when the selection scrolls out of view; dim it
+	// so it does not look glued to an off-screen anchor.
+	const clampedTop = Math.max(12, Math.min(vh - BAR_H - 12, top));
+	const scrolledAway = clampedTop !== top;
+	top = clampedTop;
+	const dimmed = overContent || scrolledAway;
+
+	// Pill sits just outside the selection's bottom-right corner; if that would
+	// overflow the viewport, flip to the left of the corner instead.
+	const pillW = 96;
+	let pillLeft = bottomRight.x + PILL_GAP;
+	if (pillLeft + pillW > vw - 12) {
+		pillLeft = Math.max(12, bottomRight.x - pillW - PILL_GAP);
+	} else {
+		pillLeft = Math.max(12, pillLeft);
+	}
+	const pillTop = Math.min(
+		Math.max(12, bottomRight.y + PILL_GAP),
+		vh - PILL_H - 12,
+	);
 
 	const handleCopy = useCallback(() => {
 		onCopy();
@@ -100,12 +145,6 @@ export function SelectionMenu({
 			setCopied(false);
 		}, COPIED_FLASH_MS);
 	}, [onCopy]);
-
-	// Annotate opens the inline note editor in the viewer, so just close the menu.
-	const handleNote = useCallback(() => {
-		onNote();
-		onClose();
-	}, [onNote, onClose]);
 
 	const colorLabel = (c: HighlightColor): string => {
 		switch (c) {
@@ -123,145 +162,144 @@ export function SelectionMenu({
 	};
 
 	return (
-		<div
-			className={cn(
-				"fixed z-50 flex h-10 items-center gap-0.5 rounded-xl border border-border/80 bg-background px-1 shadow-2xl ring-1 ring-black/5 dark:ring-white/10",
-				// Only dim when flipped below the selection (covers body text).
-				overContent &&
-					"bg-background/80 backdrop-blur-sm transition-[background-color] duration-150 hover:bg-background",
-			)}
-			style={{ left, top }}
-			role="toolbar"
-			aria-label={t("selection.menuLabel")}
-			onMouseDown={(e) => e.stopPropagation()}
-		>
-			<TooltipProvider delayDuration={200}>
-				{!readOnly ? (
-					<>
-						{HIGHLIGHT_COLORS.map((c) => (
-							<Tooltip key={c}>
-								<TooltipTrigger asChild>
-									{/*
-									 * 16px dot, 24px hit area (WCAG 2.5.8): the target is padded
-									 * out rather than the dot enlarged.
-									 */}
-									<button
-										type="button"
-										aria-label={colorLabel(c)}
-										className="group inline-flex size-6 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-										onClick={() => onHighlight(c)}
-									>
-										<span
-											className={cn(
-												"size-4 rounded-full ring-1 ring-black/15 transition-transform group-hover:scale-110 dark:ring-white/25",
-												swatchColorClass(c),
-											)}
-											aria-hidden
-										/>
-									</button>
-								</TooltipTrigger>
-								<TooltipContent side="top">{colorLabel(c)}</TooltipContent>
-							</Tooltip>
-						))}
-						<div className="mx-1 h-5 w-px shrink-0 bg-border" />
-					</>
-				) : null}
-				<div className="relative">
-					{copied ? (
-						<span
-							className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border/80 bg-background px-1.5 py-0.5 text-[11px] text-foreground shadow-sm ring-1 ring-black/5 dark:ring-white/10"
-							role="status"
-							aria-live="polite"
-						>
-							{t("selection.copied")}
-						</span>
+		<>
+			<div
+				className={cn(
+					"fixed z-50 flex h-10 items-center gap-0.5 rounded-xl border border-border/80 bg-background px-1 shadow-2xl ring-1 ring-black/5 transition-[background-color,opacity] duration-150 dark:ring-white/10",
+					// Dim when covering body text or when the selection scrolled away.
+					dimmed &&
+						"bg-background/80 opacity-70 backdrop-blur-sm hover:bg-background hover:opacity-100",
+				)}
+				style={{ left, top }}
+				role="toolbar"
+				aria-label={t("selection.menuLabel")}
+				onMouseDown={(e) => e.stopPropagation()}
+			>
+				<TooltipProvider delayDuration={200}>
+					{!readOnly ? (
+						<>
+							{HIGHLIGHT_COLORS.map((c) => (
+								<Tooltip key={c}>
+									<TooltipTrigger asChild>
+										{/*
+										 * 16px dot, 24px hit area (WCAG 2.5.8): the target is padded
+										 * out rather than the dot enlarged.
+										 */}
+										<button
+											type="button"
+											aria-label={colorLabel(c)}
+											className="group inline-flex size-6 shrink-0 items-center justify-center rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+											onClick={() => onHighlight(c)}
+										>
+											<span
+												className={cn(
+													"size-4 rounded-full ring-1 ring-black/15 transition-transform group-hover:scale-110 dark:ring-white/25",
+													swatchColorClass(c),
+												)}
+												aria-hidden
+											/>
+										</button>
+									</TooltipTrigger>
+									<TooltipContent side="top">{colorLabel(c)}</TooltipContent>
+								</Tooltip>
+							))}
+							<div className="mx-1 h-5 w-px shrink-0 bg-border" />
+						</>
 					) : null}
+					<div className="relative">
+						{copied ? (
+							<span
+								className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border/80 bg-background px-1.5 py-0.5 text-caption text-foreground shadow-sm ring-1 ring-black/5 dark:ring-white/10"
+								role="status"
+								aria-live="polite"
+							>
+								{t("selection.copied")}
+							</span>
+						) : null}
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-sm"
+									aria-label={
+										copied ? t("selection.copied") : t("selection.copy")
+									}
+									onClick={handleCopy}
+								>
+									{copied ? (
+										<Check className="size-4 text-foreground" aria-hidden />
+									) : (
+										<Copy className="size-4" />
+									)}
+								</Button>
+							</TooltipTrigger>
+							{!copied ? (
+								<TooltipContent side="top">
+									{t("selection.copy")}
+								</TooltipContent>
+							) : null}
+						</Tooltip>
+					</div>
 					<Tooltip>
 						<TooltipTrigger asChild>
 							<Button
 								type="button"
 								variant="ghost"
 								size="icon-sm"
-								aria-label={
-									copied ? t("selection.copied") : t("selection.copy")
-								}
-								onClick={handleCopy}
+								aria-label={t("selection.ask")}
+								onClick={onAsk}
 							>
-								{copied ? (
-									<Check className="size-4 text-foreground" aria-hidden />
+								{askTemplate ? (
+									<AgentLogo
+										template={askTemplate}
+										plain
+										iconClassName="size-4"
+									/>
 								) : (
-									<Copy className="size-4" />
+									<MessageSquare className="size-4" />
 								)}
 							</Button>
 						</TooltipTrigger>
-						{!copied ? (
-							<TooltipContent side="top">{t("selection.copy")}</TooltipContent>
-						) : null}
+						<TooltipContent side="top">{t("selection.ask")}</TooltipContent>
 					</Tooltip>
-				</div>
-				{!readOnly ? (
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon-sm"
-								aria-label={t("selection.note")}
-								onClick={handleNote}
-							>
-								<NotebookPen className="size-4" />
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="top">{t("selection.note")}</TooltipContent>
-					</Tooltip>
-				) : null}
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							aria-label={t("selection.ask")}
-							onClick={onAsk}
-						>
-							<MessageSquare className="size-4" />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent side="top">{t("selection.ask")}</TooltipContent>
-				</Tooltip>
-				<Tooltip>
-					<TooltipTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon-sm"
-							aria-label={t("selection.addToChat")}
-							onClick={onAddToChat}
-						>
-							<MessageSquarePlus className="size-4" />
-						</Button>
-					</TooltipTrigger>
-					<TooltipContent side="top">{t("selection.addToChat")}</TooltipContent>
-				</Tooltip>
-				{!readOnly ? (
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon-sm"
-								aria-label={t("selection.translate")}
-								onClick={onTranslate}
-							>
-								<Languages className="size-4" />
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="top">
-							{t("selection.translate")}
-						</TooltipContent>
-					</Tooltip>
-				) : null}
-			</TooltipProvider>
-		</div>
+					{!readOnly ? (
+						<Tooltip>
+							<TooltipTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon-sm"
+									aria-label={t("selection.translate")}
+									onClick={onTranslate}
+								>
+									<Languages className="size-4" />
+								</Button>
+							</TooltipTrigger>
+							<TooltipContent side="top">
+								{t("selection.translate")}
+							</TooltipContent>
+						</Tooltip>
+					) : null}
+				</TooltipProvider>
+			</div>
+
+			{showAddToChat ? (
+				<button
+					type="button"
+					className={cn(
+						"fixed z-50 inline-flex h-6 max-w-[10rem] items-center truncate rounded-full border border-border/80 bg-background px-2 text-caption font-medium text-foreground shadow-md ring-1 ring-black/5 transition-[colors,opacity] hover:bg-accent hover:text-accent-foreground dark:ring-white/10",
+						"active:scale-[0.97] motion-reduce:active:scale-100",
+						scrolledAway && "opacity-70 hover:opacity-100",
+					)}
+					style={{ left: pillLeft, top: pillTop }}
+					aria-label={t("selection.addToChat")}
+					onMouseDown={(e) => e.stopPropagation()}
+					onClick={onAddToChat}
+				>
+					{t("selection.addToChat")}
+				</button>
+			) : null}
+		</>
 	);
 }

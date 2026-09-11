@@ -17,6 +17,7 @@ import {
 	Fragment,
 	lazy,
 	memo,
+	type KeyboardEvent as ReactKeyboardEvent,
 	Suspense,
 	useCallback,
 	useEffect,
@@ -31,6 +32,7 @@ import type {
 	SettingsSection,
 } from "@/components/settings/types";
 import { Button } from "@/components/ui/button";
+import { scrollBehavior } from "@/lib/core/motion";
 import { cn } from "@/lib/core/utils";
 import {
 	broadcastOnboardingRequest,
@@ -208,10 +210,45 @@ export function SettingsContent({
 		};
 	}, []);
 	const contentScrollRef = useRef<HTMLDivElement>(null);
+	const navListRef = useRef<HTMLUListElement>(null);
+	const navItemRefs = useRef<
+		Partial<Record<SettingsSection, HTMLButtonElement>>
+	>({});
+	const [navIndicator, setNavIndicator] = useState<{
+		top: number;
+		height: number;
+	} | null>(null);
+
 	// biome-ignore lint/correctness/useExhaustiveDependencies: section intentionally triggers a scroll-to-top on switch
 	useEffect(() => {
-		contentScrollRef.current?.scrollTo({ top: 0 });
+		contentScrollRef.current?.scrollTo({ top: 0, behavior: scrollBehavior() });
 	}, [section]);
+
+	// Slide the sidebar highlight to the active item (motion-17).
+	const measureNavIndicator = useCallback(() => {
+		const list = navListRef.current;
+		const btn = navItemRefs.current[section];
+		if (!list || !btn) return;
+		const listRect = list.getBoundingClientRect();
+		const btnRect = btn.getBoundingClientRect();
+		setNavIndicator({
+			top: btnRect.top - listRect.top + list.scrollTop,
+			height: btnRect.height,
+		});
+	}, [section]);
+
+	useEffect(() => {
+		measureNavIndicator();
+		const list = navListRef.current;
+		if (!list) return;
+		const onScroll = () => measureNavIndicator();
+		list.addEventListener("scroll", onScroll, { passive: true });
+		window.addEventListener("resize", measureNavIndicator);
+		return () => {
+			list.removeEventListener("scroll", onScroll);
+			window.removeEventListener("resize", measureNavIndicator);
+		};
+	}, [measureNavIndicator]);
 
 	const hostContext = useMemo((): SettingsHostContext => {
 		if (vaultPath && isRemoteVaultHandle(vaultPath)) {
@@ -248,17 +285,54 @@ export function SettingsContent({
 		[onChange, settings],
 	);
 
+	const selectSection = useCallback(
+		(id: SettingsSection) => {
+			onSectionChange(id);
+		},
+		[onSectionChange],
+	);
+
+	const onNavItemKeyDown = useCallback(
+		(
+			event: ReactKeyboardEvent<HTMLButtonElement>,
+			current: SettingsSection,
+		) => {
+			const ids = NAV.map((item) => item.id);
+			const index = ids.indexOf(current);
+			if (index < 0) return;
+			let next = index;
+			if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+				next = Math.min(ids.length - 1, index + 1);
+			} else if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+				next = Math.max(0, index - 1);
+			} else if (event.key === "Home") {
+				next = 0;
+			} else if (event.key === "End") {
+				next = ids.length - 1;
+			} else {
+				return;
+			}
+			if (next === index) return;
+			event.preventDefault();
+			const id = ids[next];
+			selectSection(id);
+			navItemRefs.current[id]?.focus();
+		},
+		[selectSection],
+	);
+
 	return (
 		<>
-			{/* Sidebar — macOS Settings style */}
-			<nav className="flex w-[180px] shrink-0 select-none flex-col border-r bg-muted/40">
+			{/* Sidebar — macOS System Settings weight (heavier material). */}
+			<nav
+				data-settings-sidebar
+				className="flex w-[11.5rem] shrink-0 select-none flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground"
+				aria-label={t("title")}
+			>
 				{/* Modal fallback only: native window already shows the title in its title bar. */}
 				{onClose ? (
 					<div className="flex items-center justify-between gap-1 px-3 pt-3 pb-2">
-						<span
-							id={headingId}
-							className="font-semibold text-[13px] leading-none tracking-tight"
-						>
+						<span id={headingId} className="font-semibold text-sm leading-none">
 							{t("title")}
 						</span>
 						<Button
@@ -274,32 +348,61 @@ export function SettingsContent({
 					</div>
 				) : null}
 				<ul
+					ref={navListRef}
 					className={cn(
-						"agentero-scroll flex min-h-0 flex-1 flex-col gap-0.5 px-2 pb-2",
+						"agentero-scroll relative flex min-h-0 flex-1 flex-col gap-0.5 overscroll-y-contain px-2 pb-2",
 						!onClose && "pt-3",
 					)}
 				>
+					{navIndicator ? (
+						<span
+							aria-hidden
+							className="pointer-events-none absolute inset-x-2 top-0 z-0 rounded-md bg-sidebar-primary shadow-sm transition-[transform,height] duration-[var(--motion-duration-fast)] ease-[var(--motion-ease-out)] motion-reduce:transition-none will-change-transform"
+							style={{
+								height: navIndicator.height,
+								transform: `translate3d(0, ${navIndicator.top}px, 0)`,
+							}}
+						/>
+					) : null}
 					{NAV.map((item) => {
 						const Icon = item.icon;
 						const active = section === item.id;
 						return (
 							<Fragment key={item.id}>
 								{item.dividerBefore ? (
-									<li aria-hidden className="mx-1 my-1 border-t" />
+									<li
+										aria-hidden
+										className="relative z-10 mx-1 my-1.5 border-t border-sidebar-border/80"
+									/>
 								) : null}
-								<li>
+								<li className="relative z-10">
 									<button
+										id={`settings-nav-${item.id}`}
+										ref={(el) => {
+											if (el) navItemRefs.current[item.id] = el;
+											else delete navItemRefs.current[item.id];
+										}}
 										type="button"
-										className={cn(
-											"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-[13px] outline-none transition-colors",
-											"hover:bg-black/5 dark:hover:bg-white/10",
-											active &&
-												"bg-primary text-primary-foreground hover:bg-primary dark:hover:bg-primary",
-										)}
 										aria-current={active ? "page" : undefined}
-										onClick={() => onSectionChange(item.id)}
+										className={cn(
+											"flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm outline-none",
+											"transition-[color,background-color,transform,opacity] duration-[var(--motion-duration-micro)] ease-[var(--motion-ease-out)]",
+											"focus-visible:ring-2 focus-visible:ring-sidebar-ring/60 focus-visible:ring-offset-1 focus-visible:ring-offset-sidebar",
+											"active:scale-[0.98]",
+											active
+												? "font-medium text-sidebar-primary-foreground"
+												: "text-sidebar-foreground/90 hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground",
+										)}
+										onClick={() => selectSection(item.id)}
+										onKeyDown={(event) => onNavItemKeyDown(event, item.id)}
 									>
-										<Icon className="size-3.5 shrink-0 opacity-90" />
+										<Icon
+											className={cn(
+												"size-3.5 shrink-0",
+												active ? "opacity-100" : "opacity-75",
+											)}
+											aria-hidden
+										/>
 										<span className="truncate">{t(`nav.${item.id}`)}</span>
 									</button>
 								</li>
@@ -309,12 +412,12 @@ export function SettingsContent({
 				</ul>
 
 				{/* Sidebar footer: replay the first-run wizard / feature tour. */}
-				<div className="flex flex-col gap-1.5 border-t px-2 py-2">
+				<div className="flex flex-col gap-1.5 border-t border-sidebar-border px-2 py-2">
 					<Button
 						type="button"
 						variant="outline"
 						size="sm"
-						className="w-full"
+						className="w-full border-sidebar-border bg-sidebar/40 hover:bg-sidebar-accent"
 						onClick={() => {
 							patchSettings({ onboardingDone: false });
 							broadcastOnboardingRequest();
@@ -328,7 +431,7 @@ export function SettingsContent({
 						type="button"
 						variant="outline"
 						size="sm"
-						className="w-full"
+						className="w-full border-sidebar-border bg-sidebar/40 hover:bg-sidebar-accent"
 						onClick={() => {
 							broadcastTourRequest();
 							closeSettingsWindow();
@@ -341,12 +444,20 @@ export function SettingsContent({
 			</nav>
 
 			{/* Content */}
-			<div ref={contentScrollRef} className="agentero-scroll min-w-0 flex-1">
+			<div
+				ref={contentScrollRef}
+				data-settings-content
+				className="agentero-scroll min-w-0 flex-1 overscroll-y-contain bg-background"
+			>
 				<div className="px-6 py-5">
 					{/* One boundary per pane: a section still loading must not blank out
 					    the panes already visited and kept mounted next to it. */}
 					{visitedSections.includes("general") && (
-						<div hidden={section !== "general"}>
+						<div
+							data-settings-pane
+							data-active={section === "general" ? "true" : "false"}
+							hidden={section !== "general"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<GeneralPane
 									settings={settings}
@@ -358,7 +469,11 @@ export function SettingsContent({
 						</div>
 					)}
 					{visitedSections.includes("appearance") && (
-						<div hidden={section !== "appearance"}>
+						<div
+							data-settings-pane
+							data-active={section === "appearance" ? "true" : "false"}
+							hidden={section !== "appearance"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<AppearancePane
 									theme={settings.theme}
@@ -377,7 +492,11 @@ export function SettingsContent({
 						</div>
 					)}
 					{visitedSections.includes("agent") && (
-						<div hidden={section !== "agent"}>
+						<div
+							data-settings-pane
+							data-active={section === "agent" ? "true" : "false"}
+							hidden={section !== "agent"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								{hostContext.kind === "remote" ? (
 									<RemoteAgentPane
@@ -392,7 +511,11 @@ export function SettingsContent({
 						</div>
 					)}
 					{visitedSections.includes("translate") && (
-						<div hidden={section !== "translate"}>
+						<div
+							data-settings-pane
+							data-active={section === "translate" ? "true" : "false"}
+							hidden={section !== "translate"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<TranslatePane
 									settings={settings}
@@ -403,7 +526,11 @@ export function SettingsContent({
 						</div>
 					)}
 					{visitedSections.includes("layout") && (
-						<div hidden={section !== "layout"}>
+						<div
+							data-settings-pane
+							data-active={section === "layout" ? "true" : "false"}
+							hidden={section !== "layout"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<LayoutPane
 									settings={settings}
@@ -415,35 +542,55 @@ export function SettingsContent({
 						</div>
 					)}
 					{visitedSections.includes("doctor") && (
-						<div hidden={section !== "doctor"}>
+						<div
+							data-settings-pane
+							data-active={section === "doctor" ? "true" : "false"}
+							hidden={section !== "doctor"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<DoctorPane vaultPath={vaultPath} hostContext={hostContext} />
 							</Suspense>
 						</div>
 					)}
 					{visitedSections.includes("keyboard") && (
-						<div hidden={section !== "keyboard"}>
+						<div
+							data-settings-pane
+							data-active={section === "keyboard" ? "true" : "false"}
+							hidden={section !== "keyboard"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<KeyboardPane />
 							</Suspense>
 						</div>
 					)}
 					{visitedSections.includes("remote-access") && (
-						<div hidden={section !== "remote-access"}>
+						<div
+							data-settings-pane
+							data-active={section === "remote-access" ? "true" : "false"}
+							hidden={section !== "remote-access"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<RemoteAccessPane vaultPath={vaultPath} />
 							</Suspense>
 						</div>
 					)}
 					{visitedSections.includes("sync") && (
-						<div hidden={section !== "sync"}>
+						<div
+							data-settings-pane
+							data-active={section === "sync" ? "true" : "false"}
+							hidden={section !== "sync"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<SyncPane vaultPath={vaultPath} />
 							</Suspense>
 						</div>
 					)}
 					{visitedSections.includes("about") && (
-						<div hidden={section !== "about"}>
+						<div
+							data-settings-pane
+							data-active={section === "about" ? "true" : "false"}
+							hidden={section !== "about"}
+						>
 							<Suspense fallback={<PaneFallback />}>
 								<AboutPane />
 							</Suspense>

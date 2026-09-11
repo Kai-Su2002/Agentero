@@ -71,7 +71,7 @@
 
 ## 其它
 
-- `path_open_in_terminal`：系统默认终端。
+- `path_open_in_terminal`：系统默认终端（目录自身 / 文件父目录）。Windows 复用 `core::process::windows_shell_path` 去掉本地盘符路径的 `\\?\` 前缀，Windows Terminal 的 `-d` 与 CMD 的进程工作目录使用同一结果；CMD 通过隐藏的 `start` 启动进程创建独立交互控制台，不再拼接 `cd` 命令，也不继承桌面应用的关闭 / 重定向输入输出句柄。
 - 多窗口：`window_new`、`settings_window_open`。
 
 ## 代码

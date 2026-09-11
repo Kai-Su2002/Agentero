@@ -3,12 +3,15 @@
  *
  * Per-column sort button, title-header inline search, metadata refresh,
  * and the tags-filter popover; right-click customizes column order +
- * visibility. Transient drag state (dragKey/dragOverKey) lives here — the
- * parent only receives committed reorder events. Memoized so scrolling the
- * virtualized body does not re-render the header.
+ * visibility. When `compact` (table is actively scrolling), search +
+ * action icons hide so only column labels remain; row height stays
+ * fixed (`h-9`). Transient drag state (dragKey/dragOverKey) lives here —
+ * the parent only receives committed reorder events. Memoized so
+ * scrolling the virtualized body does not re-render the header unless
+ * compact/props change.
  */
 import { Award, ListFilter, RefreshCw, Search, X } from "lucide-react";
-import { memo, useState } from "react";
+import { memo, useEffect, useState } from "react";
 import { COLUMN_META, SortIcon } from "@/components/library/library-columns";
 import type {
 	CellT,
@@ -57,6 +60,11 @@ type LibraryTableHeaderProps = {
 	sortKey: SortKey;
 	sortDir: SortDir;
 	onSort: (key: SortKey) => void;
+	/**
+	 * Actively scrolling: hide search input and header action icons,
+	 * keep column label text (and active sort chevron). Idle restores.
+	 */
+	compact?: boolean;
 	/** Inline title search; hidden when the shared query is not controlled. */
 	searchEnabled: boolean;
 	inputValue: string;
@@ -88,6 +96,7 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 	sortKey,
 	sortDir,
 	onSort,
+	compact = false,
 	searchEnabled,
 	inputValue,
 	onInputChange,
@@ -111,6 +120,15 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 	const [tagFilterOpen, setTagFilterOpen] = useState(false);
 	const [rankBusy, setRankBusy] = useState(false);
 
+	useEffect(() => {
+		if (compact) setTagFilterOpen(false);
+	}, [compact]);
+
+	const showActions = !compact;
+	/** Fade chrome in place (keeps h-9); hide instantly, restore with fade-in. */
+	const chromeFadeClass = showActions
+		? "opacity-100 duration-300"
+		: "pointer-events-none opacity-0 duration-0";
 	const canFetchRanks = Boolean(vaultPath) && !rankBusy && papers.length > 0;
 
 	const fetchAllRanks = async () => {
@@ -158,8 +176,11 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 	return (
 		<ContextMenu>
 			<ContextMenuTrigger asChild>
-				<thead className="sticky top-0 z-[1] select-none border-b bg-background/95 backdrop-blur-sm">
-					<tr className="text-muted-foreground text-xs">
+				<thead
+					data-library-header
+					className="sticky top-0 z-[1] select-none border-b border-transparent bg-background/72 shadow-[0_1px_0_0_color-mix(in_oklch,var(--border)_55%,transparent)] backdrop-blur-xl backdrop-saturate-150 supports-backdrop-blur:bg-background/60"
+				>
+					<tr className="text-muted-foreground text-xs tracking-wide">
 						{visibleColumns.map((col) => {
 							const meta = COLUMN_META[col.key];
 							const active = sortKey === col.key;
@@ -215,7 +236,8 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 										setDragOverKey(null);
 									}}
 								>
-									<div className="flex min-w-0 items-center gap-1 px-3 py-1.5">
+									{/* Fixed h-9 so compact fade never changes header height. */}
+									<div className="flex h-9 min-w-0 items-center gap-1 px-3">
 										<button
 											type="button"
 											className={cn(
@@ -230,10 +252,37 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 											})}
 										>
 											<span className="truncate">{t(meta.labelKey)}</span>
-											<SortIcon active={active} dir={sortDir} />
+											<span
+												className={cn(
+													"inline-flex transition-opacity ease-out",
+													showActions || active
+														? "opacity-100 duration-300"
+														: "opacity-0 duration-0",
+												)}
+												aria-hidden={!showActions && !active}
+											>
+												<SortIcon active={active} dir={sortDir} />
+											</span>
+											{isTags ? (
+												<span
+													className={cn(
+														"size-1.5 shrink-0 rounded-full bg-primary transition-opacity ease-out",
+														!showActions && tagFilterActive
+															? "opacity-100 duration-300"
+															: "opacity-0 duration-0",
+													)}
+													aria-hidden
+												/>
+											) : null}
 										</button>
 										{isTitle && searchEnabled ? (
-											<div className="relative ml-1 min-w-0 flex-1">
+											<div
+												className={cn(
+													"relative ml-1 min-w-0 flex-1 transition-opacity ease-out",
+													chromeFadeClass,
+												)}
+												aria-hidden={!showActions}
+											>
 												<Search
 													className="pointer-events-none absolute top-1/2 left-1.5 size-3 -translate-y-1/2 text-muted-foreground"
 													aria-hidden
@@ -243,7 +292,8 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 													value={inputValue}
 													onChange={(e) => onInputChange(e.target.value)}
 													aria-label={t("papersLibrary.search")}
-													className="h-6 border-transparent bg-muted/50 pl-6 pr-1.5 text-xs shadow-none focus-visible:border-input focus-visible:bg-background"
+													tabIndex={showActions ? undefined : -1}
+													className="h-6 border-transparent bg-muted/70 pl-6 pr-1.5 text-xs shadow-none placeholder:text-muted-foreground/70 focus-visible:border-border/60 focus-visible:bg-card"
 													onMouseDown={(e) => e.stopPropagation()}
 													onClick={(e) => e.stopPropagation()}
 													onKeyDown={(e) => e.stopPropagation()}
@@ -256,11 +306,15 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 													<button
 														type="button"
 														data-library-header-action
+														tabIndex={showActions ? undefined : -1}
 														className={cn(
 															"ml-1 flex size-6 shrink-0 items-center justify-center rounded-sm",
 															"hover:bg-muted/60 hover:text-foreground",
 															"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+															"transition-opacity ease-out",
+															chromeFadeClass,
 														)}
+														aria-hidden={!showActions}
 														aria-label={t("papersLibrary.refreshMetadata")}
 														onClick={(e) => {
 															e.stopPropagation();
@@ -284,12 +338,17 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 															type="button"
 															data-library-header-action
 															disabled={!canFetchRanks}
+															tabIndex={showActions ? undefined : -1}
 															className={cn(
 																"ml-1 flex size-6 shrink-0 items-center justify-center rounded-sm",
 																"hover:bg-muted/60 hover:text-foreground",
 																"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
-																"disabled:pointer-events-none disabled:opacity-50",
+																"disabled:pointer-events-none",
+																showActions && "disabled:opacity-50",
+																"transition-opacity ease-out",
+																chromeFadeClass,
 															)}
+															aria-hidden={!showActions}
 															aria-label={t(
 																"papersLibrary.easyScholar.fetchRank",
 															)}
@@ -300,10 +359,7 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 															}}
 															onMouseDown={(e) => e.stopPropagation()}
 														>
-															<Award
-																className="size-3.5 text-amber-500"
-																aria-hidden
-															/>
+															<Award className="size-3.5" aria-hidden />
 														</button>
 													</TooltipTrigger>
 													<TooltipContent side="bottom">
@@ -320,13 +376,18 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 																<button
 																	type="button"
 																	data-library-header-action
+																	tabIndex={showActions ? undefined : -1}
 																	className={cn(
 																		"ml-auto flex size-6 shrink-0 items-center justify-center rounded-sm",
 																		"hover:bg-muted/60 hover:text-foreground",
 																		"focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+																		"transition-opacity ease-out",
+																		chromeFadeClass,
 																		tagFilterActive &&
+																			showActions &&
 																			"bg-muted/60 text-foreground",
 																	)}
+																	aria-hidden={!showActions}
 																	aria-label={t("papersLibrary.filterTags")}
 																	aria-pressed={tagFilterActive}
 																	onClick={(e) => e.stopPropagation()}
@@ -380,7 +441,7 @@ export const LibraryTableHeader = memo(function LibraryTableHeader({
 																				aria-hidden
 																			>
 																				{selected ? (
-																					<span className="text-[9px] leading-none">
+																					<span className="text-caption leading-none">
 																						✓
 																					</span>
 																				) : null}

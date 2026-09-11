@@ -53,6 +53,9 @@ export function useTreeReveal({
 		estimateSize: () => Math.round(28 * uiScale),
 		getItemKey: (index) => flatRowKeys[index] ?? index,
 		overscan: 15,
+		// Defer ResizeObserver measure to the next frame so React 19 commits
+		// (Paper Info mount, tree refresh) land before we read geometry.
+		useAnimationFrameWithResizeObserver: true,
 	});
 
 	// Remeasure when the flattened set changes (create draft, expand, refresh).
@@ -60,6 +63,20 @@ export function useTreeReveal({
 	useEffect(() => {
 		rowVirtualizer.measure();
 	}, [flatRowKeys, uiScale, rowVirtualizer]);
+
+	// When the tree viewport shrinks (Paper Info opens) or grows, WebKit may
+	// clamp scrollTop without firing `scroll`. The virtualizer then keeps a
+	// stale offset and getVirtualItems() can return an empty window → blank
+	// sidebar until the user scrolls. Re-sync from the DOM on resize.
+	useEffect(() => {
+		const el = treeScrollRef.current;
+		if (!el || typeof ResizeObserver === "undefined") return;
+		const ro = new ResizeObserver(() => {
+			rowVirtualizer.scrollToOffset(el.scrollTop);
+		});
+		ro.observe(el);
+		return () => ro.disconnect();
+	}, [rowVirtualizer]);
 
 	const pendingRevealPathRef = useRef<string | null>(null);
 	/** Target that armed the current reveal; guards against effect-identity churn. */

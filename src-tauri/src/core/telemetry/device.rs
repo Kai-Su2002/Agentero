@@ -5,6 +5,12 @@
 
 use crate::core::paths;
 
+/// `CREATE_NO_WINDOW`: Agentero ships as a GUI-subsystem binary, so a console
+/// child started without this flag makes Windows allocate a visible console
+/// window — a black window flashing over the app on every launch.
+#[cfg(target_os = "windows")]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 #[derive(Debug, Clone)]
 pub(super) struct DeviceInfo {
     pub(super) os_name: String,
@@ -64,15 +70,7 @@ fn raw_device_model() -> Option<String> {
     }
     #[cfg(target_os = "windows")]
     {
-        let out = std::process::Command::new("reg")
-            .args([
-                "query",
-                r"HKLM\HARDWARE\DESCRIPTION\System\BIOS",
-                "/v",
-                "SystemProductName",
-            ])
-            .output()
-            .ok()?;
+        let out = device_model_command().output().ok()?;
         String::from_utf8_lossy(&out.stdout)
             .lines()
             .find_map(|line| line.split("REG_SZ").nth(1))
@@ -82,5 +80,51 @@ fn raw_device_model() -> Option<String> {
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
     {
         None
+    }
+}
+
+/// Windows has no `sysctl` equivalent that is cheaper than a registry read, so
+/// the BIOS product name comes from `reg query`. The console window is
+/// suppressed: this runs on every launch from [`super::Telemetry::start`], and
+/// a visible console would flash over the window while it is still painting.
+#[cfg(target_os = "windows")]
+fn device_model_command() -> std::process::Command {
+    use std::os::windows::process::CommandExt;
+
+    let mut command = std::process::Command::new("reg");
+    command
+        .args([
+            "query",
+            r"HKLM\HARDWARE\DESCRIPTION\System\BIOS",
+            "/v",
+            "SystemProductName",
+        ])
+        .creation_flags(CREATE_NO_WINDOW);
+    command
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+
+    /// `creation_flags` has no std getter, so this pins the command the
+    /// no-window wrapper sits on.
+    #[test]
+    fn device_model_command_queries_bios_product_name() {
+        let command = device_model_command();
+        assert_eq!(command.get_program().to_string_lossy(), "reg");
+        let args: Vec<String> = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(
+            args,
+            vec![
+                "query",
+                r"HKLM\HARDWARE\DESCRIPTION\System\BIOS",
+                "/v",
+                "SystemProductName",
+            ]
+        );
     }
 }

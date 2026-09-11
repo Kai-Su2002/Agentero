@@ -1,8 +1,9 @@
-import { Check, CopyIcon, Pencil } from "lucide-react";
+import { Check, ChevronDownIcon, CopyIcon, Pencil } from "lucide-react";
 import type { RefObject } from "react";
 import {
 	Fragment,
 	memo,
+	type ReactNode,
 	useCallback,
 	useEffect,
 	useMemo,
@@ -10,6 +11,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { AgentThinkingOrb } from "@/components/agent/agent-thinking-orb";
 import {
 	ChatAttachedImages,
 	ChatVisualAnnotations,
@@ -69,6 +71,12 @@ import {
 } from "@/components/ai-elements/tool";
 import { Button } from "@/components/ui/button";
 import {
+	Collapsible,
+	CollapsibleContent,
+	CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
+	type AgentPart,
 	agentTextFromParts,
 	type ChatLine,
 	copyText,
@@ -80,6 +88,7 @@ import {
 } from "@/lib/agent/chat-state";
 import { stripPromptEnvelopeForDisplay } from "@/lib/agent/prompt-display";
 import { normalizeAgentSourcePath } from "@/lib/agent/sources";
+import { cn } from "@/lib/core/utils";
 
 /** Compact note: interactive form is docked below, not inside the tool card. */
 function AskUserToolPendingNote() {
@@ -90,6 +99,100 @@ function AskUserToolPendingNote() {
 				{t("askUserQuestion.pendingInComposer")}
 			</p>
 		</ToolContent>
+	);
+}
+
+function isNonTextPart(part: AgentPart): boolean {
+	return (
+		part.type === "reasoning" || part.type === "plan" || part.type === "tool"
+	);
+}
+
+type AgentProcessCollapsibleProps = {
+	rowKey: string;
+	partOpenState: Record<string, boolean>;
+	onPartOpenChange: (key: string, open: boolean) => void;
+	children: ReactNode;
+};
+
+/** Fold reasoning/plan/tool parts into one "Chain of Thought" block once the turn is done. */
+function AgentProcessCollapsible({
+	rowKey,
+	partOpenState,
+	onPartOpenChange,
+	children,
+}: AgentProcessCollapsibleProps) {
+	const { t } = useTranslation("aiElements");
+	const processKey = `${rowKey}:__process__`;
+	const open = partOpenState[processKey] ?? false;
+
+	return (
+		<Collapsible
+			open={open}
+			onOpenChange={(next) => onPartOpenChange(processKey, next)}
+			className="not-prose w-full"
+		>
+			<CollapsibleTrigger className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm text-muted-foreground transition-colors hover:text-foreground">
+				<span className="font-medium">{t("chainOfThought.title")}</span>
+				<ChevronDownIcon
+					className={cn(
+						"size-4 shrink-0 transition-transform",
+						open && "rotate-180",
+					)}
+				/>
+			</CollapsibleTrigger>
+			<CollapsibleContent className="p-2">
+				<div className="flex flex-col gap-1 rounded-lg border bg-muted/20 p-2">
+					{children}
+				</div>
+			</CollapsibleContent>
+		</Collapsible>
+	);
+}
+
+/** Compact activity line shown while assistant is streaming reasoning/tool calls. */
+function StreamingActivityRow({
+	parts,
+	streaming,
+}: {
+	parts: AgentPart[];
+	streaming: boolean;
+}) {
+	const { t } = useTranslation("agent");
+	const [elapsed, setElapsed] = useState(0);
+
+	useEffect(() => {
+		if (!streaming) return;
+		const start = Date.now();
+		setElapsed(0);
+		const timer = setInterval(() => {
+			setElapsed(Math.floor((Date.now() - start) / 1000));
+		}, 1000);
+		return () => clearInterval(timer);
+	}, [streaming]);
+
+	if (!streaming) return null;
+
+	const lastNonText = [...parts].reverse().find((p) => p.type !== "text");
+	let label: string;
+	if (lastNonText?.type === "tool") {
+		label = lastNonText.tool.title || lastNonText.tool.kind;
+	} else if (lastNonText?.type === "reasoning") {
+		label = lastNonText.text.trim() || t("streaming.reasoning");
+	} else if (lastNonText?.type === "plan") {
+		label = t("streaming.plan");
+	} else {
+		label = t("streaming.thinking");
+	}
+
+	return (
+		<div className="flex w-full items-center gap-2 text-muted-foreground text-sm">
+			<AgentThinkingOrb parts={parts} streaming={streaming} showLabel={false} />
+			<span className="min-w-0 flex-1 truncate">{label}</span>
+			<span className="text-xs tabular-nums">
+				{t("streaming.elapsed", { count: elapsed })}
+			</span>
+		</div>
 	);
 }
 
@@ -162,7 +265,6 @@ function CopyAction({ text }: { text: string }) {
 const ChatTranscriptRow = memo(function ChatTranscriptRow({
 	line,
 	activeTabId,
-	agentName,
 	activeTabIsRunning,
 	submitting,
 	switching,
@@ -175,7 +277,6 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 }: {
 	line: ChatLine;
 	activeTabId: string;
-	agentName: string;
 	activeTabIsRunning: boolean;
 	submitting: boolean;
 	switching: boolean;
@@ -262,7 +363,7 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 			images: attachedImages,
 		});
 		return (
-			<Message from="user">
+			<Message from="user" className="max-w-[85%]">
 				{/* Visual / image chips above the text bubble (not inside it). */}
 				{visuals.length > 0 ? (
 					<ChatVisualAnnotations annotations={visuals} />
@@ -272,8 +373,10 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 				) : null}
 				{/* Free-text only: skip empty bubble when the turn is image/visual-only. */}
 				{userDisplay ? (
-					<MessageContent>
-						<MessageResponse>{userDisplay}</MessageResponse>
+					<MessageContent className="rounded-2xl px-4 py-2.5">
+						<MessageResponse className="text-base leading-relaxed">
+							{userDisplay}
+						</MessageResponse>
 					</MessageContent>
 				) : null}
 				{/* Align under user content (Message is full-width) */}
@@ -301,147 +404,189 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 		const parts = line.parts;
 		const lastIndex = parts.length - 1;
 		const agentText = agentTextFromParts(parts);
-		const showThinking = Boolean(line.streaming) && parts.length === 0;
+		const isStreaming = Boolean(line.streaming);
+
+		const renderAgentPart = (
+			part: AgentPart,
+			index: number,
+			insideProcess: boolean,
+		) => {
+			const partKey = `${rowKey}:${part.id}`;
+			if (part.type === "reasoning") {
+				const streaming = Boolean(line.streaming) && index === lastIndex;
+				if (!part.text.trim() && !streaming) return null;
+				return (
+					<Reasoning
+						key={partKey}
+						className={insideProcess ? "mb-0" : "mb-2"}
+						isStreaming={streaming}
+						// Collapsed by default so the transcript stays
+						// scannable; expand on click. Also collapsed
+						// while streaming (no auto-expand). Open state
+						// is lifted to ChatTranscript so virtualized
+						// rows survive unmount; defaultOpen={false}
+						// still suppresses streaming auto-open.
+						defaultOpen={false}
+						open={partOpenState[partKey] ?? false}
+						onOpenChange={(open) => onPartOpenChange(partKey, open)}
+					>
+						<ReasoningTrigger
+							className={insideProcess ? "px-2 py-1.5 text-xs" : undefined}
+							swapIconOnHover={insideProcess}
+						/>
+						<ReasoningContent
+							className={insideProcess ? "mt-2 px-2 pb-2" : undefined}
+						>
+							{part.text}
+						</ReasoningContent>
+					</Reasoning>
+				);
+			}
+			if (part.type === "plan") {
+				const plan = part.entries;
+				if (plan.length === 0) return null;
+				const planStreaming =
+					Boolean(line.streaming) && plan.some((p) => p.status !== "completed");
+				return (
+					<Plan
+						key={partKey}
+						className={cn(
+							"shadow-none",
+							insideProcess
+								? "mb-0 rounded-none border-0 bg-transparent"
+								: "mb-2",
+						)}
+						isStreaming={planStreaming}
+						open={partOpenState[partKey] ?? true}
+						onOpenChange={(open) => onPartOpenChange(partKey, open)}
+					>
+						<PlanHeader className={insideProcess ? "px-2 py-2" : undefined}>
+							<div className="min-w-0 flex-1 space-y-1">
+								<PlanTitle>{t("plan.title")}</PlanTitle>
+								<PlanDescription>
+									{t("plan.steps", {
+										completed: plan.filter((p) => p.status === "completed")
+											.length,
+										total: plan.length,
+									})}
+								</PlanDescription>
+							</div>
+							<PlanAction>
+								<PlanTrigger />
+							</PlanAction>
+						</PlanHeader>
+						<PlanContent className={insideProcess ? "px-2 pb-2 pt-0" : "pt-0"}>
+							<ol className="space-y-2">
+								{plan.map((entry) => (
+									<PlanStep
+										key={`${entry.status}:${entry.priority}:${entry.content}`}
+										status={
+											entry.status === "completed"
+												? "completed"
+												: entry.status === "in_progress"
+													? "in_progress"
+													: "pending"
+										}
+									>
+										{entry.content}
+									</PlanStep>
+								))}
+							</ol>
+						</PlanContent>
+					</Plan>
+				);
+			}
+			if (part.type === "tool") {
+				const tool = part.tool;
+				const state = toolPartState(tool.status);
+				const askUserQuestion = parseAskUserQuestions(tool.input);
+				// Interactive form is owned by the composer; transcript
+				// only shows a compact tool row (and a short pending note).
+				const askPending =
+					Boolean(askUserQuestion) && isPendingAskUserToolStatus(tool.status);
+				return (
+					<Tool
+						key={partKey}
+						className={
+							insideProcess
+								? "mb-0 rounded-none border-0 bg-transparent shadow-none"
+								: undefined
+						}
+						open={partOpenState[partKey] ?? askPending}
+						onOpenChange={(open) => onPartOpenChange(partKey, open)}
+					>
+						<ToolHeader
+							className={insideProcess ? "px-2 py-1.5" : undefined}
+							swapIconOnHover={insideProcess}
+							title={tool.title || t("tool.defaultTitle")}
+							type={`tool-${tool.kind}`}
+							state={state}
+						/>
+						{askPending ? (
+							<AskUserToolPendingNote />
+						) : askUserQuestion ? null : (
+							<ToolContent
+								className={insideProcess ? "border-t-0 px-2 py-2" : undefined}
+							>
+								{tool.input !== undefined ? (
+									<ToolInput input={tool.input} />
+								) : null}
+								<ToolOutput
+									output={tool.output}
+									errorText={
+										tool.status === "failed" ? t("tool.failed") : undefined
+									}
+								/>
+							</ToolContent>
+						)}
+					</Tool>
+				);
+			}
+			if (!part.text) return null;
+			const isAnimating =
+				Boolean(line.streaming) && index === lastIndex && part.text.length > 0;
+			return (
+				<div key={partKey} className="min-w-0">
+					<MessageResponse isAnimating={isAnimating}>
+						{part.text}
+					</MessageResponse>
+				</div>
+			);
+		};
+
+		const nonTextParts = parts.filter(isNonTextPart);
+		const textParts = parts.filter((p) => !isNonTextPart(p));
+		const groupNonText = !line.streaming && nonTextParts.length > 0;
+
 		return (
-			<div className="flex w-full flex-col gap-2">
+			<div className="flex w-full flex-col gap-3">
 				<Message from="assistant">
-					<MessageContent>
-						<p className="mb-1 font-medium text-muted-foreground text-xs">
-							{agentName}
-						</p>
-						{parts.map((part, index) => {
-							const partKey = `${rowKey}:${part.id}`;
-							if (part.type === "reasoning") {
-								const streaming =
-									Boolean(line.streaming) && index === lastIndex;
-								if (!part.text.trim() && !streaming) return null;
-								return (
-									<Reasoning
-										key={partKey}
-										className="mb-2"
-										isStreaming={streaming}
-										// Collapsed by default so the transcript stays
-										// scannable; expand on click. Also collapsed
-										// while streaming (no auto-expand). Open state
-										// is lifted to ChatTranscript so virtualized
-										// rows survive unmount; defaultOpen={false}
-										// still suppresses streaming auto-open.
-										defaultOpen={false}
-										open={partOpenState[partKey] ?? false}
-										onOpenChange={(open) => onPartOpenChange(partKey, open)}
-									>
-										<ReasoningTrigger />
-										<ReasoningContent>{part.text}</ReasoningContent>
-									</Reasoning>
-								);
-							}
-							if (part.type === "plan") {
-								const plan = part.entries;
-								if (plan.length === 0) return null;
-								const planStreaming =
-									Boolean(line.streaming) &&
-									plan.some((p) => p.status !== "completed");
-								return (
-									<Plan
-										key={partKey}
-										className="mb-2"
-										isStreaming={planStreaming}
-										open={partOpenState[partKey] ?? true}
-										onOpenChange={(open) => onPartOpenChange(partKey, open)}
-									>
-										<PlanHeader>
-											<div className="min-w-0 flex-1 space-y-1">
-												<PlanTitle>{t("plan.title")}</PlanTitle>
-												<PlanDescription>
-													{t("plan.steps", {
-														completed: plan.filter(
-															(p) => p.status === "completed",
-														).length,
-														total: plan.length,
-													})}
-												</PlanDescription>
-											</div>
-											<PlanAction>
-												<PlanTrigger />
-											</PlanAction>
-										</PlanHeader>
-										<PlanContent className="pt-0">
-											<ol className="space-y-2">
-												{plan.map((entry) => (
-													<PlanStep
-														key={`${entry.status}:${entry.priority}:${entry.content}`}
-														status={
-															entry.status === "completed"
-																? "completed"
-																: entry.status === "in_progress"
-																	? "in_progress"
-																	: "pending"
-														}
-													>
-														{entry.content}
-													</PlanStep>
-												))}
-											</ol>
-										</PlanContent>
-									</Plan>
-								);
-							}
-							if (part.type === "tool") {
-								const tool = part.tool;
-								const state = toolPartState(tool.status);
-								const askUserQuestion = parseAskUserQuestions(tool.input);
-								// Interactive form is owned by the composer; transcript
-								// only shows a compact tool row (and a short pending note).
-								const askPending =
-									Boolean(askUserQuestion) &&
-									isPendingAskUserToolStatus(tool.status);
-								return (
-									<Tool
-										key={partKey}
-										open={partOpenState[partKey] ?? askPending}
-										onOpenChange={(open) => onPartOpenChange(partKey, open)}
-									>
-										<ToolHeader
-											title={tool.title || t("tool.defaultTitle")}
-											type={`tool-${tool.kind}`}
-											state={state}
-										/>
-										{askPending ? (
-											<AskUserToolPendingNote />
-										) : askUserQuestion ? null : (
-											<ToolContent>
-												{tool.input !== undefined ? (
-													<ToolInput input={tool.input} />
-												) : null}
-												<ToolOutput
-													output={tool.output}
-													errorText={
-														tool.status === "failed"
-															? t("tool.failed")
-															: undefined
-													}
-												/>
-											</ToolContent>
-										)}
-									</Tool>
-								);
-							}
-							if (!part.text) return null;
-							const isAnimating =
-								Boolean(line.streaming) &&
-								index === lastIndex &&
-								part.text.length > 0;
-							return (
-								<div key={partKey} className="min-w-0">
-									<MessageResponse isAnimating={isAnimating}>
-										{part.text}
-									</MessageResponse>
-								</div>
-							);
-						})}
-						{showThinking ? (
-							<Shimmer className="text-sm">{t("thinking")}</Shimmer>
-						) : null}
+					<MessageContent className="w-full gap-3 text-base leading-relaxed">
+						{groupNonText ? (
+							<>
+								<AgentProcessCollapsible
+									rowKey={rowKey}
+									partOpenState={partOpenState}
+									onPartOpenChange={onPartOpenChange}
+								>
+									{nonTextParts.map((part, index) =>
+										renderAgentPart(part, index, true),
+									)}
+								</AgentProcessCollapsible>
+								{textParts.map((part, index) =>
+									renderAgentPart(part, index, false),
+								)}
+							</>
+						) : isStreaming && nonTextParts.length > 0 ? (
+							<>
+								<StreamingActivityRow parts={parts} streaming={isStreaming} />
+								{textParts.map((part, index) =>
+									renderAgentPart(part, index, false),
+								)}
+							</>
+						) : (
+							parts.map((part, index) => renderAgentPart(part, index, false))
+						)}
 					</MessageContent>
 					{!line.streaming && agentText ? (
 						<MessageActions className="-mt-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
@@ -506,7 +651,6 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 function TranscriptBody({
 	lines,
 	activeTabId,
-	agentName,
 	activeTabIsRunning,
 	submitting,
 	switching,
@@ -520,7 +664,6 @@ function TranscriptBody({
 }: {
 	lines: ChatLine[];
 	activeTabId: string;
-	agentName: string;
 	activeTabIsRunning: boolean;
 	submitting: boolean;
 	switching: boolean;
@@ -554,7 +697,6 @@ function TranscriptBody({
 			<ChatTranscriptRow
 				line={line}
 				activeTabId={activeTabId}
-				agentName={agentName}
 				activeTabIsRunning={activeTabIsRunning}
 				submitting={submitting}
 				switching={switching}
@@ -570,7 +712,7 @@ function TranscriptBody({
 
 	if (!virtualized) {
 		return (
-			<div className="flex w-full flex-col gap-8">
+			<div className="flex w-full flex-col gap-6">
 				{lines.map((line) => (
 					<Fragment key={transcriptLineKey(line, activeTabId)}>
 						{renderRow(line)}
@@ -589,7 +731,7 @@ function TranscriptBody({
 				// pb-8 replaces the flex gap-8 spacing (absolute rows have no gap).
 				<div
 					key={virtualRow.key}
-					className="absolute top-0 left-0 w-full pb-8"
+					className="absolute top-0 left-0 w-full pb-6"
 					style={{ transform: `translateY(${virtualRow.start}px)` }}
 					ref={rowVirtualizer.measureElement}
 					data-index={virtualRow.index}
@@ -604,7 +746,6 @@ function TranscriptBody({
 export function ChatTranscript({
 	lines,
 	activeTabId,
-	agentName,
 	compact = false,
 	forceVirtualize = false,
 	activeTabIsRunning,
@@ -624,7 +765,6 @@ export function ChatTranscript({
 }: {
 	lines: ChatLine[];
 	activeTabId: string;
-	agentName: string;
 	compact?: boolean;
 	/** Storybook / tests: windowed rendering even below the line threshold. */
 	forceVirtualize?: boolean;
@@ -725,7 +865,7 @@ export function ChatTranscript({
 				}
 			>
 				{lines.length === 0 ? (
-					<div className="flex w-full flex-col gap-8">
+					<div className="flex w-full flex-col gap-6">
 						<ConversationEmptyState
 							title={t("empty.title")}
 							description={t("empty.description")}
@@ -758,7 +898,6 @@ export function ChatTranscript({
 					<TranscriptBody
 						lines={lines}
 						activeTabId={activeTabId}
-						agentName={agentName}
 						activeTabIsRunning={activeTabIsRunning}
 						submitting={submitting}
 						switching={switching}

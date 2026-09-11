@@ -23,13 +23,13 @@ pub struct AgentRegistry {
 impl AgentRegistry {
     pub fn load() -> Self {
         let path = config_path();
-        let mut state = read_state(&path).unwrap_or_default();
+        let (mut state, removed_templates) =
+            read_state(&path).unwrap_or_else(|_| (AgentRegistryState::default(), false));
         let migrated_codex = migrate_legacy_codex_agents(&mut state);
         let migrated_grok = migrate_legacy_grok_agents(&mut state);
-        let migrated_gemini = migrate_legacy_gemini_agents(&mut state);
         let migrated_env = migrate_catalog_env_defaults(&mut state);
         state.enabled = true;
-        if migrated_codex || migrated_grok || migrated_gemini || migrated_env {
+        if migrated_codex || migrated_grok || removed_templates || migrated_env {
             if let Err(error) = persist(&path, &state) {
                 log::error!(
                     target: "agentero::agent",
@@ -396,151 +396,175 @@ impl AgentRegistry {
     }
 
     pub fn scan_catalog(&self) -> Result<CatalogScanResponse, AppError> {
-        let state = self.snapshot()?;
-        let default_id = state.default_id.clone();
+        // Catalog agents that are present on PATH but not yet persisted in the
+        // registry are auto-registered here, so panels like the sidebar chat
+        // switcher can list them without requiring a visit to Settings first.
+        // The ACP probe still happens lazily (Settings or first use). If any
+        // registration happened we re-scan once so default/registered ids are
+        // consistent.
+        loop {
+            let state = self.snapshot()?;
+            let default_id = state.default_id.clone();
 
-        let mut entries = Vec::new();
-        for info in catalog_templates() {
-            // dsh lives in a managed launcher dir (project npm install) or as a
-            // global `dsh-acp-demo` on PATH — "installed" means either entrypoint.
-            let (detect_path, binary_available, acp_command_available) = if info.id == "dsh" {
-                let local = dsh_entrypoint_exists();
-                let global = resolve_command("dsh-acp-demo");
-                let ready = local || global.is_some();
-                (
-                    global.or_else(|| ready.then(dsh_launcher_dir)),
-                    ready,
-                    ready,
-                )
-            } else {
-                let detect = info
-                    .detect_command
-                    .as_deref()
-                    .unwrap_or(info.command.as_str());
-                let detect_path = resolve_command(detect);
-                let binary_available = detect_path.is_some();
-                let acp_command_available = resolve_command(&info.command).is_some();
-                (detect_path, binary_available, acp_command_available)
-            };
-
-            let registered = state.agents.iter().find(|a| {
-                a.template.as_str() == info.id || (a.command == info.command && a.args == info.args)
-            });
-
-            let (acp_status, acp_agent_name, last_probe_error, last_probed_at) =
-                if !acp_command_available && !binary_available {
-                    (CatalogAcpStatus::Missing, None, None, None)
-                } else if let Some(reg) = registered {
-                    match reg.last_probe_ok {
-                        Some(true) => (
-                            CatalogAcpStatus::Ready,
-                            reg.last_probe_agent_name.clone(),
-                            None,
-                            reg.last_probed_at.clone(),
-                        ),
-                        Some(false) => (
-                            CatalogAcpStatus::Failed,
-                            reg.last_probe_agent_name.clone(),
-                            reg.last_probe_error.clone(),
-                            reg.last_probed_at.clone(),
-                        ),
-                        None => {
-                            if acp_command_available {
-                                (CatalogAcpStatus::NotProbed, None, None, None)
-                            } else {
-                                (
-                                    CatalogAcpStatus::Missing,
-                                    None,
-                                    Some(format!("ACP command `{}` not found", info.command)),
-                                    None,
-                                )
-                            }
-                        }
-                    }
-                } else if acp_command_available {
-                    (CatalogAcpStatus::NotProbed, None, None, None)
-                } else if binary_available {
-                    // Host CLI present (e.g. `claude`) but ACP entrypoint missing.
+            let mut entries = Vec::new();
+            let mut registered_new = false;
+            for info in catalog_templates() {
+                // dsh lives in a managed launcher dir (project npm install) or as a
+                // global `dsh-acp-demo` on PATH — "installed" means either entrypoint.
+                let (detect_path, binary_available, acp_command_available) = if info.id == "dsh" {
+                    let local = dsh_entrypoint_exists();
+                    let global = resolve_command("dsh-acp-demo");
+                    let ready = local || global.is_some();
                     (
-                        CatalogAcpStatus::Missing,
-                        None,
-                        Some(format!("ACP command `{}` not found", info.command)),
-                        None,
+                        global.or_else(|| ready.then(dsh_launcher_dir)),
+                        ready,
+                        ready,
                     )
                 } else {
-                    (
-                        CatalogAcpStatus::Missing,
-                        None,
-                        Some(format!(
-                            "command `{}` not found on PATH",
-                            info.detect_command
-                                .as_deref()
-                                .unwrap_or(info.command.as_str())
-                        )),
-                        None,
-                    )
+                    let detect = info
+                        .detect_command
+                        .as_deref()
+                        .unwrap_or(info.command.as_str());
+                    let detect_path = resolve_command(detect);
+                    let binary_available = detect_path.is_some();
+                    let acp_command_available = resolve_command(&info.command).is_some();
+                    (detect_path, binary_available, acp_command_available)
                 };
 
-            let registered_id = registered.map(|a| a.id.clone());
-            let is_default = registered_id
-                .as_ref()
-                .zip(default_id.as_ref())
-                .is_some_and(|(a, d)| a == d);
+                let registered = state.agents.iter().find(|a| {
+                    a.template.as_str() == info.id
+                        || (a.command == info.command && a.args == info.args)
+                });
 
-            // Two install layers: Agent (detect binary) vs ACP entrypoint.
-            let adapter_distinct = info
-                .detect_command
-                .as_ref()
-                .is_some_and(|d| d != &info.command);
-            let can_install = lifecycle::supports_lifecycle(&info.id);
-            // Offer ACP install when host is present but ACP entry is missing.
-            let offer_install = binary_available
-                && !acp_command_available
-                && (can_install
-                    || info
-                        .install_command
-                        .as_ref()
-                        .is_some_and(|c| !c.trim().is_empty()));
+                let (acp_status, acp_agent_name, last_probe_error, last_probed_at) =
+                    if !acp_command_available && !binary_available {
+                        (CatalogAcpStatus::Missing, None, None, None)
+                    } else if let Some(reg) = registered {
+                        match reg.last_probe_ok {
+                            Some(true) => (
+                                CatalogAcpStatus::Ready,
+                                reg.last_probe_agent_name.clone(),
+                                None,
+                                reg.last_probed_at.clone(),
+                            ),
+                            Some(false) => (
+                                CatalogAcpStatus::Failed,
+                                reg.last_probe_agent_name.clone(),
+                                reg.last_probe_error.clone(),
+                                reg.last_probed_at.clone(),
+                            ),
+                            None => {
+                                if acp_command_available {
+                                    (CatalogAcpStatus::NotProbed, None, None, None)
+                                } else {
+                                    (
+                                        CatalogAcpStatus::Missing,
+                                        None,
+                                        Some(format!("ACP command `{}` not found", info.command)),
+                                        None,
+                                    )
+                                }
+                            }
+                        }
+                    } else if acp_command_available {
+                        (CatalogAcpStatus::NotProbed, None, None, None)
+                    } else if binary_available {
+                        // Host CLI present (e.g. `claude`) but ACP entrypoint missing.
+                        (
+                            CatalogAcpStatus::Missing,
+                            None,
+                            Some(format!("ACP command `{}` not found", info.command)),
+                            None,
+                        )
+                    } else {
+                        (
+                            CatalogAcpStatus::Missing,
+                            None,
+                            Some(format!(
+                                "command `{}` not found on PATH",
+                                info.detect_command
+                                    .as_deref()
+                                    .unwrap_or(info.command.as_str())
+                            )),
+                            None,
+                        )
+                    };
 
-            entries.push(CatalogEntry {
-                template_id: info.id,
-                name: info.name,
-                description: info.description,
-                command: info.command,
-                args: info.args,
-                install_hint: info.install_hint,
-                install_command: info.install_command,
-                offer_install,
-                can_install,
-                adapter_distinct,
-                binary_available,
-                resolved_path: detect_path.map(|p| p.display().to_string()),
-                acp_command_available,
-                acp_status,
-                registered_id,
-                is_default,
-                acp_agent_name,
-                last_probe_error,
-                last_probed_at,
+                let mut registered_id = registered.map(|a| a.id.clone());
+                if acp_command_available && registered.is_none() {
+                    if let Ok(agent) = self.ensure_catalog_agent(&info.id, false) {
+                        registered_new = true;
+                        registered_id = Some(agent.id.clone());
+                    }
+                }
+
+                let is_default = registered_id
+                    .as_ref()
+                    .zip(default_id.as_ref())
+                    .is_some_and(|(a, d)| a == d);
+
+                // Two install layers: Agent (detect binary) vs ACP entrypoint.
+                let adapter_distinct = info
+                    .detect_command
+                    .as_ref()
+                    .is_some_and(|d| d != &info.command);
+                let can_install = lifecycle::supports_lifecycle(&info.id);
+                // Offer ACP install when host is present but ACP entry is missing.
+                let offer_install = binary_available
+                    && !acp_command_available
+                    && (can_install
+                        || info
+                            .install_command
+                            .as_ref()
+                            .is_some_and(|c| !c.trim().is_empty()));
+
+                entries.push(CatalogEntry {
+                    template_id: info.id,
+                    name: info.name,
+                    description: info.description,
+                    command: info.command,
+                    args: info.args,
+                    install_hint: info.install_hint,
+                    install_command: info.install_command,
+                    offer_install,
+                    can_install,
+                    adapter_distinct,
+                    binary_available,
+                    resolved_path: detect_path.map(|p| p.display().to_string()),
+                    acp_command_available,
+                    acp_status,
+                    registered_id,
+                    is_default,
+                    acp_agent_name,
+                    last_probe_error,
+                    last_probed_at,
+                    installed_version: None,
+                    latest_version: None,
+                    update_available: None,
+                });
+            }
+
+            if registered_new {
+                continue;
+            }
+
+            let custom_agents = state
+                .agents
+                .into_iter()
+                .filter(|a| matches!(a.template, AgentTemplate::Custom))
+                .collect();
+
+            return Ok(CatalogScanResponse {
+                entries,
+                custom_agents,
+                default_id,
+                enabled: state.enabled,
+                proxy_enabled: state.proxy_enabled,
+                proxy_url: state.proxy_url,
+                user_agent: state.user_agent,
+                user_agent_provider_ids: state.user_agent_provider_ids,
             });
         }
-
-        let custom_agents = state
-            .agents
-            .into_iter()
-            .filter(|a| matches!(a.template, AgentTemplate::Custom))
-            .collect();
-
-        Ok(CatalogScanResponse {
-            entries,
-            custom_agents,
-            default_id,
-            enabled: state.enabled,
-            proxy_enabled: state.proxy_enabled,
-            proxy_url: state.proxy_url,
-            user_agent: state.user_agent,
-            user_agent_provider_ids: state.user_agent_provider_ids,
-        })
     }
 
     /// Anonymous summary of registered agents for telemetry (template ids +
@@ -676,31 +700,53 @@ fn migrate_legacy_codex_agents(state: &mut AgentRegistryState) -> bool {
     migrated
 }
 
-/// Google Gemini CLI and the previous `agy --acp` invocation have been
-/// replaced by the community `agy-acp` ACP adapter. Repoint stale Gemini or
-/// legacy Antigravity registrations (template deserializes as Antigravity, but
-/// `command`/`args` still reference `gemini` or `agy --acp`) at the new command.
-fn migrate_legacy_gemini_agents(state: &mut AgentRegistryState) -> bool {
-    let mut migrated = false;
-    for agent in &mut state.agents {
-        if agent.template != AgentTemplate::Antigravity {
-            continue;
+/// Google Antigravity (community `agy-acp` adapter) and the legacy Gemini CLI
+/// template were removed: Google ships no official ACP entrypoint. Registrations
+/// may still be on disk, and an unknown template string fails the whole parse
+/// (`read_state` would fall back to an empty registry, dropping every other
+/// agent), so stale rows are stripped from the raw JSON before deserialization.
+const REMOVED_TEMPLATE_IDS: &[&str] = &["antigravity", "gemini"];
+
+fn is_removed_template(agent: &serde_json::Value) -> bool {
+    agent
+        .get("template")
+        .and_then(|value| value.as_str())
+        .is_some_and(|template| REMOVED_TEMPLATE_IDS.contains(&template))
+}
+
+fn strip_removed_templates(value: &mut serde_json::Value) -> bool {
+    let default_id = value
+        .get("default_id")
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let Some(object) = value.as_object_mut() else {
+        return false;
+    };
+    let Some(agents) = object
+        .get_mut("agents")
+        .and_then(|value| value.as_array_mut())
+    else {
+        return false;
+    };
+    let before = agents.len();
+    let mut removed_default = false;
+    agents.retain(|agent| {
+        if !is_removed_template(agent) {
+            return true;
         }
-        let is_legacy_gemini = agent.command == "gemini";
-        let is_legacy_agy_acp =
-            agent.command == "agy" && agent.args.len() == 1 && agent.args[0] == "--acp";
-        if !is_legacy_gemini && !is_legacy_agy_acp {
-            continue;
+        if let (Some(default), Some(id)) = (
+            default_id.as_deref(),
+            agent.get("id").and_then(|value| value.as_str()),
+        ) {
+            removed_default |= default == id;
         }
-        agent.command = "agy-acp".to_string();
-        agent.args = vec![];
-        agent.last_probe_ok = None;
-        agent.last_probe_agent_name = None;
-        agent.last_probe_error = None;
-        agent.last_probed_at = None;
-        migrated = true;
+        false
+    });
+    let changed = agents.len() != before;
+    if changed && removed_default {
+        object.insert("default_id".to_string(), serde_json::Value::Null);
     }
-    migrated
+    changed
 }
 
 fn stable_id_for(template: &AgentTemplate, command: &str, args: &[String]) -> String {
@@ -713,7 +759,7 @@ fn stable_id_for(template: &AgentTemplate, command: &str, args: &[String]) -> St
     }
 }
 
-fn chrono_like_now() -> String {
+pub(crate) fn chrono_like_now() -> String {
     // RFC3339-ish without extra deps: unix secs is enough for UI ordering.
     use std::time::{SystemTime, UNIX_EPOCH};
     let secs = SystemTime::now()
@@ -732,12 +778,16 @@ fn config_path() -> PathBuf {
     path
 }
 
-fn read_state(path: &PathBuf) -> Result<AgentRegistryState, AppError> {
+/// Read + migrate the on-disk registry. Returns `(state, removed_stale_templates)`
+/// so `load` can persist the cleaned file.
+fn read_state(path: &PathBuf) -> Result<(AgentRegistryState, bool), AppError> {
     if !path.exists() {
-        return Ok(AgentRegistryState::default());
+        return Ok((AgentRegistryState::default(), false));
     }
     let raw = fs::read_to_string(path)?;
-    Ok(serde_json::from_str(&raw)?)
+    let mut value: serde_json::Value = serde_json::from_str(&raw)?;
+    let removed = strip_removed_templates(&mut value);
+    Ok((serde_json::from_value(value)?, removed))
 }
 
 fn persist(path: &Path, state: &AgentRegistryState) -> Result<(), AppError> {
@@ -820,7 +870,6 @@ fn apply_user_agent_to_agent(agent: &mut AgentDescriptor, user_agent: &str, prov
         }
         // Other ACP templates: only AGENTERO_USER_AGENT today (agent may ignore it).
         AgentTemplate::Opencode
-        | AgentTemplate::Antigravity
         | AgentTemplate::QoderCli
         | AgentTemplate::GrokBuild
         | AgentTemplate::OpenClaw
@@ -952,8 +1001,8 @@ fn refresh_availability(state: &mut AgentRegistryState) {
 mod tests {
     use super::{
         apply_user_agent_to_agent, merge_anthropic_custom_headers_user_agent,
-        merge_codex_config_user_agent, migrate_legacy_codex_agents, migrate_legacy_gemini_agents,
-        migrate_legacy_grok_agents, AGENTERO_USER_AGENT_ENV, ANTHROPIC_CUSTOM_HEADERS_ENV,
+        merge_codex_config_user_agent, migrate_legacy_codex_agents, migrate_legacy_grok_agents,
+        strip_removed_templates, AGENTERO_USER_AGENT_ENV, ANTHROPIC_CUSTOM_HEADERS_ENV,
     };
     use crate::features::agent::models::{AgentDescriptor, AgentRegistryState, AgentTemplate};
     use std::collections::HashMap;
@@ -1028,71 +1077,20 @@ mod tests {
     }
 
     #[test]
-    fn migrates_legacy_gemini_to_antigravity() {
-        let mut state = AgentRegistryState {
-            agents: vec![AgentDescriptor {
-                id: "catalog-antigravity".to_string(),
-                name: "Antigravity".to_string(),
-                template: AgentTemplate::Antigravity,
-                command: "gemini".to_string(),
-                args: vec!["--experimental-acp".to_string()],
-                env: HashMap::new(),
-                available: true,
-                last_error: None,
-                last_probe_ok: Some(true),
-                last_probe_agent_name: Some("gemini".to_string()),
-                last_probe_error: None,
-                last_probed_at: Some("1".to_string()),
-            }],
-            ..AgentRegistryState::default()
-        };
-
-        assert!(migrate_legacy_gemini_agents(&mut state));
-        let agent = &state.agents[0];
-        assert_eq!(agent.command, "agy-acp");
-        assert!(agent.args.is_empty());
-        assert_eq!(agent.last_probe_ok, None);
-        assert_eq!(agent.last_probed_at, None);
-
-        // Already migrated: nothing left to do.
-        assert!(!migrate_legacy_gemini_agents(&mut state));
-    }
-
-    #[test]
-    fn migrates_legacy_agy_acp_to_agy_acp_adapter() {
-        let mut state = AgentRegistryState {
-            agents: vec![AgentDescriptor {
-                id: "catalog-antigravity".to_string(),
-                name: "Antigravity".to_string(),
-                template: AgentTemplate::Antigravity,
-                command: "agy".to_string(),
-                args: vec!["--acp".to_string()],
-                env: HashMap::new(),
-                available: true,
-                last_error: None,
-                last_probe_ok: Some(true),
-                last_probe_agent_name: Some("agy".to_string()),
-                last_probe_error: None,
-                last_probed_at: Some("1".to_string()),
-            }],
-            ..AgentRegistryState::default()
-        };
-
-        assert!(migrate_legacy_gemini_agents(&mut state));
-        let agent = &state.agents[0];
-        assert_eq!(agent.command, "agy-acp");
-        assert!(agent.args.is_empty());
-        assert_eq!(agent.last_probe_ok, None);
-        assert_eq!(agent.last_probed_at, None);
-
-        assert!(!migrate_legacy_gemini_agents(&mut state));
-    }
-
-    #[test]
-    fn deserializes_legacy_gemini_template_as_antigravity() {
-        let json = r#"{
+    fn strips_removed_templates_without_dropping_other_agents() {
+        let mut value = serde_json::json!({
             "enabled": true,
+            "default_id": "catalog-antigravity",
             "agents": [
+                {
+                    "id": "catalog-antigravity",
+                    "name": "Antigravity",
+                    "template": "antigravity",
+                    "command": "agy-acp",
+                    "args": [],
+                    "env": {},
+                    "available": true
+                },
                 {
                     "id": "catalog-gemini",
                     "name": "Gemini",
@@ -1101,12 +1099,33 @@ mod tests {
                     "args": ["--experimental-acp"],
                     "env": {},
                     "available": true
+                },
+                {
+                    "id": "catalog-pi",
+                    "name": "Pi",
+                    "template": "pi",
+                    "command": "pi-acp",
+                    "args": [],
+                    "env": {},
+                    "available": true
                 }
             ]
-        }"#;
-        let state: AgentRegistryState = serde_json::from_str(json).expect("parse legacy gemini");
-        let agent = &state.agents[0];
-        assert_eq!(agent.template, AgentTemplate::Antigravity);
+        });
+
+        assert!(strip_removed_templates(&mut value));
+        let agents = value["agents"].as_array().expect("agents");
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0]["template"], "pi");
+        assert!(value["default_id"].is_null());
+        // Registry still deserializes after the strip.
+        let state: AgentRegistryState =
+            serde_json::from_value(value.clone()).expect("parse cleaned state");
+        assert_eq!(state.agents.len(), 1);
+        assert_eq!(state.agents[0].template, AgentTemplate::Pi);
+
+        // Idempotent when nothing else references a removed template.
+        value["default_id"] = serde_json::json!("catalog-pi");
+        assert!(!strip_removed_templates(&mut value));
     }
 
     #[test]
@@ -1216,7 +1235,7 @@ mod tests {
                 agents: vec![
                     desc("claude", AgentTemplate::ClaudeAcp),
                     desc("claude-2", AgentTemplate::ClaudeAcp),
-                    desc("antigravity", AgentTemplate::Antigravity),
+                    desc("pi", AgentTemplate::Pi),
                     desc("my-agent", AgentTemplate::Custom),
                 ],
                 ..AgentRegistryState::default()
@@ -1225,7 +1244,7 @@ mod tests {
         };
 
         let summary = registry.telemetry_summary();
-        assert_eq!(summary.templates, vec!["antigravity", "claude-acp"]);
+        assert_eq!(summary.templates, vec!["claude-acp", "pi"]);
         assert_eq!(summary.custom_count, 1);
     }
 

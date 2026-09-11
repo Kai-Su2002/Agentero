@@ -1,7 +1,10 @@
 import { Copy, ExternalLink, LoaderCircle, Power } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { NetworkProxyRow } from "@/components/settings/agent-common-rows";
+import {
+	GitHubMirrorRow,
+	NetworkProxyRow,
+} from "@/components/settings/agent-common-rows";
 import {
 	PageTitle,
 	SettingsGroup,
@@ -315,6 +318,17 @@ export function GeneralPane({
 						patch({ networkProxyEnabled })
 					}
 				/>
+				<GitHubMirrorRow
+					htmlFor="github-mirror-enabled"
+					label={t("general.githubMirror.label")}
+					description={t("general.githubMirror.description")}
+					value={settings.githubMirrorBaseUrl}
+					enabled={settings.githubMirrorEnabled}
+					onValueChange={(githubMirrorBaseUrl) =>
+						patch({ githubMirrorBaseUrl })
+					}
+					onToggle={(githubMirrorEnabled) => patch({ githubMirrorEnabled })}
+				/>
 			</SettingsGroup>
 			<EasyScholarSettingsBlock
 				savedKey={settings.easyScholarKey}
@@ -331,7 +345,7 @@ export function GeneralPane({
 			/>
 			<ConnectorSettingsBlock settings={settings} patch={patch} />
 			<div className="mt-4">
-				<p className="mb-2 px-0.5 font-medium text-[13px]">
+				<p className="mb-2 px-0.5 font-medium text-sm">
 					{t("general.mcp.label")}
 				</p>
 				<McpSettingsBlock
@@ -406,7 +420,7 @@ function EasyScholarSettingsBlock({
 
 	return (
 		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-[13px]">
+			<p className="mb-2 px-0.5 font-medium text-sm">
 				{t("general.easyScholar.section")}
 			</p>
 			<SettingsGroup>
@@ -490,7 +504,7 @@ function PrivacySettingsBlock({
 	const { t } = useTranslation("settings");
 	return (
 		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-[13px]">
+			<p className="mb-2 px-0.5 font-medium text-sm">
 				{t("general.privacy.section")}
 			</p>
 			<SettingsGroup>
@@ -539,7 +553,7 @@ function ExportSettingsBlock({
 	const { t } = useTranslation("settings");
 	return (
 		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-[13px]">
+			<p className="mb-2 px-0.5 font-medium text-sm">
 				{t("general.export.section")}
 			</p>
 			<SettingsGroup>
@@ -625,7 +639,7 @@ function ConnectorSettingsBlock({
 				label={
 					<span className="inline-flex items-center gap-1.5">
 						{t("general.connector.label")}
-						<span className="text-[11px] font-normal leading-none text-muted-foreground/60">
+						<span className="text-caption font-normal leading-none text-muted-foreground/60">
 							{t("general.connector.hint")}
 						</span>
 					</span>
@@ -1027,7 +1041,7 @@ function McpTunnelRows({
 				<div className="px-3 pb-2 text-muted-foreground text-xs">
 					<p className="mb-1.5">{t("general.mcp.tunnel.installHint")}</p>
 					<div className="flex items-center gap-2">
-						<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+						<code className="rounded bg-muted px-1.5 py-0.5 font-mono text-caption">
 							{installCommand}
 						</code>
 						<Tooltip>

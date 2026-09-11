@@ -99,6 +99,10 @@
 			"label": "Network proxy",
 			"systemDetected": "System proxy detected ({{url}}) — used automatically while this switch is off."
 		},
+		"githubMirror": {
+			"label": "GitHub mirror",
+			"description": "Choose a built-in public mirror for Skill import fallback when GitHub is unreachable."
+		},
 		"easyScholar": {
 			"section": "EasyScholar",
 			"keyLabel": "Key",
@@ -199,8 +203,9 @@
 			"value": "{{size}} px"
 		},
 		"fontFamily": {
-			"default": "Default",
+			"default": "Default (System)",
 			"system": "System UI",
+			"geist": "Geist",
 			"serif": "Serif",
 			"mono": "Monospace",
 			"search": "Search fonts…",
@@ -233,6 +238,11 @@
 		},
 		"embedding": {
 			"section": "Embedding model",
+			"source": {
+				"label": "Source",
+				"builtin": "Agentero built-in",
+				"custom": "Custom endpoint"
+			},
 			"baseUrl": {
 				"label": "Base URL"
 			},
@@ -345,10 +355,13 @@
 		},
 		"uninstallDialog": {
 			"title": "Uninstall {{name}}?",
-			"lead": "Agentero will run the following uninstall steps:",
+			"lead": "Choose what to remove:",
+			"removeAgent": "Remove Agent CLI",
+			"removeAcp": "Remove ACP adapter",
 			"dirsLabel": "Directories to delete",
 			"copyAria": "Copy to clipboard",
 			"registryOnly": "Only the Agentero registry entry will be removed; installed files stay on disk.",
+			"customConfirm": "Remove this custom agent from Agentero?",
 			"confirm": "Uninstall"
 		},
 		"remote": {
@@ -366,6 +379,7 @@
 		"title": "Translate",
 		"provider": {
 			"label": "Default service",
+			"agentero": "Agentero built-in",
 			"deeplx": "DeepLX",
 			"huoshanweb": "Volcengine Web",
 			"tencenttransmart": "Tencent Transmart",
@@ -380,6 +394,9 @@
 			"probeOk": "Available",
 			"probeFail": "Unavailable",
 			"probeProbing": "Checking availability…"
+		},
+		"errors": {
+			"noBuiltinKey": "Built-in translation is not available in this build."
 		},
 		"targetLang": {
 			"label": "Target language",
@@ -445,6 +462,7 @@
 		"parserBackend": {
 			"label": "Body parse engine",
 			"local": "On-device",
+			"agentero": "Agentero built-in",
 			"paddle": "Paddle",
 			"mineru": "MinerU",
 			"openaiCompatible": "OpenAI-compatible"
@@ -521,6 +539,9 @@
 		"remoteUnavailable": "Doctor is available for local Vaults only in this version.",
 		"openVault": "Open a local Vault to run Doctor.",
 		"sections": {
+			"host": "Host runtime",
+			"agents": "Agent ACP connectivity",
+			"network": "Network connectivity",
 			"vault": "Vault structure",
 			"catalog": "Catalog schema",
 			"wikilinks": "Wiki links",
@@ -528,11 +549,73 @@
 			"visualMarks": "Visual annotations"
 		},
 		"sectionHints": {
+			"host": "Advisory checks for the Node.js and npm used by ACP Agents (path and version).",
+			"agents": "Re-probes each registered Agent via ACP initialize (no prompt is sent). Slow Agents can take up to 30s.",
+			"network": "Probes the paper sources and common hosts through the configured proxy.",
 			"vault": "Checks top-level papers/, notes/, and .agentero/ folders.",
 			"catalog": "Checks that .agentero/catalog.sqlite exists and its schema matches this app.",
 			"wikilinks": "Checks local wiki links for missing, ambiguous, or invalid heading targets.",
 			"aliases": "Checks paper NOTES.md for at least two distinct frontmatter aliases.",
 			"visualMarks": "Migrates legacy agent-trace marks to nested visual v2 (note-only marks stay valid)."
+		},
+		"host": {
+			"toolStatus": {
+				"available": "Available",
+				"missing": "Not found",
+				"unusable": "Cannot run"
+			}
+		},
+		"network": {
+			"probing": "Probing…",
+			"none": "No endpoints configured.",
+			"status": {
+				"reachable": "Reachable",
+				"timeout": "Timeout",
+				"unreachable": "Unreachable"
+			},
+			"hints": {
+				"timeout": "Check the proxy / network and try again.",
+				"unreachable": "Check DNS, firewall, or proxy settings."
+			},
+			"endpoints": {
+				"baidu": "Baidu",
+				"google": "Google",
+				"google-scholar": "Google Scholar",
+				"github": "GitHub",
+				"arxiv": "arXiv",
+				"semantic-scholar": "Semantic Scholar"
+			},
+			"latency": "{{ms}} ms",
+			"proxy": "Proxy: {{proxy}}"
+		},
+		"agent": {
+			"probing": "Probing agents…",
+			"none": "No Agents registered yet.",
+			"ready": "Ready",
+			"locationMissing": "Not found",
+			"authLabel": "Sign-in",
+			"authStatus": {
+				"authenticated": "Signed in",
+				"unauthenticated": "Not signed in",
+				"not-applicable": "Not applicable",
+				"unknown": "Unknown"
+			},
+			"categories": {
+				"command-missing": "Command missing",
+				"not-logged-in": "Not signed in",
+				"timeout": "Timeout",
+				"spawn-failed": "Launch failed",
+				"protocol-failed": "Protocol error",
+				"unknown": "Unknown"
+			},
+			"hints": {
+				"command-missing": "Install the CLI (Settings → Agent) or fix PATH, then run the diagnosis again.",
+				"not-logged-in": "Sign in with the Agent's own CLI in a terminal (e.g. codex login), then run the diagnosis again.",
+				"timeout": "Check the proxy / network and the Agent's cold-start time.",
+				"spawn-failed": "The process could not start; check the executable permission and path.",
+				"protocol-failed": "The process started but the ACP handshake failed; update the ACP adapter.",
+				"unknown": "See the raw error above."
+			}
 		},
 		"visualMarks": {
 			"select": "Select {{path}}",
@@ -597,7 +680,10 @@
 		"logs": {
 			"label": "Logs",
 			"open": "Open log folder",
-			"openFailed": "Couldn't open the log folder."
+			"openFailed": "Couldn't open the log folder.",
+			"clear": "Clear logs",
+			"clearDone": "Logs cleared",
+			"clearFailed": "Couldn't clear logs."
 		},
 		"update": {
 			"idle": "Check for the latest Agentero release",
@@ -644,7 +730,8 @@
 			"installFailed": "Could not install CLI command",
 			"uninstallFailed": "Could not remove CLI command",
 			"statusFailed": "Could not read CLI status",
-			"openReleaseFailed": "Could not open the release page"
+			"openReleaseFailed": "Could not open the release page",
+			"syncFailed": "Could not auto-sync the installed CLI with this app version. Update it from Settings → About"
 		},
 		"finder": {
 			"label": "Finder integration",

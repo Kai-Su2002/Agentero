@@ -85,6 +85,17 @@ export const PARSER_PROVIDERS: Record<
 	ProviderCardDescriptor | null
 > = {
 	local: null,
+	// Built-in parser: the Host injects its compiled-in credential, so the card
+	// exposes no fields (and is dropped by `isProviderCardConfigurable`).
+	agentero: {
+		id: "agentero",
+		requiresApiKey: false,
+		supportsBaseUrl: false,
+		supportsModel: false,
+		supportsPrompt: false,
+		supportsLanguage: false,
+		supportsOcr: false,
+	},
 	paddle: {
 		id: "paddle",
 		requiresApiKey: true,
@@ -106,6 +117,20 @@ export const PARSER_PROVIDERS: Record<
 		supportsPrompt: true,
 	},
 };
+
+/** True when a card has at least one user-editable field (else render nothing). */
+export function isProviderCardConfigurable(
+	card: ProviderCardDescriptor,
+): boolean {
+	return (
+		card.requiresApiKey ||
+		card.supportsBaseUrl ||
+		card.supportsModel === true ||
+		card.supportsPrompt === true ||
+		card.supportsLanguage === true ||
+		card.supportsOcr === true
+	);
+}
 
 /** A layout backend rendered as a credential card (no model / prompt). */
 export function layoutProviderCard(

@@ -101,6 +101,7 @@ import type {
 	PdfViewerInnerProps,
 	PdfViewerProps,
 	RailEditState,
+	SelectionCommentDraft,
 } from "@/components/viewer/pdf/types";
 import { ActiveCardScrollSync } from "@/components/viewer/pdf/viewport/active-card-scroll-sync";
 import { DockviewViewport } from "@/components/viewer/pdf/viewport/dockview-viewport";
@@ -240,7 +241,7 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 	}, [source, effectiveSourceBytes, docId]);
 
 	const hostClass = cn(
-		"relative flex h-full min-h-0 flex-col bg-muted/20",
+		"relative flex h-full min-h-0 flex-col bg-muted/40",
 		props.className,
 	);
 
@@ -536,17 +537,22 @@ function PdfViewerInner({
 	// ---- Text selection → floating action menu ----
 	// Placed after hostRef/zoomRef: the hook anchors the menu against the page
 	// element and needs both refs injected.
-	const { selectionMenu, setSelectionMenu, closeSelectionMenu } =
-		usePdfTextSelection({
-			selectionCap,
-			docCap,
-			docId,
-			hostRef,
-			zoomRef,
-			isActive,
-			paperRelPath,
-			paperAbsPath,
-		});
+	const {
+		selectionMenu,
+		setSelectionMenu,
+		isSelecting,
+		closeSelectionMenu,
+		rePlaceSelectionMenu,
+	} = usePdfTextSelection({
+		selectionCap,
+		docCap,
+		docId,
+		hostRef,
+		zoomRef,
+		isActive,
+		paperRelPath,
+		paperAbsPath,
+	});
 
 	/**
 	 * Session token of the single in-flight PDF agent run. Shared by ask and
@@ -883,10 +889,11 @@ function PdfViewerInner({
 		toggleLayoutTranslate,
 	]);
 
-	// Sticky overlays (selection menu / visual draft / pin card) suppress
-	// ephemeral link previews so the pointer cannot stack multiple cards (#430).
-	// Declared after visualDraftEditor is available from the layout cluster.
-	const suppressLinkPreviews = Boolean(selectionMenu) || Boolean(activeCard);
+	// Drag-select and pin cards suppress ephemeral link previews so the pointer
+	// cannot stack cards while sweeping across citation / crossref hit targets
+	// (#430). The selection action menu alone does not suppress — after the
+	// drag ends, hovering a citation should still open its preview.
+	const suppressLinkPreviews = Boolean(activeCard) || isSelecting;
 
 	useEffect(() => {
 		if (!suppressLinkPreviews) return;
@@ -983,6 +990,7 @@ function PdfViewerInner({
 				color: railEdit.color,
 				kind: railEdit.kind,
 				linkAlias: null,
+				isNew: railEdit.isNew,
 			},
 		]);
 		return next;
@@ -1038,7 +1046,7 @@ function PdfViewerInner({
 
 	const {
 		handleHighlight,
-		handleNote,
+		handleCommitSelectionNote,
 		handleCopy,
 		handleMenuAsk,
 		handleMenuAddToChat,
@@ -1048,9 +1056,9 @@ function PdfViewerInner({
 		setSelectionMenu,
 		closeSelectionMenu,
 		createHighlights,
+		updateHighlightComment,
 		selectionCap,
 		docId,
-		beginRailEdit,
 		startFromAnchor,
 		translateSelection,
 		paperRelPath,
@@ -1073,26 +1081,88 @@ function PdfViewerInner({
 		translateSelection(selectionMenu.anchor);
 	}, [autoTranslateSelection, selectionMenu, translateSelection]);
 
+	// Sticky right-rail annotate chip. Hover focuses the field and EmbedPDF may
+	// clear the live selection; keep the snapped draft after the chip has been
+	// interacted with so leave-empty can collapse back to the icon card.
+	const [selectionCommentDraft, setSelectionCommentDraft] =
+		useState<SelectionCommentDraft | null>(null);
+	const selectionCommentInteractedRef = useRef(false);
+
+	useEffect(() => {
+		if (isRemotePaper) {
+			selectionCommentInteractedRef.current = false;
+			setSelectionCommentDraft(null);
+			return;
+		}
+		if (selectionMenu) {
+			selectionCommentInteractedRef.current = false;
+			setSelectionCommentDraft({
+				page: selectionMenu.anchor.page,
+				anchorY: selectionMenu.anchor.rects[0]?.y ?? 0,
+				quote: selectionMenu.anchor.quote ?? "",
+				pages: selectionMenu.pages,
+			});
+			return;
+		}
+		if (!selectionCommentInteractedRef.current) {
+			setSelectionCommentDraft(null);
+		}
+	}, [isRemotePaper, selectionMenu]);
+
+	const handleSelectionCommentActiveChange = useCallback((active: boolean) => {
+		if (active) selectionCommentInteractedRef.current = true;
+	}, []);
+
+	const handleDismissSelectionComment = useCallback(() => {
+		selectionCommentInteractedRef.current = false;
+		setSelectionCommentDraft(null);
+	}, []);
+
+	const handleCommitSelectionComment = useCallback(
+		(comment: string) => {
+			const draft = selectionCommentDraft;
+			selectionCommentInteractedRef.current = false;
+			setSelectionCommentDraft(null);
+			if (!draft) return;
+			handleCommitSelectionNote(
+				{ pages: draft.pages, quote: draft.quote },
+				comment,
+			);
+		},
+		[selectionCommentDraft, handleCommitSelectionNote],
+	);
+
 	// ---- In-PDF highlight selection menu ----
 
-	// Re-anchor the active pin modal on scroll + zoom. zoomLevel forces
-	// re-placement after zoom. Use scrollReady (boolean) — not `scroll` —
-	// because EmbedPDF returns a new scope object every render; depending on
-	// it re-fired this effect → setCardScreen → re-render → Maximum update depth
-	// when a modal card was open (visual-trace chat + agent panel re-renders).
+	const rePlaceFloatingOnScroll = useCallback(() => {
+		rePlaceActiveCardOnScroll();
+		rePlaceSelectionMenu();
+	}, [rePlaceActiveCardOnScroll, rePlaceSelectionMenu]);
+
+	// Boolean only — do not depend on selectionMenu.screen or re-place loops.
+	const selectionMenuOpen = selectionMenu != null;
+
+	// Re-anchor the active pin modal and the text-selection toolbar on scroll +
+	// zoom. zoomLevel forces re-placement after zoom. Use scrollReady (boolean)
+	// — not `scroll` — because EmbedPDF returns a new scope object every render;
+	// depending on it re-fired this effect → setCardScreen → re-render →
+	// Maximum update depth when a modal card was open.
 	// Native wheel scroll is handled by ActiveCardScrollSync (viewport element).
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scrollReady/zoomLevel are intentional re-place triggers
 	useEffect(() => {
-		if (!activeCard) return;
+		if (!activeCard && !selectionMenuOpen) return;
 		// Force re-place after zoom / card change even if rounded coords match.
-		cardScreenRef.current = null;
-		placeActiveCard(activeCard);
+		if (activeCard) {
+			cardScreenRef.current = null;
+			placeActiveCard(activeCard);
+		}
+		if (selectionMenuOpen) rePlaceSelectionMenu();
 		let raf: number | null = null;
 		const rePlace = () => {
 			if (raf != null) return;
 			raf = requestAnimationFrame(() => {
 				raf = null;
-				rePlaceActiveCardOnScroll();
+				rePlaceFloatingOnScroll();
 			});
 		};
 		const scrollScope = scrollRef.current;
@@ -1103,10 +1173,12 @@ function PdfViewerInner({
 		};
 	}, [
 		activeCard,
+		selectionMenuOpen,
 		scrollReady,
 		placeActiveCard,
 		zoomLevel,
-		rePlaceActiveCardOnScroll,
+		rePlaceFloatingOnScroll,
+		rePlaceSelectionMenu,
 	]);
 
 	usePdfViewerHandle({
@@ -1147,6 +1219,7 @@ function PdfViewerInner({
 			textLinks,
 			activeCardId: activeCard?.id ?? null,
 			hoveredCommentId,
+			selectionCommentDraft,
 		}),
 		[
 			activeAskAnchor,
@@ -1163,6 +1236,7 @@ function PdfViewerInner({
 			textLinks,
 			activeCard?.id,
 			hoveredCommentId,
+			selectionCommentDraft,
 		],
 	);
 
@@ -1269,6 +1343,9 @@ function PdfViewerInner({
 			onAddCommentToChat: handleAddCommentToChat,
 			onHoverComment: (comment) => setHoveredCommentId(comment.id),
 			onLeaveComment: () => setHoveredCommentId(null),
+			onCommitSelectionComment: handleCommitSelectionComment,
+			onSelectionCommentActiveChange: handleSelectionCommentActiveChange,
+			onDismissSelectionComment: handleDismissSelectionComment,
 		}),
 		[
 			handleOpenPin,
@@ -1290,6 +1367,9 @@ function PdfViewerInner({
 			handleCopyCommentEmbed,
 			handleAddCommentToChat,
 			setHoveredCommentId,
+			handleCommitSelectionComment,
+			handleSelectionCommentActiveChange,
+			handleDismissSelectionComment,
 		],
 	);
 
@@ -1340,7 +1420,10 @@ function PdfViewerInner({
 	});
 
 	return (
-		<div ref={hostRef} className="relative flex h-full min-h-0 w-full flex-col">
+		<div
+			ref={hostRef}
+			className="relative flex h-full min-h-0 w-full select-none flex-col"
+		>
 			<PdfLeftToolbar
 				outline={outline}
 				showOutline={showOutline}
@@ -1417,8 +1500,8 @@ function PdfViewerInner({
 					allowLeftDrag={!regionSelecting}
 				/>
 				<ActiveCardScrollSync
-					active={Boolean(activeCard)}
-					onScroll={rePlaceActiveCardOnScroll}
+					active={Boolean(activeCard) || Boolean(selectionMenu)}
+					onScroll={rePlaceFloatingOnScroll}
 				/>
 				{/* Ctrl+wheel and trackpad pinch are handled by WheelZoomHandler (WebKit
 				    pinch arrives as GestureEvents, not ctrl+wheel); EmbedPDF's built-in
@@ -1436,11 +1519,9 @@ function PdfViewerInner({
 					state: selectionMenu,
 					onHighlight: handleHighlight,
 					onCopy: handleCopy,
-					onNote: handleNote,
 					onAsk: handleMenuAsk,
 					onAddToChat: handleMenuAddToChat,
 					onTranslate: handleMenuTranslate,
-					onClose: closeSelectionMenu,
 					readOnly: isRemotePaper,
 				}}
 				citationPreview={{

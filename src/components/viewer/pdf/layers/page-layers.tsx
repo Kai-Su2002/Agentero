@@ -22,6 +22,7 @@ import { TilingLayer } from "@embedpdf/plugin-tiling/react";
 import { EyeOff, Languages, Loader2 } from "lucide-react";
 import { memo, type RefObject, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { PDF_CHROME_CHIP } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
 import {
 	EMPTY_CITATION_LINKS,
 	EMPTY_COMMENTS,
@@ -39,7 +40,10 @@ import { HighlightAnnotationMenu } from "@/components/viewer/pdf/layers/highligh
 import { LayoutTranslateOverlay } from "@/components/viewer/pdf/layers/layout-translate-overlay";
 import { PdfRegionSelectLayer } from "@/components/viewer/pdf/layers/region-select-layer";
 import { SelectionGutter } from "@/components/viewer/pdf/layers/selection-gutter";
-import type { PageAnnotationComment } from "@/components/viewer/pdf/types";
+import type {
+	PageAnnotationComment,
+	SelectionCommentDraft,
+} from "@/components/viewer/pdf/types";
 import { cn } from "@/lib/core/utils";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
@@ -112,6 +116,11 @@ export type PdfPageMarksSlice = {
 	activeCardId: string | null;
 	/** Id of the comment-rail card currently being hovered; null when idle. */
 	hoveredCommentId: string | null;
+	/**
+	 * Sticky text-selection comment chip (right rail). Null when idle or on a
+	 * read-only remote PDF.
+	 */
+	selectionCommentDraft: SelectionCommentDraft | null;
 };
 
 /** Layout-analysis derived overlays (hover targets, debug boxes, translations). */
@@ -175,6 +184,12 @@ export type PdfPageHandlers = {
 	onHoverComment: (comment: PageAnnotationComment) => void;
 	/** Hover leaves a comment-rail card. */
 	onLeaveComment: () => void;
+	/** Commit a typed note from the selection comment chip. */
+	onCommitSelectionComment: (comment: string) => void;
+	/** Keep the sticky draft alive while the chip is interacted with. */
+	onSelectionCommentActiveChange: (active: boolean) => void;
+	/** Drop the sticky selection comment chip. */
+	onDismissSelectionComment: () => void;
 };
 
 export type PdfPageLayersProps = {
@@ -199,9 +214,11 @@ type PageTranslateTabProps = {
 	onToggle: (pageIndex: number) => void;
 };
 
-const PAGE_TRANSLATE_TAB_WIDTH_PX = 32;
-const PAGE_TRANSLATE_TAB_MIN_HEIGHT_PX = 72;
-
+/**
+ * Page-edge translate tab — match PDF chrome (left toolbar / bottom bar):
+ * Callout `text-xs`, `size-3.5` icons, `h-7`-wide hit target, shared surface.
+ * Rem sizes keep Windows non-integer DPR from drifting the tab.
+ */
 function labelCharacters(label: string): { key: string; char: string }[] {
 	const seen = new Map<string, number>();
 	return Array.from(label, (char) => {
@@ -230,15 +247,12 @@ const PageTranslateTab = memo(function PageTranslateTab({
 	return (
 		<button
 			type="button"
+			data-pdf-chrome
 			className={cn(
-				"absolute top-3 right-0 z-[6] flex translate-x-full flex-col items-center justify-center gap-1 rounded-r-md border border-l-0 border-border/80 bg-background/95 px-1 py-2 font-medium text-[11px] text-foreground shadow-sm ring-1 ring-black/5 backdrop-blur-sm transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60 dark:ring-white/10",
+				"absolute top-3 left-0 z-[6] flex w-7 min-h-16 -translate-x-full flex-col items-center justify-center gap-1 rounded-l-lg border-r-0 px-1 py-2 font-medium text-xs text-foreground transition-colors duration-100 hover:bg-muted/80 active:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60",
+				PDF_CHROME_CHIP,
 				active && "border-primary/30 bg-primary/10 text-primary",
 			)}
-			style={{
-				width: PAGE_TRANSLATE_TAB_WIDTH_PX,
-				minWidth: PAGE_TRANSLATE_TAB_WIDTH_PX,
-				minHeight: PAGE_TRANSLATE_TAB_MIN_HEIGHT_PX,
-			}}
 			aria-label={label}
 			aria-pressed={active}
 			onClick={(event) => {
@@ -308,6 +322,10 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 			: null;
 	const pins = marks.pinsByPage.get(pageNumber) ?? EMPTY_PINS;
 	const comments = marks.commentsByPage.get(pageNumber) ?? EMPTY_COMMENTS;
+	const selectionDraftOnPage =
+		marks.selectionCommentDraft?.page === pageNumber
+			? marks.selectionCommentDraft
+			: null;
 	const layoutTranslateOnPage =
 		layout.layoutTranslateItemsByPage.get(pageIndex);
 	const pageTranslateState = layout.layoutTranslatePageStateByPage.get(
@@ -414,6 +432,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 						selectionMenu={(menuProps) => (
 							<HighlightAnnotationMenu
 								{...menuProps}
+								docId={docId}
 								onEdit={handlers.onEditHighlightAnnotation}
 								onDelete={handlers.onDeleteHighlightAnnotation}
 								onChangeColor={handlers.onChangeHighlightColor}
@@ -471,7 +490,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 									aria-hidden="true"
 								>
 									<span
-										className="absolute top-0 left-0 max-w-full truncate rounded-br-sm px-1 py-px font-medium text-[10px] text-white leading-4"
+										className="absolute top-0 left-0 max-w-full truncate rounded-br-sm px-1 py-px font-medium text-caption text-white leading-4"
 										style={{
 											backgroundColor: layoutKindHex(region.kind),
 										}}
@@ -558,7 +577,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 									/>
 									{showHint ? (
 										<span
-											className="pointer-events-none absolute top-1 right-1 max-w-[calc(100%-0.5rem)] truncate rounded border border-border/60 bg-background/90 px-1.5 py-0.5 font-medium text-[10px] text-foreground/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
+											className="pointer-events-none absolute top-1 right-1 max-w-[calc(100%-0.5rem)] truncate rounded border border-border/60 bg-background/90 px-1.5 py-0.5 font-medium text-caption text-foreground/90 opacity-0 shadow-sm backdrop-blur-sm transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100"
 											aria-hidden="true"
 										>
 											{t("figures.clickAnnotateHint")}
@@ -761,6 +780,12 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 					editingId={marks.editingCommentId}
 					wikiTarget={marks.commentWikiTarget}
 					hoveredId={marks.hoveredCommentId}
+					selectionDraft={selectionDraftOnPage}
+					onCommitSelectionComment={handlers.onCommitSelectionComment}
+					onSelectionCommentActiveChange={
+						handlers.onSelectionCommentActiveChange
+					}
+					onDismissSelectionComment={handlers.onDismissSelectionComment}
 					onOpen={handlers.onOpenComment}
 					onSave={handlers.onSaveComment}
 					onCancel={handlers.onCancelComment}

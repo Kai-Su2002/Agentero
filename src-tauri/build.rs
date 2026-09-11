@@ -24,33 +24,52 @@ fn main() {
     if env::var_os("CARGO_FEATURE_DESKTOP").is_some() {
         tauri_build::build();
     }
-    forward_posthog_key();
+    forward_build_env();
 }
 
-/// Bake the PostHog project API key into the binary at compile time.
-/// An explicit `AGENTERO_POSTHOG_KEY` env var wins; otherwise fall back to
-/// the repo-root `.env` (gitignored). Absent both, telemetry compiles out.
-fn forward_posthog_key() {
+/// Variables baked into the binary at compile time and read via `option_env!`.
+const BUILD_ENV_KEYS: &[&str] = &[
+    "AGENTERO_POSTHOG_KEY",
+    "AGENTERO_BUILTIN_BASE_URL",
+    "AGENTERO_BUILTIN_API_KEY",
+    "AGENTERO_BUILTIN_TRANSLATE_MODEL",
+    "AGENTERO_BUILTIN_EMBEDDING_MODEL",
+    "AGENTERO_BUILTIN_OCR_MODEL",
+];
+
+/// Forward the build-time variables to `rustc`. An explicit env var wins;
+/// otherwise fall back to the repo-root `.env` (gitignored). Absent both, the
+/// consumer compiles out: telemetry is disabled and the built-in provider
+/// reports itself unavailable.
+///
+/// `rerun-if-env-changed` is what makes this correct — cargo does not otherwise
+/// observe env changes, so a rotated key would silently keep the stale binary.
+fn forward_build_env() {
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let dotenv = manifest_dir.join("../.env");
-    println!("cargo:rerun-if-env-changed=AGENTERO_POSTHOG_KEY");
+    for key in BUILD_ENV_KEYS {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
     println!("cargo:rerun-if-changed={}", dotenv.display());
-    if env::var("AGENTERO_POSTHOG_KEY").is_ok() {
+    if BUILD_ENV_KEYS.iter().all(|key| env::var(key).is_ok()) {
         return;
     }
     let Ok(content) = fs::read_to_string(&dotenv) else {
         return;
     };
-    for line in content.lines() {
-        let Some(value) = line
-            .trim()
-            .strip_prefix("AGENTERO_POSTHOG_KEY=")
-            .map(str::trim)
-            .filter(|v| !v.is_empty())
-        else {
+    for key in BUILD_ENV_KEYS {
+        if env::var(key).is_ok() {
+            continue;
+        }
+        let prefix = format!("{key}=");
+        let Some(value) = content.lines().find_map(|line| {
+            line.trim()
+                .strip_prefix(prefix.as_str())
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+        }) else {
             continue;
         };
-        println!("cargo:rustc-env=AGENTERO_POSTHOG_KEY={value}");
-        return;
+        println!("cargo:rustc-env={key}={value}");
     }
 }

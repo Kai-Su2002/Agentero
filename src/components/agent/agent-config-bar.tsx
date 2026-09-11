@@ -101,7 +101,7 @@ export function AgentConfigBar({
 										type="button"
 										variant="ghost"
 										size="sm"
-										className="h-7 min-w-0 max-w-[min(10rem,100%)] shrink gap-1 px-1.5 text-xs font-medium text-foreground"
+										className="h-7 min-w-0 max-w-[min(10rem,100%)] shrink gap-1 px-1.5 text-sm font-medium text-foreground"
 									>
 										<span className="min-w-0 flex-1 truncate">
 											{t("composer.collaboration.label")}:{" "}

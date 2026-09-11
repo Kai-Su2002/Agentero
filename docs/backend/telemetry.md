@@ -7,7 +7,7 @@
 三层门控，任一不满足即整体 no-op：
 
 1. **编译期**：构建时环境变量 `AGENTERO_POSTHOG_KEY` 注入 PostHog Project API Key；未设置（或为空）时功能完全禁用——本地 / 开源构建默认不上报。
-   - Key 来源（`build.rs` 的 `forward_posthog_key()`）：显式环境变量优先；否则回退读仓库根 `.env`（gitignored）。
+   - Key 来源（`build.rs` 的 `forward_build_env()`，同时转发 `AGENTERO_BUILTIN_*`，见 [builtin-provider.md](builtin-provider.md)）：显式环境变量优先；否则回退读仓库根 `.env`（gitignored）。
    - 官方发布：`release.yml` 的 tauri-action 步骤从 GitHub Secret `POSTHOG_KEY` 注入；secret 缺失时为空串，遥测编译为 no-op。
    - Ingestion host 使用 posthog-rs 默认 `https://us.i.posthog.com`（US 项目）；换 EU / 自建需改用 `ClientOptionsBuilder().host(...)`。
 2. **构建类型**：debug 构建（`cfg!(debug_assertions)`，含 `pnpm tauri dev`）不上报，避免开发数据污染。
@@ -28,9 +28,11 @@
 | `locale` | `AppSettings.locale` |
 | `timezone` | 本地 UTC 偏移（如 `+08:00`） |
 | `tauri_version` | `tauri::VERSION` |
-| `installed_agents` | 已注册 Agent 的 template id 数组（如 `["antigravity","claude-acp"]`，排序去重；`AgentRegistry::telemetry_summary()`，只读注册表、无 PATH 探测） |
+| `installed_agents` | 已注册 Agent 的 template id 数组（如 `["claude-acp","pi"]`，排序去重；`AgentRegistry::telemetry_summary()`，只读注册表、无 PATH 探测） |
 | `custom_agent_count` | 已注册的自定义 Agent 数量（不含名称/命令） |
 | `$session_id` | 本次运行生成的 UUID（PostHog 保留属性，Sessions 口径依赖它） |
+
+> Windows 的 `device_model` 走 `reg query`，该子进程必须带 `CREATE_NO_WINDOW`。发布版是 GUI 子系统二进制，缺这个 flag 时 Windows 会为它分配可见控制台窗口，表现为每次启动都在首帧前闪一下黑窗（`app started` 在 setup 后 `spawn_blocking` 发送，与窗口首帧时间上重叠）。
 
 Person 属性：`$set` → `app_version` / `os_name` / `os_version` / `arch` / `device_model` / `installed_agents` / `custom_agent_count`；`$set_once` → `first_app_version`。`installed_agents` 随每次启动更新，可直接在 PostHog 按 Agent 过滤 / 分群。
 

@@ -283,7 +283,7 @@ const ExactFitParagraph = memo(function ExactFitParagraph({
 		<p
 			ref={ref}
 			className={cn(
-				"m-0 h-full w-full overflow-hidden break-words whitespace-pre-wrap",
+				"m-0 h-full w-full select-text overflow-hidden break-words whitespace-pre-wrap",
 				isHeading && "font-bold",
 			)}
 			style={{ fontSize: initialFontSize }}

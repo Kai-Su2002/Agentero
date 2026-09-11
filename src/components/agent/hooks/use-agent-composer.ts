@@ -22,6 +22,16 @@ import type { useSessionComposerState } from "@/hooks/use-session-composer-state
 import type { AgentSkill } from "@/lib/agent";
 import type { ChatLine } from "@/lib/agent/chat-state";
 import {
+	appendMissingInlineTokens,
+	encodeCommandToken,
+	encodeMentionToken,
+	encodeSkillToken,
+	extractMentionPaths,
+	extractSkillIds,
+	plainTriggerSuffix,
+	replaceTrailingTriggerWithToken,
+} from "@/lib/agent/composer-inline-tokens";
+import {
 	subscribePendingAgentComposerPrompt,
 	takePendingAgentComposerPrompt,
 } from "@/lib/agent/composer-seed";
@@ -60,7 +70,6 @@ import {
 	collectUserPromptTexts,
 	nextHistoryIndexOnDown,
 	nextHistoryIndexOnUp,
-	placeCaretAtEnd,
 	shouldNavigateHistoryDown,
 	shouldNavigateHistoryUp,
 } from "@/lib/ui/prompt-recall";
@@ -119,15 +128,14 @@ export type AgentComposer = {
 	showSkillMenu: boolean;
 	skillOptions: AgentSkill[];
 	attachSkill: (skill: AgentSkill) => void;
+	removeSkill: (skillId: string) => void;
 	showSlashMenu: boolean;
 	slashOptions: AcpCommand[];
 	attachSlashCommand: (command: AcpCommand) => void;
 	attachContextPaths: (rawPaths: string[]) => void;
 	handleComposerDragOver: (e: ReactDragEvent) => void;
 	handleComposerDrop: (e: ReactDragEvent) => void;
-	handleComposerMenuKeyDown: (
-		event: KeyboardEvent<HTMLTextAreaElement>,
-	) => void;
+	handleComposerMenuKeyDown: (event: KeyboardEvent<HTMLElement>) => void;
 	onComposerTextChangeFromUser: (text: string) => void;
 };
 
@@ -140,6 +148,7 @@ export function useAgentComposer({
 	},
 	composer: {
 		text: composerText,
+		mentionedPaths,
 		selectedSkillIds,
 		setText: setComposerText,
 		setIncludeSelectedFile,
@@ -219,7 +228,9 @@ export function useAgentComposer({
 	);
 	const visualDrafts = useVisualContextStore((s) => s.drafts);
 
-	const mentionMatch = composerText.match(/(^|\s)@([^\s]*)$/);
+	// Markers count as atoms so `$` / `@` inside `{{s:…}}` / `{{m:…}}` stay inert.
+	const triggerText = plainTriggerSuffix(composerText);
+	const mentionMatch = triggerText.match(/(^|\s)@([^\s]*)$/);
 	/** Raw @query (preserve case for display; matching is case-insensitive). */
 	const mentionQueryRaw = mentionMatch?.[2] ?? "";
 	const mentionQuery = mentionQueryRaw.toLocaleLowerCase();
@@ -310,7 +321,7 @@ export function useAgentComposer({
 		setMentionActiveIndex(0);
 	}, []);
 
-	const skillMatch = composerText.match(/(^|\s)\$([^\s]*)$/);
+	const skillMatch = triggerText.match(/(^|\s)\$([^\s]*)$/);
 	const skillQuery = skillMatch?.[2]?.toLocaleLowerCase() ?? "";
 	const skillOptions = useMemo(() => {
 		if (!skillMatch) return [];
@@ -324,7 +335,7 @@ export function useAgentComposer({
 			.slice(0, 6);
 	}, [selectedSkillIds, skillMatch, skillQuery, skills]);
 
-	const slashMatch = composerText.match(/(^|\s)\/([^\s]*)$/);
+	const slashMatch = triggerText.match(/(^|\s)\/([^\s]*)$/);
 	const slashQuery = slashMatch?.[2]?.toLocaleLowerCase() ?? "";
 	const slashCommands = acpCommandsByAgent[selectedAgentId ?? ""] ?? [];
 	const slashOptions = useMemo(() => {
@@ -371,14 +382,13 @@ export function useAgentComposer({
 		[selectedSkillIds, skills],
 	);
 
-	/** Add Vault-relative path(s) as removable context chips (same as @mention). */
+	/** Insert @mention token(s) at the trailing trigger / end of the draft. */
 	const attachContextPaths = useCallback(
 		(rawPaths: string[]) => {
 			const normalized = rawPaths
 				.map((p) => toVaultRelative(vaultPath, p.trim()))
 				.filter((p) => p.length > 0);
 			if (!normalized.length) return;
-			setMentionedPaths((prev) => [...new Set([...prev, ...normalized])]);
 			// Remember for empty-`@` recent hints (per Vault).
 			try {
 				const storage =
@@ -392,10 +402,16 @@ export function useAgentComposer({
 				// ignore quota / private mode
 			}
 			setComposerMenuDismissed(true);
-			// Clear an in-progress @ query so the menu closes after attach.
-			setComposerText((prev) =>
-				prev.replace(/(^|\s)@[^\s]*$/, (_match, prefix: string) => `${prefix}`),
-			);
+			setComposerText((prev) => {
+				let next = prev;
+				for (const path of normalized) {
+					const token = encodeMentionToken(path);
+					if (next.includes(token)) continue;
+					next = replaceTrailingTriggerWithToken(next, "mention", token);
+				}
+				setMentionedPaths(extractMentionPaths(next));
+				return next;
+			});
 		},
 		[setComposerText, setMentionedPaths, vaultPath],
 	);
@@ -413,8 +429,36 @@ export function useAgentComposer({
 			setIncludeSelectedFile(false);
 			return;
 		}
-		setMentionedPaths((prev) => prev.filter((item) => item !== path));
+		const token = encodeMentionToken(path);
+		setComposerText((prev) => {
+			const next = prev
+				.split(token)
+				.join("")
+				.replace(/[ \t]{2,}/g, " ");
+			setMentionedPaths(extractMentionPaths(next));
+			return next;
+		});
 	};
+
+	// Legacy drafts: paths/skills in state but not yet embedded as inline tokens.
+	useEffect(() => {
+		const next = appendMissingInlineTokens(
+			composerText,
+			mentionedPaths,
+			selectedSkillIds,
+		);
+		if (next === composerText) return;
+		setComposerText(next);
+		setMentionedPaths(extractMentionPaths(next));
+		setSelectedSkillIds(extractSkillIds(next));
+	}, [
+		composerText,
+		mentionedPaths,
+		selectedSkillIds,
+		setComposerText,
+		setMentionedPaths,
+		setSelectedSkillIds,
+	]);
 
 	// File tree "Add to chat" → drop paths as context chips (same as @-mention).
 	// Handles same-window (module pub/sub) and the singleton feature window
@@ -488,29 +532,55 @@ export function useAgentComposer({
 	);
 
 	const attachSkill = (skill: AgentSkill) => {
-		setSelectedSkillIds((prev) => [...new Set([...prev, skill.id])]);
 		setComposerMenuDismissed(true);
-		setComposerText((prev) =>
-			prev.replace(/(^|\s)\$[^\s]*$/, (_match, prefix: string) => `${prefix}`),
-		);
+		setComposerText((prev) => {
+			const token = encodeSkillToken(skill.id);
+			if (prev.includes(token)) {
+				setSelectedSkillIds(extractSkillIds(prev));
+				return prev.replace(
+					/(^|\s)\$[^\s]*$/,
+					(_m, prefix: string) => `${prefix}`,
+				);
+			}
+			const next = replaceTrailingTriggerWithToken(prev, "skill", token);
+			setSelectedSkillIds(extractSkillIds(next));
+			return next;
+		});
 	};
+
+	const removeSkill = useCallback(
+		(skillId: string) => {
+			const token = encodeSkillToken(skillId);
+			setComposerText((prev) => {
+				const next = prev
+					.split(token)
+					.join("")
+					.replace(/[ \t]{2,}/g, " ");
+				setSelectedSkillIds(extractSkillIds(next));
+				return next;
+			});
+		},
+		[setComposerText, setSelectedSkillIds],
+	);
 
 	const attachSlashCommand = useCallback(
 		(command: AcpCommand) => {
 			setComposerMenuDismissed(true);
-			setComposerText((prev) =>
-				prev.replace(
-					/(^|\s)\/[^\s]*$/,
-					(_match, prefix: string) => `${prefix}/${command.name} `,
-				),
-			);
+			setComposerText((prev) => {
+				const token = encodeCommandToken(command.name);
+				if (prev.includes(token)) {
+					return prev.replace(
+						/(^|\s)\/[^\s]*$/,
+						(_m, prefix: string) => `${prefix}`,
+					);
+				}
+				return replaceTrailingTriggerWithToken(prev, "command", token);
+			});
 		},
 		[setComposerText],
 	);
 
-	const handleComposerMenuKeyDown = (
-		event: KeyboardEvent<HTMLTextAreaElement>,
-	) => {
+	const handleComposerMenuKeyDown = (event: KeyboardEvent<HTMLElement>) => {
 		// IME: do not treat Enter as mention/skill select while composing.
 		// PromptInputTextarea owns compositionend grace + blocks submit; here
 		// we only need keyCode 229 / isComposing so menus do not steal the key.
@@ -611,21 +681,26 @@ export function useAgentComposer({
 			return;
 		}
 
-		// ↑ / ↓ → walk previous user prompts into the composer (shell-style).
-		// Does not open inline edit / rollback — Pencil still does that.
+		// ↑ / ↓ → walk previous user prompts (shell-style). Contenteditable has
+		// no .value; treat an empty marked draft as empty and ignore caret while
+		// already browsing so chips/markers do not block ArrowDown.
 		if (switchingRef.current) return;
-		const el = event.currentTarget;
 		const isBrowsing = promptHistoryIndexRef.current !== null;
 		const history = collectUserPromptTexts(
 			lines,
 			stripPromptEnvelopeForDisplay,
 		);
+		const historyTarget = {
+			value: composerText,
+			selectionStart: isBrowsing ? 0 : composerText.trim() === "" ? 0 : 1,
+			selectionEnd: isBrowsing ? 0 : composerText.trim() === "" ? 0 : 1,
+		};
 
-		if (shouldNavigateHistoryUp(event, el, isBrowsing)) {
+		if (shouldNavigateHistoryUp(event, historyTarget, isBrowsing)) {
 			if (history.length === 0) return;
 			event.preventDefault();
 			if (!isBrowsing) {
-				promptHistoryDraftRef.current = el.value;
+				promptHistoryDraftRef.current = composerText;
 			}
 			const nextIndex = nextHistoryIndexOnUp(
 				history.length,
@@ -636,11 +711,15 @@ export function useAgentComposer({
 			promptHistoryIndexRef.current = nextIndex;
 			promptHistoryAppliedRef.current = text;
 			setComposerText(text);
-			placeCaretAtEnd(el, text);
 			return;
 		}
 
-		if (shouldNavigateHistoryDown(event, el, isBrowsing)) {
+		const downTarget = {
+			value: composerText,
+			selectionStart: composerText.length,
+			selectionEnd: composerText.length,
+		};
+		if (shouldNavigateHistoryDown(event, downTarget, isBrowsing)) {
 			event.preventDefault();
 			const nextIndex = nextHistoryIndexOnDown(
 				history.length,
@@ -652,14 +731,12 @@ export function useAgentComposer({
 				promptHistoryDraftRef.current = "";
 				promptHistoryAppliedRef.current = null;
 				setComposerText(draft);
-				placeCaretAtEnd(el, draft);
 				return;
 			}
 			const text = history[nextIndex] ?? "";
 			promptHistoryIndexRef.current = nextIndex;
 			promptHistoryAppliedRef.current = text;
 			setComposerText(text);
-			placeCaretAtEnd(el, text);
 		}
 	};
 
@@ -675,12 +752,16 @@ export function useAgentComposer({
 				promptHistoryAppliedRef.current = null;
 			}
 			setComposerText(text);
+			setMentionedPaths(extractMentionPaths(text));
+			setSelectedSkillIds(extractSkillIds(text));
 		},
 		[
 			promptHistoryAppliedRef,
 			promptHistoryDraftRef,
 			promptHistoryIndexRef,
 			setComposerText,
+			setMentionedPaths,
+			setSelectedSkillIds,
 		],
 	);
 
@@ -709,6 +790,7 @@ export function useAgentComposer({
 		showSkillMenu,
 		skillOptions,
 		attachSkill,
+		removeSkill,
 		showSlashMenu,
 		slashOptions,
 		attachSlashCommand,

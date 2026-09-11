@@ -59,6 +59,7 @@ import {
 	recommendArxiv,
 	recommendArxivLast,
 } from "@/lib/recommend";
+import type { EmbeddingSettings } from "@/lib/settings";
 import { loadSettings, subscribeSettings } from "@/lib/settings/store";
 import { openSettingsWindow } from "@/lib/shell/settings-window";
 import { runTranslate } from "@/lib/translate";
@@ -100,10 +101,12 @@ type EmptyReason =
 type ProbeStatus = "pending" | "unconfigured" | "ok" | "failed";
 
 /** Snapshot of the embedding config used to decide whether to re-probe. */
+function embeddingProbeKey(e: EmbeddingSettings): string {
+	return `${e.source}|${e.baseUrl}|${e.apiKey}|${e.model}`;
+}
+
 function readEmbeddingKey(): string {
-	const s = loadSettings();
-	const e = s.embedding;
-	return `${e.baseUrl}|${e.apiKey}|${e.model}`;
+	return embeddingProbeKey(loadSettings().embedding);
 }
 
 export function PlazaArxivRecView({ className }: { className?: string }) {
@@ -229,8 +232,7 @@ export function PlazaArxivRecView({ className }: { className?: string }) {
 	// Re-probe when the user edits the embedding config in Settings.
 	useEffect(() => {
 		return subscribeSettings((next) => {
-			const e = next.embedding;
-			const key = `${e.baseUrl}|${e.apiKey}|${e.model}`;
+			const key = embeddingProbeKey(next.embedding);
 			if (key === lastEmbeddingKeyRef.current) return;
 			lastEmbeddingKeyRef.current = key;
 			// Drop any visible stored cache so we don't flash stale results
@@ -318,7 +320,7 @@ export function PlazaArxivRecView({ className }: { className?: string }) {
 					<span
 						key={category}
 						className={cn(
-							"group inline-flex items-center gap-0.5 rounded-full border border-primary/40 bg-primary/10 py-0.5 pl-2 pr-0.5 font-mono text-[11px] text-foreground",
+							"group inline-flex items-center gap-0.5 rounded-full border border-primary/40 bg-primary/10 py-0.5 pl-2 pr-0.5 font-mono text-caption text-foreground",
 							(busy || !probeOk) && "opacity-60",
 						)}
 					>
@@ -344,7 +346,7 @@ export function PlazaArxivRecView({ className }: { className?: string }) {
 				/>
 				<span className="ml-auto flex items-center gap-1.5">
 					{computedAt && probeOk ? (
-						<span className="text-muted-foreground text-[11px]">
+						<span className="text-muted-foreground text-caption">
 							{new Date(computedAt).toLocaleString()}
 						</span>
 					) : null}
@@ -470,7 +472,7 @@ function EmptyState({
 					{t("plaza.arxivRec.probeFailed")}
 				</p>
 				{probeError ? (
-					<p className="max-w-sm text-muted-foreground/70 text-[11px] leading-relaxed">
+					<p className="max-w-sm text-muted-foreground/70 text-caption leading-relaxed">
 						{probeError}
 					</p>
 				) : null}

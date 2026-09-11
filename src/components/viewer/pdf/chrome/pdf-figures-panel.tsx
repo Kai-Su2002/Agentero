@@ -1,4 +1,6 @@
 import { FiguresPanel } from "@/components/viewer/panels/figures-panel";
+import { PDF_SIDE_PANEL } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
+import { cn } from "@/lib/core/utils";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout";
 
 type PdfFiguresPanelProps = {
@@ -25,7 +27,7 @@ export function PdfFiguresPanel({
 	if (!showFigures) return null;
 
 	return (
-		<aside className="absolute inset-y-0 left-0 z-20 w-80 overflow-hidden border-r bg-background/95 pt-11 pb-2 backdrop-blur-sm">
+		<aside data-pdf-chrome className={cn("overflow-hidden", PDF_SIDE_PANEL)}>
 			<FiguresPanel
 				documentId={documentId}
 				viewerReady

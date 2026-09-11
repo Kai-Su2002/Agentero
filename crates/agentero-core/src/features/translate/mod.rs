@@ -12,6 +12,15 @@ mod sources;
 /// Soft cap for a single translation request (characters).
 pub const MAX_TEXT_CHARS: usize = 5000;
 
+/// Built-in provider id. Credentials are compiled into the Host, so this id is
+/// deliberately absent from both lists below: `FREE_PROVIDERS` gates the CLI's
+/// `--provider` (which cannot authenticate it) and `COMMERCIAL_PROVIDERS` drives
+/// the WebView credential cards (which it must not render).
+pub const BUILTIN_PROVIDER_ID: &str = "agentero";
+
+/// Wire marker returned when this build carries no built-in key.
+pub const ERR_NO_BUILTIN_KEY: &str = "translate.no_builtin_key";
+
 /// Known free MT provider ids.
 pub const FREE_PROVIDERS: &[&str] = &[
     "google",
@@ -233,6 +242,17 @@ pub async fn translate_text(args: TranslateTextArgs) -> Result<TranslateTextResu
             sources::openai_compatible::translate_openai_compatible(
                 text,
                 &source,
+                &target,
+                timeout,
+                args.api_key.as_deref(),
+                args.base_url.as_deref(),
+                args.model.as_deref(),
+            )
+            .await?
+        }
+        BUILTIN_PROVIDER_ID => {
+            sources::hunyuan_mt::translate_hunyuan_mt(
+                text,
                 &target,
                 timeout,
                 args.api_key.as_deref(),

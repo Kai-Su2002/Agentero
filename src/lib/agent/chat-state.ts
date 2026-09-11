@@ -303,7 +303,6 @@ function catalogTemplateFromId(templateId: string): AgentTemplate | undefined {
 	switch (templateId) {
 		case "opencode":
 		case "openclaw":
-		case "antigravity":
 		case "hermes":
 		case "claude-acp":
 		case "codex-acp":
@@ -344,6 +343,7 @@ export function buildOptions(
 	catalog: CatalogScanResponse | null,
 ): AgentOption[] {
 	const options: AgentOption[] = [];
+	const tail: AgentOption[] = [];
 	const seenIds = new Set<string>();
 
 	if (catalog) {
@@ -365,7 +365,7 @@ export function buildOptions(
 			if (!registryAgentUsable(a)) continue;
 			if (seenIds.has(a.id)) continue;
 			seenIds.add(a.id);
-			options.push({
+			tail.push({
 				key: `reg:${a.id}`,
 				id: a.id,
 				templateId: null,
@@ -382,7 +382,7 @@ export function buildOptions(
 			if (!registryAgentUsable(a)) continue;
 			if (seenIds.has(a.id)) continue;
 			seenIds.add(a.id);
-			options.push({
+			tail.push({
 				key: `reg:${a.id}`,
 				id: a.id,
 				templateId: null,
@@ -394,7 +394,9 @@ export function buildOptions(
 		}
 	}
 
-	return options;
+	options.sort((a, b) => a.name.localeCompare(b.name));
+	tail.sort((a, b) => a.name.localeCompare(b.name));
+	return [...options, ...tail];
 }
 
 export function resolveSelected(

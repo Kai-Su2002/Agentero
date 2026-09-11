@@ -108,7 +108,7 @@ export function MobileReaderPage({
 				<Textarea
 					value={notes}
 					onChange={(event) => setNotes(event.target.value)}
-					className="min-h-full w-full resize-none overflow-y-auto rounded-none border-0 p-4 font-mono text-base leading-6 shadow-none field-sizing-fixed focus-visible:ring-0 md:px-6 md:text-[15px]"
+					className="min-h-full w-full resize-none overflow-y-auto rounded-none border-0 p-4 font-mono text-base leading-6 shadow-none field-sizing-fixed focus-visible:ring-0 md:px-6 md:text-base"
 				/>
 			</div>
 			<footer className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-end border-t bg-background/95 px-4 py-3 backdrop-blur md:px-6">

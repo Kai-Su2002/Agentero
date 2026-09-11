@@ -1,4 +1,5 @@
-//! Desktop cloud body-parse engines (MinerU / Paddle / OpenAI-compatible VLM).
+//! Desktop cloud body-parse engines (MinerU / Paddle / OpenAI-compatible VLM,
+//! the latter also serving the built-in provider).
 //!
 //! These implement agentero-core's [`engines::BodyParseEngine`] trait and produce the
 //! markdown written to PAPER.md. They register into the core dynamic engine
@@ -11,7 +12,7 @@
 //! the cloud job runners in [`crate::features::paper::analyze::layout::hosted`] (upload →
 //! poll → zip/JSONL). Sharing those runners avoids duplicating the HTTP
 //! orchestration; the same cloud job is run once and consumed differently
-//! (zip → `full.md` here; zip → `content_list.json` boxes there).
+//! (zip → `full.md` plus `images/` assets here; zip → `content_list.json` boxes there).
 //! `openai_vlm` is self-contained and does not touch `layout::hosted`.
 //!
 //! Both trees draw credentials from the single `layout.providerConfigs`
@@ -28,9 +29,13 @@ mod openai_vlm;
 mod paddle;
 
 use crate::features::paper::analyze::parse::engines;
-use crate::features::system::settings::AppSettingsStore;
+use crate::features::system::settings::{AppSettingsStore, BUILTIN_PROVIDER_ID};
 use std::collections::HashMap;
 use std::sync::Arc;
+
+/// Providers whose credentials are snapshotted into the parser registry.
+const CREDENTIAL_PROVIDERS: &[&str] =
+    &["paddle", "mineru", "openaiCompatible", BUILTIN_PROVIDER_ID];
 
 /// Register the cloud engines and the settings-backed provider resolver with
 /// the core engine registry. Idempotent (replaces existing entries).
@@ -38,7 +43,13 @@ pub fn register_body_engines() {
     engines::register_engine("mineru", || Arc::new(mineru::MineruBodyEngine));
     engines::register_engine("paddle", || Arc::new(paddle::PaddleBodyEngine));
     engines::register_engine("openaicompatible", || {
-        Arc::new(openai_vlm::OpenAiVlmBodyEngine)
+        Arc::new(openai_vlm::OpenAiVlmBodyEngine::new("openaiCompatible"))
+    });
+    // The built-in provider is the same VLM engine against a build-time
+    // gateway; carrying its own id keeps failure notes naming the backend the
+    // user selected.
+    engines::register_engine(BUILTIN_PROVIDER_ID, || {
+        Arc::new(openai_vlm::OpenAiVlmBodyEngine::new(BUILTIN_PROVIDER_ID))
     });
     engines::set_provider_resolver(crate::features::system::settings::layout_provider_settings_key);
 }
@@ -47,10 +58,20 @@ pub fn register_body_engines() {
 /// the Host process.
 pub fn refresh_parser_config(store: &AppSettingsStore) {
     register_body_engines();
+    engines::configure_parser(engines::ParserEngineConfig {
+        backend: store.parser_backend(),
+        credentials: parser_credentials(store),
+    });
+}
+
+/// Credential snapshot per provider, keyed by the id `provider_for_backend`
+/// returns. The built-in entry resolves from the build, not from a settings
+/// card, so it can never be persisted.
+fn parser_credentials(store: &AppSettingsStore) -> HashMap<String, engines::EngineCredentials> {
     let mut credentials = HashMap::new();
-    for provider in ["paddle", "mineru", "openaiCompatible"] {
+    for provider in CREDENTIAL_PROVIDERS {
         credentials.insert(
-            provider.to_string(),
+            (*provider).to_string(),
             engines::EngineCredentials {
                 api_key: store.layout_api_key(provider),
                 base_url: store.layout_base_url(provider),
@@ -61,16 +82,15 @@ pub fn refresh_parser_config(store: &AppSettingsStore) {
             },
         );
     }
-    engines::configure_parser(engines::ParserEngineConfig {
-        backend: store.parser_backend(),
-        credentials,
-    });
+    credentials
 }
 
 #[cfg(test)]
 mod tests {
     use super::engines::*;
     use super::*;
+    use crate::features::system::builtin;
+    use crate::features::system::settings::AppSettings;
     use std::path::Path;
 
     #[test]
@@ -93,6 +113,38 @@ mod tests {
             Some("openaiCompatible")
         );
         assert_eq!(provider_for_backend("local"), None);
+        assert_eq!(
+            provider_for_backend(BUILTIN_PROVIDER_ID),
+            Some(BUILTIN_PROVIDER_ID)
+        );
+    }
+
+    /// An unregistered backend silently degrades to the local parser instead of
+    /// erroring, so the built-in registration needs an explicit guard.
+    #[test]
+    fn builtin_backend_resolves_to_the_vlm_engine() {
+        register_body_engines();
+        assert_eq!(engine_for(BUILTIN_PROVIDER_ID).id(), BUILTIN_PROVIDER_ID);
+        assert_eq!(engine_for("Agentero").id(), BUILTIN_PROVIDER_ID);
+        // The shared engine still reports the id it was registered under.
+        assert_eq!(engine_for("openaiCompatible").id(), "openaiCompatible");
+    }
+
+    #[test]
+    fn builtin_credentials_come_from_the_build_not_a_settings_card() {
+        let store = AppSettingsStore::for_tests(AppSettings::default());
+        let credentials = parser_credentials(&store);
+        let entry = credentials
+            .get(BUILTIN_PROVIDER_ID)
+            .expect("built-in credentials entry");
+
+        let status = builtin::status();
+        assert_eq!(entry.base_url.as_deref(), Some(status.base_url.as_str()));
+        assert_eq!(entry.model.as_deref(), Some(status.ocr_model.as_str()));
+        assert_eq!(entry.api_key.is_some(), builtin::available());
+        // No prompt override: the engine derives one from the model id.
+        assert!(entry.prompt.is_none());
+        assert!(!entry.is_ocr);
     }
 
     /// A cloud engine that cannot even start (no API key) must hand over to

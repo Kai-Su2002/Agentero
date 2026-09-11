@@ -26,10 +26,11 @@ type TranslateCardProps = {
 /**
  * PDF selection translation — shared SelectionCard shell with hide/delete
  * (same persistence model as ask: hide keeps pin, delete removes record).
+ * Compact footprint so it stays out of the way while reading.
  */
 export function TranslateCard({
 	screen,
-	preferRight = true,
+	preferRight = false,
 	result,
 	streaming,
 	error,
@@ -46,8 +47,8 @@ export function TranslateCard({
 	return (
 		<SelectionCard
 			screen={screen}
-			width={320}
-			height={280}
+			width={260}
+			height={200}
 			// Content-sized: follow the selection pin while the PDF scrolls.
 			trackPin
 			preferRight={preferRight}
@@ -69,16 +70,16 @@ export function TranslateCard({
 					icon: <MinusIcon className="size-3.5" />,
 				},
 			]}
-			bodyClassName="gap-2 px-3 py-2.5"
+			bodyClassName="gap-1.5 px-2.5 py-2"
 		>
 			{showLoading ? (
-				<Shimmer className="text-sm" as="p">
+				<Shimmer className="text-xs" as="p">
 					{t("selection.translating")}
 				</Shimmer>
 			) : null}
 
 			{showResult ? (
-				<MessageResponse className="min-w-0 whitespace-pre-wrap break-words text-[13px] text-foreground leading-relaxed">
+				<MessageResponse className="min-w-0 whitespace-pre-wrap break-words text-xs text-foreground leading-snug">
 					{result}
 				</MessageResponse>
 			) : null}
@@ -90,18 +91,18 @@ export function TranslateCard({
 			) : null}
 
 			{error ? (
-				<div className="flex flex-col items-start gap-2">
+				<div className="flex flex-col items-start gap-1.5">
 					<p className="text-destructive text-xs" role="alert">
 						{error}
 					</p>
 					<Button
 						type="button"
-						size="sm"
+						size="xs"
 						variant="outline"
-						className="h-7 gap-1.5 px-2 text-xs"
+						className="gap-1 px-1.5"
 						onClick={onOpenSettings}
 					>
-						<Settings2Icon className="size-3.5" />
+						<Settings2Icon className="size-3" />
 						{t("selection.translateOpenSettings")}
 					</Button>
 				</div>

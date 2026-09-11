@@ -1,4 +1,4 @@
-import { ScanSearch, TextSelect, X } from "lucide-react";
+import { ScanSearch, Sparkles, TextSelect, X } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { ContextPathIcon } from "@/components/agent/context-path-icon";
 import type { AgentSkill } from "@/lib/agent";
@@ -7,8 +7,57 @@ import type { PdfVisualDraft } from "@/lib/agent/visual-context-store";
 import { basenameOf } from "@/lib/core/path";
 import { cn } from "@/lib/core/utils";
 
+function cleanSkillDisplayName(name: string): string {
+	return name
+		.trim()
+		.replace(/^[/$]+/, "")
+		.replace(/^skill\s*:\s*/i, "");
+}
+
+/**
+ * Icon-first chip: hover / focus animates width open to reveal a short label + X.
+ * No `title` tooltip — the expand is the reveal.
+ */
+function ChipExpandTrail({
+	label,
+	withRemove,
+}: {
+	label: string;
+	withRemove?: boolean;
+}) {
+	const trimmed = label.trim();
+	if (!trimmed && !withRemove) return null;
+	return (
+		<span
+			className={cn(
+				"grid min-w-0 transition-[grid-template-columns] duration-200 ease-out motion-reduce:transition-none",
+				"grid-cols-[0fr] group-hover:grid-cols-[1fr] group-focus-visible:grid-cols-[1fr]",
+			)}
+		>
+			<span className="min-w-0 overflow-hidden">
+				<span className="ml-1 flex max-w-[8rem] items-center gap-1 whitespace-nowrap">
+					{trimmed ? (
+						<span className="min-w-0 truncate text-xs leading-none">
+							{trimmed}
+						</span>
+					) : null}
+					{withRemove ? (
+						<X className="size-3 shrink-0 text-muted-foreground" aria-hidden />
+					) : null}
+				</span>
+			</span>
+		</span>
+	);
+}
+
+function chipShellClass(extra?: string) {
+	return cn(
+		"group inline-flex h-7 max-w-full items-center rounded-full border bg-muted/20 px-1.5 text-foreground text-xs transition-colors hover:bg-muted",
+		extra,
+	);
+}
+
 export function ComposerContextChips({
-	compact = false,
 	currentFilePath,
 	currentFileLabel,
 	mentionChipPaths,
@@ -21,6 +70,7 @@ export function ComposerContextChips({
 	labelForPath,
 	onRemoveContextPath,
 }: {
+	/** @deprecated Ignored — chips always expand on hover. */
 	compact?: boolean;
 	currentFilePath: string | null;
 	currentFileLabel: string;
@@ -43,14 +93,14 @@ export function ComposerContextChips({
 	) {
 		return null;
 	}
+
 	return (
 		<>
 			{currentFilePath ? (
 				<button
 					type="button"
-					className="inline-flex size-7 shrink-0 items-center justify-center rounded-full border bg-muted/20 p-0 text-foreground text-xs transition-colors hover:bg-muted"
+					className={chipShellClass()}
 					onClick={() => onRemoveContextPath(currentFilePath)}
-					title={currentFileLabel || currentFilePath}
 					aria-label={t("composer.currentFileRemove")}
 				>
 					<ContextPathIcon
@@ -58,65 +108,50 @@ export function ComposerContextChips({
 						directoryPaths={directoryPathSet}
 						paperPaths={paperPathSet}
 					/>
+					<ChipExpandTrail
+						label={
+							currentFileLabel.trim() ||
+							basenameOf(currentFilePath) ||
+							currentFilePath
+						}
+						withRemove
+					/>
 				</button>
 			) : null}
 			{mentionChipPaths.map((path) => {
-				const label = labelForPath(path);
+				const shortLabel = basenameOf(path) || labelForPath(path);
 				return (
 					<button
 						key={path}
 						type="button"
-						className={cn(
-							"inline-flex items-center border bg-muted/20 text-foreground text-xs transition-colors hover:bg-muted",
-							compact
-								? "size-7 shrink-0 justify-center rounded-full p-0"
-								: "h-8 max-w-full gap-1.5 rounded-full px-2",
-						)}
+						className={chipShellClass()}
 						onClick={() => onRemoveContextPath(path)}
-						title={t("composer.removeContext", { path })}
+						aria-label={t("composer.removeContext", { path })}
 					>
 						<ContextPathIcon
 							path={path}
 							directoryPaths={directoryPathSet}
 							paperPaths={paperPathSet}
 						/>
-						{compact ? null : (
-							<>
-								<span className="max-w-[16rem] truncate" title={path}>
-									{label}
-								</span>
-								<X className="size-3 shrink-0 text-muted-foreground" />
-							</>
-						)}
+						<ChipExpandTrail label={shortLabel} withRemove />
 					</button>
 				);
 			})}
 			{selectionChips.map((sel) => {
 				const name = basenameOf(sel.sourcePath) || t("composer.selection");
-				const label = sel.page ? `${name} · p.${sel.page}` : name;
+				const shortLabel = sel.page ? `${name} · p.${sel.page}` : name;
 				return (
 					<button
 						key={sel.id}
 						type="button"
-						className={cn(
-							"inline-flex items-center border text-foreground text-xs transition-colors hover:bg-muted",
-							compact
-								? "size-7 shrink-0 justify-center rounded-full p-0"
-								: "h-8 max-w-full gap-1.5 rounded-full px-2",
-							sel.pinned ? "bg-muted/20" : "border-dashed bg-transparent",
+						className={chipShellClass(
+							sel.pinned ? undefined : "border-dashed bg-transparent",
 						)}
 						onClick={() => onRemoveSelection(sel.id)}
-						title={t("composer.removeSelection")}
+						aria-label={t("composer.removeSelection")}
 					>
 						<TextSelect className="size-3.5 shrink-0 text-muted-foreground" />
-						{compact ? null : (
-							<>
-								<span className="max-w-[16rem] truncate" title={sel.text}>
-									{label}
-								</span>
-								<X className="size-3 shrink-0 text-muted-foreground" />
-							</>
-						)}
+						<ChipExpandTrail label={shortLabel} withRemove />
 					</button>
 				);
 			})}
@@ -124,9 +159,7 @@ export function ComposerContextChips({
 				const pageLabel = t("composer.visualAnnotationPage", {
 					page: draft.page,
 				});
-				const label =
-					draft.comment.trim() ||
-					`${t("composer.visualAnnotation")} · ${pageLabel}`;
+				const shortLabel = draft.comment.trim() || pageLabel;
 				const thumb =
 					draft.image.data.length > 0
 						? `data:${draft.image.mimeType || "image/png"};base64,${draft.image.data}`
@@ -135,38 +168,20 @@ export function ComposerContextChips({
 					<button
 						key={draft.id}
 						type="button"
-						className={cn(
-							"inline-flex items-center border bg-muted/20 text-foreground text-xs transition-colors hover:bg-muted",
-							compact
-								? "size-7 shrink-0 justify-center rounded-full p-0"
-								: "h-8 max-w-full gap-1.5 rounded-full px-1.5 pr-2",
-						)}
+						className={chipShellClass()}
 						onClick={() => onRemoveVisualDraft(draft.id)}
-						title={t("composer.removeVisualDraft")}
+						aria-label={t("composer.removeVisualDraft")}
 					>
 						{thumb ? (
 							<img
 								src={thumb}
 								alt=""
-								className={cn(
-									"shrink-0 object-cover",
-									compact ? "size-5 rounded-full" : "size-5 rounded",
-								)}
+								className="size-5 shrink-0 rounded-full object-cover"
 							/>
 						) : (
 							<ScanSearch className="size-3.5 shrink-0 text-muted-foreground" />
 						)}
-						{compact ? null : (
-							<>
-								<span
-									className="max-w-[14rem] truncate"
-									title={draft.comment || pageLabel}
-								>
-									{label}
-								</span>
-								<X className="size-3 shrink-0 text-muted-foreground" />
-							</>
-						)}
+						<ChipExpandTrail label={shortLabel} withRemove />
 					</button>
 				);
 			})}
@@ -175,7 +190,6 @@ export function ComposerContextChips({
 }
 
 export function ComposerSkillChips({
-	compact = false,
 	selectedSkills,
 	onRemoveSkill,
 }: {
@@ -191,24 +205,20 @@ export function ComposerSkillChips({
 				<button
 					key={skill.id}
 					type="button"
-					className={cn(
-						"inline-flex items-center border bg-muted/20 text-foreground text-xs transition-colors hover:bg-muted",
-						compact
-							? "size-7 shrink-0 justify-center rounded-full p-0"
-							: "h-8 max-w-full gap-1.5 rounded-full px-2",
-					)}
+					className={chipShellClass()}
 					onClick={() => onRemoveSkill(skill.id)}
-					title={t("composer.removeSkill", {
+					aria-label={t("composer.removeSkill", {
 						skill: skill.name,
 					})}
 				>
-					<span className="font-mono text-muted-foreground">$</span>
-					{compact ? null : (
-						<>
-							<span className="truncate">{skill.name}</span>
-							<X className="size-3 shrink-0 text-muted-foreground" />
-						</>
-					)}
+					<Sparkles
+						className="size-3 shrink-0 text-muted-foreground"
+						aria-hidden
+					/>
+					<ChipExpandTrail
+						label={cleanSkillDisplayName(skill.name)}
+						withRemove
+					/>
 				</button>
 			))}
 		</>

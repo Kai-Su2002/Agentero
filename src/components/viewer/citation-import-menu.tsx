@@ -114,7 +114,7 @@ export function CitationImportPopover({
 					<div className="space-y-1">
 						<Label
 							htmlFor={`ref-new-folder-${citationId}`}
-							className="text-[10px] text-muted-foreground"
+							className="text-caption text-muted-foreground"
 						>
 							{t("references.newFolder")}
 						</Label>
@@ -137,13 +137,13 @@ export function CitationImportPopover({
 							/>
 						</div>
 						{typed && !newValid ? (
-							<p className="text-[10px] text-destructive">
+							<p className="text-caption text-destructive">
 								{t("references.invalidFolderPath")}
 							</p>
 						) : null}
 					</div>
 					{importing ? (
-						<p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+						<p className="flex items-center gap-1.5 text-caption text-muted-foreground">
 							<Loader2 className="size-3 animate-spin" aria-hidden />
 							{t("references.importing")}
 						</p>

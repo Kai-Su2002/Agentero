@@ -14,11 +14,12 @@ import type {
 	AiResponseLanguage,
 	AppSettings,
 } from "@/lib/settings";
+import { GITHUB_MIRROR_PRESETS } from "@/lib/settings/defaults";
 import { SettingsRow } from "./settings-layout";
 
 type Patch = (p: Partial<AppSettings>) => void;
 
-/** Shared network proxy URL input + enable switch. */
+/** Shared network proxy / mirror URL input + enable switch. */
 export function NetworkProxyRow({
 	htmlFor,
 	label,
@@ -28,6 +29,7 @@ export function NetworkProxyRow({
 	onProxyUrlChange,
 	onCommitProxyUrl,
 	onToggleProxy,
+	placeholder = "http://127.0.0.1:7890",
 }: {
 	htmlFor: string;
 	label: string;
@@ -37,6 +39,7 @@ export function NetworkProxyRow({
 	onProxyUrlChange: (url: string) => void;
 	onCommitProxyUrl: () => void;
 	onToggleProxy: (enabled: boolean) => void;
+	placeholder?: string;
 }) {
 	return (
 		<SettingsRow label={label} description={description} htmlFor={htmlFor}>
@@ -50,7 +53,7 @@ export function NetworkProxyRow({
 							e.currentTarget.blur();
 						}
 					}}
-					placeholder="http://127.0.0.1:7890"
+					placeholder={placeholder}
 					spellCheck={false}
 					autoComplete="off"
 					disabled={!proxyEnabled || !isTauri()}
@@ -61,6 +64,54 @@ export function NetworkProxyRow({
 					checked={proxyEnabled}
 					disabled={!isTauri()}
 					onCheckedChange={(v) => onToggleProxy(v)}
+				/>
+			</div>
+		</SettingsRow>
+	);
+}
+
+/** GitHub mirror selector: pick from a built-in preset list, plus enable switch. */
+export function GitHubMirrorRow({
+	htmlFor,
+	label,
+	description,
+	value,
+	enabled,
+	onValueChange,
+	onToggle,
+}: {
+	htmlFor: string;
+	label: string;
+	description?: string;
+	value: string;
+	enabled: boolean;
+	onValueChange: (url: string) => void;
+	onToggle: (enabled: boolean) => void;
+}) {
+	return (
+		<SettingsRow label={label} description={description} htmlFor={htmlFor}>
+			<div className="flex items-center gap-2">
+				<Select
+					value={value}
+					disabled={!enabled || !isTauri()}
+					onValueChange={(v) => onValueChange(v)}
+				>
+					<SelectTrigger id={htmlFor} size="sm" className="h-8 w-48 text-xs">
+						<SelectValue />
+					</SelectTrigger>
+					<SelectContent>
+						{GITHUB_MIRROR_PRESETS.map((url) => (
+							<SelectItem key={url} value={url} className="text-xs">
+								{url}
+							</SelectItem>
+						))}
+					</SelectContent>
+				</Select>
+				<Switch
+					aria-label={label}
+					checked={enabled}
+					disabled={!isTauri()}
+					onCheckedChange={(v) => onToggle(v)}
 				/>
 			</div>
 		</SettingsRow>

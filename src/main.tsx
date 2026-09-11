@@ -50,7 +50,7 @@ async function boot() {
 	initSettingsSync();
 	const initialSettings = loadSettings();
 	// Apply scale + interface/mono fonts before first paint so settings/main
-	// windows do not flash Geist then switch.
+	// windows do not flash the stylesheet default then switch.
 	applyDocumentChrome({
 		uiScale: initialSettings.uiScale,
 		interfaceFontFamily: initialSettings.interfaceFontFamily,
@@ -210,6 +210,9 @@ async function boot() {
 		`op end frontend_boot ok=true duration_ms=${bootElapsed()} window=main`,
 	);
 	void checkForStartupUpdate();
+	// After an in-app update relaunches the app, re-align the installed CLI
+	// shim with the new build (the updater only replaces the GUI package).
+	void syncInstalledCli();
 	// Layout model download is a Host background task; App mounts
 	// `useLayoutModelPrefetch` to surface it in the tasks panel.
 }
@@ -241,6 +244,28 @@ async function checkForStartupUpdate(): Promise<void> {
 		);
 	} catch (error) {
 		logger.warn("op end updater_startup_check ok=false", {
+			error: errorText(error),
+		});
+	}
+}
+
+/**
+ * The updater only replaces the GUI package, so an installed CLI shim keeps
+ * pointing at the previous version after an update. The Host resolves CLI
+ * downloads against the compiled-in app version, so the sync can only happen
+ * in the *new* process — best-effort, silent on success.
+ */
+async function syncInstalledCli(): Promise<void> {
+	if (!isTauri()) return;
+	try {
+		const { getCurrentWindow } = await import("@tauri-apps/api/window");
+		if (getCurrentWindow().label !== "main") return;
+		const { syncInstalledCliWithApp } = await import("@/lib/cli/api");
+		if ((await syncInstalledCliWithApp()) === "failed") {
+			notifyError(i18n.t("settings:about.cli.syncFailed"));
+		}
+	} catch (error) {
+		logger.warn("op end cli_sync ok=false", {
 			error: errorText(error),
 		});
 	}

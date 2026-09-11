@@ -1,5 +1,6 @@
 import { clamp01 } from "@/lib/core/math";
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
+import { LAYOUT_SIDEBAR_MIN_SCORE } from "@/lib/pdf/layout/constants";
 import {
 	isAlgorithmLayoutKind,
 	isCaptionLayoutKind,
@@ -25,7 +26,7 @@ export type CaptionPlacement = "below" | "above";
  * Documented in docs/frontend/pdf-layout-analysis.md §规则清单.
  */
 export const LAYOUT_MERGE = {
-	/** Title width ≥ this → full-page multi-panel figure (take all band panels). */
+	/** Title width ≥ this → allow several caption-anchored panel groups. */
 	fullWidthTitle: 0.55,
 	/**
 	 * Max vertical reach above a *half-width* title when no previous caption ceiling.
@@ -304,7 +305,7 @@ export function isSubpanelCaption(c: PdfLayoutRegion): boolean {
 
 /**
  * Vertical band for a main figure title: from previous main caption bottom
- * down to this title top (prevents Fig 6/7/8 vertical over-merge).
+ * down to this title top, restricted to horizontally overlapping captions.
  */
 export function verticalCeilingForTitle(
 	title: PdfLayoutRegion,
@@ -314,6 +315,7 @@ export function verticalCeilingForTitle(
 	for (const other of mainCaptions) {
 		if (other.id === title.id) continue;
 		if (other.pageIndex !== title.pageIndex) continue;
+		if (horizontalOverlapRatio(other.bbox, title.bbox) < 0.2) continue;
 		const otherBottom = other.bbox.y + other.bbox.h;
 		// Captions strictly above this title.
 		if (otherBottom <= title.bbox.y + 0.01) {
@@ -364,6 +366,7 @@ export function areFigureNeighbors(
 
 export function connectedPanelGroups(
 	panels: PdfLayoutRegion[],
+	blockers: readonly PdfLayoutRegion[] = [],
 ): PdfLayoutRegion[][] {
 	if (!panels.length) return [];
 	const n = panels.length;
@@ -383,7 +386,10 @@ export function connectedPanelGroups(
 	};
 	for (let i = 0; i < n; i++) {
 		for (let j = i + 1; j < n; j++) {
-			if (areFigureNeighbors(panels[i].bbox, panels[j].bbox)) {
+			if (
+				areFigureNeighbors(panels[i].bbox, panels[j].bbox) &&
+				!hasFigureSeparator(panels[i], panels[j], blockers)
+			) {
 				unite(i, j);
 			}
 		}
@@ -478,7 +484,7 @@ export function panelsAboveTitle(
 		if (
 			ceiling <= 0 &&
 			Number.isFinite(maxHeightAbove) &&
-			titleTop - p.bbox.y > maxHeightAbove
+			titleTop - p.bbox.y > maxHeightAbove + 1e-9
 		) {
 			return false;
 		}
@@ -486,48 +492,80 @@ export function panelsAboveTitle(
 	});
 }
 
+/** A confident block in the vertical gap separates floats, not text inside panels. */
+function hasFigureSeparator(
+	a: PdfLayoutRegion,
+	b: PdfLayoutRegion,
+	blockers: readonly PdfLayoutRegion[],
+): boolean {
+	const [upper, lower] =
+		a.bbox.y < b.bbox.y ? [a.bbox, b.bbox] : [b.bbox, a.bbox];
+	const top = upper.y + upper.h;
+	const bottom = lower.y;
+	if (bottom <= top) return false;
+	const x = Math.max(upper.x, lower.x);
+	const right = Math.min(upper.x + upper.w, lower.x + lower.w);
+	if (right <= x) return false;
+	return blockers.some((block) => {
+		if (
+			block.pageIndex !== a.pageIndex ||
+			block.id === a.id ||
+			block.id === b.id
+		)
+			return false;
+		if (!(block.score >= LAYOUT_SIDEBAR_MIN_SCORE)) return false;
+		const r = block.bbox;
+		const overlap = Math.max(0, Math.min(right, r.x + r.w) - Math.max(x, r.x));
+		return (
+			r.y >= top - 0.005 &&
+			r.y + r.h <= bottom + 0.005 &&
+			r.h >= 0.015 &&
+			overlap / (right - x) >= 0.5
+		);
+	});
+}
+
 /**
- * Full-width caption (e.g. Figure 2 / Figure 4): take every panel in the
- * vertical band — connectivity is optional (image/chart gaps, mixed kinds).
- * Half-width caption (side-by-side Fig 7 | Fig 8): column + connectivity.
+ * Grow connected panels from groups close to the caption. Full-width captions
+ * can seed several disconnected columns, but never collect an entire page band.
  */
 export function selectClusterForTitle(
 	title: PdfLayoutRegion,
 	panels: PdfLayoutRegion[],
 	mainFigureCaptions: PdfLayoutRegion[],
+	blockers: readonly PdfLayoutRegion[] = [],
 ): PdfLayoutRegion[] {
 	const ceiling = verticalCeilingForTitle(title, mainFigureCaptions);
 	const fullWidth = title.bbox.w >= LAYOUT_MERGE.fullWidthTitle;
-	const figurePanels = panels.filter((p) => isFigureLayoutKind(p.kind));
-	const candidates = panelsAboveTitle(title, figurePanels, {
-		ceiling,
-		fullWidth,
-	});
-	if (!candidates.length) return [];
-
-	// ── Pattern A: full-width multi-panel figure under one caption ──
-	if (fullWidth) {
-		return candidates;
-	}
-
-	// ── Pattern B: column figure — only panels in this title's column ──
-	const inColumn = candidates.filter((g) =>
-		panelInTitleColumn(g.bbox, title.bbox),
+	const candidates = panelsAboveTitle(
+		title,
+		panels.filter((p) => p.score >= LAYOUT_SIDEBAR_MIN_SCORE),
+		{ ceiling, fullWidth },
 	);
-	const pool = inColumn.length ? inColumn : candidates;
-	const groups = connectedPanelGroups(pool);
-	if (!groups.length) return pool;
-
-	let best: PdfLayoutRegion[] = groups[0];
+	const groups = connectedPanelGroups(candidates, blockers);
+	const anchored = groups.filter((group) =>
+		group.some((panel) => {
+			const gap = title.bbox.y - (panel.bbox.y + panel.bbox.h);
+			const slack = fullWidth
+				? LAYOUT_MERGE.fullWidthPanelBottomSlack
+				: LAYOUT_MERGE.panelBottomSlack;
+			return (
+				gap >= -slack &&
+				gap <= 0.12 + 1e-9 &&
+				horizontalOverlapRatio(panel.bbox, title.bbox) >= 0.2 &&
+				!hasFigureSeparator(panel, title, blockers)
+			);
+		}),
+	);
+	if (fullWidth) return anchored.flat();
+	let best: PdfLayoutRegion[] = [];
 	let bestScore = Number.NEGATIVE_INFINITY;
-	for (const group of groups) {
-		const body = unionMany(group.map((g) => g.bbox));
+	for (const group of anchored) {
+		const body = unionMany(group.map((p) => p.bbox));
 		if (!body) continue;
-		const bodyBottom = body.y + body.h;
-		const gap = title.bbox.y - bodyBottom;
-		const hOv = horizontalOverlapRatio(body, title.bbox);
-		const gapScore = gap >= -0.04 && gap <= 0.12 ? 1 - Math.abs(gap) * 6 : -2;
-		const score = group.length * 0.35 + hOv * 2.5 + gapScore;
+		const gap = title.bbox.y - (body.y + body.h);
+		const score =
+			horizontalOverlapRatio(body, title.bbox) * 2.5 - Math.abs(gap) * 6;
 		if (score > bestScore) {
 			bestScore = score;
 			best = group;
@@ -616,6 +654,14 @@ export function resolveFigureBboxOverlaps(
 			if (!isFigureLayoutKind(a.kind) || !isFigureLayoutKind(b.kind)) continue;
 			if (a.pageIndex !== b.pageIndex) continue;
 			if (!isHalfWidthFigureHost(a) || !isHalfWidthFigureHost(b)) continue;
+			if (verticalOverlapRatio(a.bbox, b.bbox) < 0.2) continue;
+			// Same-column/stacked captions do not establish a left/right split.
+			if (
+				a.titleBbox &&
+				b.titleBbox &&
+				horizontalOverlapRatio(a.titleBbox, b.titleBbox) > 0.2
+			)
+				continue;
 
 			const ax2 = a.bbox.x + a.bbox.w;
 			const bx2 = b.bbox.x + b.bbox.w;
@@ -673,7 +719,7 @@ export function suppressOrphanFiguresInsideClusters(
 			// Prefer keeping titled/full-width clusters over bare panel leftovers.
 			const bigIsCluster =
 				(big.titleBbox?.w ?? 0) >= 0.5 || Boolean(big.title?.match(/^fig/i));
-			const smallIsOrphan = !small.titleBbox || (small.titleBbox.w ?? 1) < 0.4;
+			const smallIsOrphan = !small.titleBbox;
 			if (!bigIsCluster || !smallIsOrphan) continue;
 			const cont = (() => {
 				const a = small.bbox;
@@ -854,6 +900,7 @@ function pairCaptionsOneToOne(
 	hosts: PdfLayoutRegion[],
 	captions: PdfLayoutRegion[],
 	familyFilter: LayoutHostFamily,
+	blockers: readonly PdfLayoutRegion[] = [],
 ): Map<string, PdfLayoutRegion> {
 	type Pair = { hostId: string; caption: PdfLayoutRegion; score: number };
 	const pairs: Pair[] = [];
@@ -868,6 +915,8 @@ function pairCaptionsOneToOne(
 			if (!captionCompatibleWithHost(caption.kind, family, role)) continue;
 			// Subpanels handled separately.
 			if (role === "subpanel") continue;
+			if (family === "figure" && hasFigureSeparator(host, caption, blockers))
+				continue;
 
 			const place =
 				role === "figure_main"
@@ -1072,6 +1121,39 @@ export function mergeFormulasByNumber(
 }
 
 /**
+ * A model can confidently call a caption `text` (ViT Figures 6 and 11).
+ * Recover only numbered, punctuated caption text next to a reliable panel;
+ * prose such as "Figure 5 contains ..." remains body text. Keep raw unchanged.
+ */
+function recoverFigureCaptionLabels(
+	regions: PdfLayoutRegion[],
+): PdfLayoutRegion[] {
+	const panels = regions.filter(
+		(r) => isFigureLayoutKind(r.kind) && r.score >= LAYOUT_SIDEBAR_MIN_SCORE,
+	);
+	return regions.map((r) => {
+		if (r.kind !== "text" || r.score < LAYOUT_SIDEBAR_MIN_SCORE || !r.text)
+			return r;
+		if (!/^fig(?:ure)?\.?\s*\d+[a-z]?\s*[:.]\s+\S/i.test(r.text.trim()))
+			return r;
+		if (
+			!panels.some(
+				(p) =>
+					p.pageIndex === r.pageIndex &&
+					Number.isFinite(captionAttachScore(p.bbox, r.bbox)),
+			)
+		)
+			return r;
+		return {
+			...r,
+			kind: "figure_title",
+			title: r.text,
+			captionRole: "figure_main",
+		};
+	});
+}
+
+/**
  * Title-first 联图 for figures; tables/algorithms use text-aware above captions.
  * "Table N" mislabeled as figure_title binds to tables; (a)(b) are subpanels only.
  * Formulas: number-first aggregation; unnumbered formulas dropped.
@@ -1080,7 +1162,13 @@ export function mergeCaptionsIntoHosts(
 	regions: PdfLayoutRegion[],
 ): PdfLayoutRegion[] {
 	// Drop image/chart that are dual-labeled text/header before figure clustering.
-	const cleaned = suppressSpuriousFigureDetections(regions);
+	const cleaned = suppressSpuriousFigureDetections(
+		recoverFigureCaptionLabels(regions),
+	).filter(
+		(r) =>
+			!(isFigureLayoutKind(r.kind) || isCaptionLayoutKind(r.kind)) ||
+			r.score >= LAYOUT_SIDEBAR_MIN_SCORE,
+	);
 	// Ensure roles are resolved for merge decisions.
 	const tagged = cleaned.map((r) =>
 		isCaptionLayoutKind(r.kind)
@@ -1130,15 +1218,33 @@ export function mergeCaptionsIntoHosts(
 	const clustered: PdfLayoutRegion[] = [];
 
 	// ── Phase 1: main Figure N titles → multi-panel image/chart only ──
-	const sortedMainFigs = [...mainFigureTitles].sort(
-		(a, b) => a.pageIndex - b.pageIndex || a.bbox.y - b.bbox.y,
+	const byPosition = (a: PdfLayoutRegion, b: PdfLayoutRegion) =>
+		a.pageIndex - b.pageIndex || a.bbox.y - b.bbox.y || a.bbox.x - b.bbox.x;
+	// Unreadable narrow captions are ambiguous. Let known main titles claim
+	// their panels first, then recover still-unassigned caption/panel groups.
+	const fallbackTitles = otherCaptions.filter(
+		(c) => c.kind === "figure_title" && !c.title?.trim(),
 	);
+	const sortedMainFigs = [...mainFigureTitles]
+		.sort(byPosition)
+		.concat(fallbackTitles.sort(byPosition));
 
 	const tableAlgBlockers = [...tables, ...algorithms];
+	const figureBlockers = [
+		...tableAlgBlockers,
+		...tagged.filter(
+			(r) => isLayoutBodyTextKind(r.kind) && resolveCaptionRole(r) === "other",
+		),
+	];
 
 	for (const title of sortedMainFigs) {
 		const freePanels = panelsWithSubs.filter((f) => !usedPanelIds.has(f.id));
-		const cluster = selectClusterForTitle(title, freePanels, mainFigureTitles);
+		const cluster = selectClusterForTitle(
+			title,
+			freePanels,
+			mainFigureTitles,
+			figureBlockers,
+		);
 		if (!cluster.length) continue;
 
 		const body = unionMany(cluster.map((c) => c.bbox));
@@ -1201,7 +1307,12 @@ export function mergeCaptionsIntoHosts(
 		...mainFigureTitles.filter((c) => !usedCaptionIds.has(c.id)),
 		...otherCaptions.filter((c) => !usedCaptionIds.has(c.id)),
 	];
-	const figPairs = pairCaptionsOneToOne(freeFigures, freeFigCaps, "figure");
+	const figPairs = pairCaptionsOneToOne(
+		freeFigures,
+		freeFigCaps,
+		"figure",
+		figureBlockers,
+	);
 	for (const cap of figPairs.values()) usedCaptionIds.add(cap.id);
 
 	const singles: PdfLayoutRegion[] = [];

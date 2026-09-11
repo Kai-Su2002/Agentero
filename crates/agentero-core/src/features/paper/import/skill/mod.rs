@@ -73,13 +73,9 @@ pub async fn discover_skill_source(
         urlencoding::encode(&reference)
     );
     let aggregator = AssetProgressAggregator::single(app, task_id, "skill");
-    let archive = http_get_bytes_with_progress(
-        &archive_url,
-        Duration::from_secs(120),
-        None,
-        aggregator.stream(0),
-    )
-    .await?;
+    let archive =
+        fetch_archive_with_mirror_fallback(&archive_url, Duration::from_secs(120), aggregator)
+            .await?;
     if archive.len() > MAX_ARCHIVE_BYTES {
         return Err(AppError::message("skill archive is too large"));
     }
@@ -110,7 +106,31 @@ pub async fn discover_skill_source(
 }
 
 async fn default_branch(owner: &str, repo: &str) -> Result<String, AppError> {
-    let url = format!("https://api.github.com/repos/{owner}/{repo}");
+    let canonical = format!("https://api.github.com/repos/{owner}/{repo}");
+    let candidates = crate::http::github_url_candidates(&canonical);
+    let mut last_err: Option<AppError> = None;
+    for (index, url) in candidates.iter().enumerate() {
+        match default_branch_once(url).await {
+            Ok(branch) => return Ok(branch),
+            Err(err) => {
+                let retry =
+                    index + 1 < candidates.len() && crate::http::should_fallback_github_error(&err);
+                if retry {
+                    log::warn!(
+                        target: "agentero::skill",
+                        "GitHub default_branch via {url} failed ({err}); trying mirror"
+                    );
+                    last_err = Some(err);
+                    continue;
+                }
+                return Err(err);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| AppError::message("GitHub repository lookup failed")))
+}
+
+async fn default_branch_once(url: &str) -> Result<String, AppError> {
     let client = crate::http::client_builder()
         .timeout(Duration::from_secs(20))
         .user_agent("Agentero/skill-import")
@@ -137,6 +157,34 @@ async fn default_branch(owner: &str, repo: &str) -> Result<String, AppError> {
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .ok_or_else(|| AppError::message("GitHub response did not include a default branch"))
+}
+
+async fn fetch_archive_with_mirror_fallback(
+    canonical: &str,
+    timeout: Duration,
+    aggregator: AssetProgressAggregator<'_>,
+) -> Result<Vec<u8>, AppError> {
+    let candidates = crate::http::github_url_candidates(canonical);
+    let mut last_err: Option<AppError> = None;
+    for (index, url) in candidates.iter().enumerate() {
+        match http_get_bytes_with_progress(url, timeout, None, aggregator.stream(0)).await {
+            Ok(bytes) => return Ok(bytes),
+            Err(err) => {
+                let retry =
+                    index + 1 < candidates.len() && crate::http::should_fallback_github_error(&err);
+                if retry {
+                    log::warn!(
+                        target: "agentero::skill",
+                        "skill archive via {url} failed ({err}); trying mirror"
+                    );
+                    last_err = Some(err);
+                    continue;
+                }
+                return Err(err);
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| AppError::message("skill archive download failed")))
 }
 
 pub fn install_discovered_skills(

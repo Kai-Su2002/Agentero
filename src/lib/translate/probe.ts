@@ -3,6 +3,7 @@
  * Used by Settings → Translate when the default-service Select opens or on Confirm.
  */
 
+import { BUILTIN_PROVIDER_ID } from "@/lib/core/builtin";
 import { isTauri } from "@/lib/core/tauri";
 import { invokeTranslateText } from "@/lib/translate/api";
 import type {
@@ -102,16 +103,21 @@ async function probeOne(
 /**
  * Probe all free MT engines in parallel (not Agent).
  * Results stream via `onResult`; returned map is the final snapshot.
+ *
+ * The built-in provider is excluded: probing it would fire a real translation
+ * request, and its availability comes from `builtinProviderStatus` instead.
  */
 export async function probeFreeMtProviders(
 	opts: ProbeFreeMtOptions = {},
 ): Promise<Record<FreeTranslateProviderId, boolean>> {
 	const results = await Promise.all(
-		FREE_MT_PROVIDER_IDS.map(async (id) => {
-			const ok = await probeOne(id, opts);
-			opts.onResult?.(id, ok);
-			return [id, ok] as const;
-		}),
+		FREE_MT_PROVIDER_IDS.filter((id) => id !== BUILTIN_PROVIDER_ID).map(
+			async (id) => {
+				const ok = await probeOne(id, opts);
+				opts.onResult?.(id, ok);
+				return [id, ok] as const;
+			},
+		),
 	);
 	const map = {} as Record<FreeTranslateProviderId, boolean>;
 	for (const [id, ok] of results) {

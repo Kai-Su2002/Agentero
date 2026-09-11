@@ -1,12 +1,6 @@
 import { Terminal } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
-import {
-	SiClaude,
-	SiDeepseek,
-	SiGoogle,
-	SiHermes,
-	SiOpencode,
-} from "react-icons/si";
+import { SiClaude, SiDeepseek, SiHermes, SiOpencode } from "react-icons/si";
 import type { AgentTemplate } from "@/lib/agent";
 import { cn } from "@/lib/core/utils";
 
@@ -15,7 +9,6 @@ export type AgentLogoKey =
 	| "openclaw"
 	| "claude-acp"
 	| "codex-acp"
-	| "antigravity"
 	| "hermes"
 	| "qodercli"
 	| "grok-build"
@@ -32,7 +25,6 @@ export function agentLogoKeyForTemplate(
 		case "openclaw":
 		case "claude-acp":
 		case "codex-acp":
-		case "antigravity":
 		case "hermes":
 		case "qodercli":
 		case "grok-build":
@@ -83,9 +75,6 @@ export function AgentLogo({
 			break;
 		case "codex-acp":
 			icon = <OpenAiMark className={neutralIconClass} />;
-			break;
-		case "antigravity":
-			icon = <SiGoogle className={cn(iconClass, "!text-[#1A73E8]")} />;
 			break;
 		case "hermes":
 			icon = (

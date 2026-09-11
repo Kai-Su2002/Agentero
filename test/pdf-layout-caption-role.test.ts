@@ -53,12 +53,12 @@ describe("resolveCaptionRole", () => {
 		expect(resolveCaptionRole(r)).toBe("table_main");
 	});
 
-	it("falls back to geometry for narrow subpanel boxes", () => {
+	it("leaves unreadable narrow captions ambiguous", () => {
 		const r = cap({
 			id: "s",
 			kind: "figure_title",
 			bbox: { x: 0.1, y: 0.4, w: 0.2, h: 0.04 },
 		});
-		expect(resolveCaptionRole(r)).toBe("subpanel");
+		expect(resolveCaptionRole(r)).toBe("other");
 	});
 });

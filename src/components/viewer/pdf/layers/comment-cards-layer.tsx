@@ -8,8 +8,14 @@
  * textarea, ⌘/Ctrl+Enter or blur saves, Escape cancels. No floating editor.
  */
 
-import { Crop, Link2, MessageSquarePlus, Trash2 } from "lucide-react";
-import { memo, useEffect, useRef } from "react";
+import {
+	Crop,
+	Link2,
+	MessageSquare,
+	MessageSquarePlus,
+	Trash2,
+} from "lucide-react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,13 +24,21 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import type { PageAnnotationComment } from "@/components/viewer/pdf/types";
+import type {
+	PageAnnotationComment,
+	SelectionCommentDraft,
+} from "@/components/viewer/pdf/types";
 import { useImeGuard } from "@/hooks/use-ime-guard";
 import { cn } from "@/lib/core/utils";
-import { swatchColorClass } from "@/lib/pdf/highlight/palette";
+import {
+	DEFAULT_HIGHLIGHT_COLOR,
+	swatchColorClass,
+} from "@/lib/pdf/highlight/palette";
 
 /** Card width in CSS px — also the gutter width reserved on the viewport. */
 export const COMMENT_CARD_WIDTH_PX = 224;
+/** Collapsed selection-comment chip width (icon only). */
+export const COMMENT_AFFORDANCE_COLLAPSED_WIDTH_PX = 36;
 /** Horizontal gap between the page edge and the rail. */
 export const COMMENT_CARD_GAP_PX = 8;
 /** Extra px so ring + shadow aren't clipped by the viewport overflow. */
@@ -60,6 +74,17 @@ type CommentCardsLayerProps = {
 	wikiTarget: string | null;
 	/** Id of the card currently being hovered; null when idle. */
 	hoveredId: string | null;
+	/**
+	 * Sticky chip for the active (or just-cleared) text selection. Hover enters
+	 * edit; leave with empty text collapses back to the icon card.
+	 */
+	selectionDraft?: SelectionCommentDraft | null;
+	/** Persist a note from `selectionDraft` (non-empty text only). */
+	onCommitSelectionComment?: (comment: string) => void;
+	/** Chip was hovered / focused — keeps the sticky draft after selection clear. */
+	onSelectionCommentActiveChange?: (active: boolean) => void;
+	/** Drop the sticky draft (Escape). */
+	onDismissSelectionComment?: () => void;
 	onOpen: (comment: PageAnnotationComment) => void;
 	onSave: (comment: PageAnnotationComment, text: string) => void;
 	onCancel: () => void;
@@ -245,13 +270,14 @@ const CommentCard = memo(function CommentCard({
 
 	return (
 		<div
+			data-pdf-chrome
 			className={cn(
-				"group pointer-events-auto absolute select-none rounded-lg bg-background/95 shadow-sm ring-1 backdrop-blur-sm transition-all duration-200 ease-out hover:z-[7] hover:scale-[1.02] hover:shadow-md hover:!h-auto",
+				"group pointer-events-auto absolute select-none rounded-lg border border-border/50 bg-background/90 shadow-sm ring-1 backdrop-blur-md backdrop-saturate-150 transition-[box-shadow,background-color] duration-150 ease-out hover:z-[7] hover:shadow-md hover:!h-auto supports-backdrop-blur:bg-background/75",
 				editing
 					? "z-[6] ring-2 ring-ring/50"
 					: hovered
 						? "z-[6] ring-2 ring-primary/40 shadow-md"
-						: "ring-border/60",
+						: "ring-black/5 dark:ring-white/10",
 			)}
 			style={{
 				left: `calc(100% + ${COMMENT_CARD_GAP_PX}px)`,
@@ -299,7 +325,7 @@ const CommentCard = memo(function CommentCard({
 						)}
 						<textarea
 							ref={textareaRef}
-							className="mt-1 max-h-60 w-full resize-none bg-transparent p-0 text-[13px] text-foreground/80 leading-relaxed outline-none placeholder:text-muted-foreground/70 select-text"
+							className="mt-1 max-h-60 w-full resize-none bg-transparent p-0 text-sm text-foreground/80 leading-relaxed outline-none placeholder:text-muted-foreground/70 select-text"
 							placeholder={t("annotations.placeholder")}
 							aria-label={t("annotations.editorLabel")}
 							defaultValue={item.comment}
@@ -358,7 +384,7 @@ const CommentCard = memo(function CommentCard({
 						)}
 						<p
 							className={cn(
-								"mt-1 line-clamp-3 whitespace-pre-wrap break-words text-[13px] leading-relaxed",
+								"mt-1 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed",
 								item.comment.trim()
 									? "text-foreground/80"
 									: "text-muted-foreground/70",
@@ -373,7 +399,7 @@ const CommentCard = memo(function CommentCard({
 										<p
 											key={m.id}
 											className={cn(
-												"whitespace-pre-wrap break-words text-[11px] leading-relaxed",
+												"whitespace-pre-wrap break-words text-caption leading-relaxed",
 												m.role === "assistant"
 													? "text-muted-foreground"
 													: "text-foreground/80",
@@ -428,7 +454,7 @@ const CommentCard = memo(function CommentCard({
 											onCopyEmbed(item);
 										}}
 									>
-										<span className="font-mono text-[10px] leading-none">
+										<span className="font-mono text-caption leading-none">
 											![[
 										</span>
 									</Button>
@@ -484,12 +510,231 @@ const CommentCard = memo(function CommentCard({
 	);
 });
 
+type SelectionCommentAffordanceProps = {
+	draft: SelectionCommentDraft;
+	pageHeightPx: number;
+	onCommit: (comment: string) => void;
+	onActiveChange?: (active: boolean) => void;
+	/** Dismiss the sticky draft (Escape with empty text). */
+	onDismiss?: () => void;
+};
+
+/**
+ * Collapsed icon chip at the selection's rail height.
+ * Hover → expand and enter edit (focus textarea).
+ * Leave with no input → collapse back to the icon card.
+ * Leave with input → stay in edit until commit / blur / Escape.
+ */
+const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
+	draft,
+	pageHeightPx,
+	onCommit,
+	onActiveChange,
+	onDismiss,
+}: SelectionCommentAffordanceProps) {
+	const { t } = useTranslation("viewer");
+	const [hovered, setHovered] = useState(false);
+	const [focused, setFocused] = useState(false);
+	const rootRef = useRef<HTMLDivElement>(null);
+	const textareaRef = useRef<HTMLTextAreaElement>(null);
+	const draftTextRef = useRef("");
+	const committedRef = useRef(false);
+	const onCommitRef = useRef(onCommit);
+	onCommitRef.current = onCommit;
+	const onActiveChangeRef = useRef(onActiveChange);
+	onActiveChangeRef.current = onActiveChange;
+	const onDismissRef = useRef(onDismiss);
+	onDismissRef.current = onDismiss;
+	const { isBlockedByIme, compositionProps } = useImeGuard();
+
+	const editing = hovered || focused;
+	const heightPx = estimateCommentCardHeight(
+		{
+			id: "__selection-draft__",
+			pageIndex: draft.page - 1,
+			anchorY: draft.anchorY,
+			rects: [],
+			quote: draft.quote,
+			comment: "",
+			color: DEFAULT_HIGHLIGHT_COLOR,
+			kind: "highlight",
+			linkAlias: null,
+		},
+		editing,
+	);
+	const topPx = Math.max(
+		0,
+		Math.min(draft.anchorY * pageHeightPx, pageHeightPx - heightPx),
+	);
+
+	const enterEdit = useCallback(() => {
+		if (committedRef.current) return;
+		setHovered(true);
+		setFocused(true);
+		// Mark sticky before focus so EmbedPDF clearing the selection does not
+		// unmount this chip mid-hover.
+		onActiveChangeRef.current?.(true);
+		requestAnimationFrame(() => {
+			const el = textareaRef.current;
+			if (!el) return;
+			el.focus();
+			autosizeTextarea(el);
+		});
+	}, []);
+
+	const collapseToCard = useCallback(() => {
+		draftTextRef.current = "";
+		if (textareaRef.current) textareaRef.current.value = "";
+		setFocused(false);
+		setHovered(false);
+		// Keep sticky draft so the icon card remains after selection was cleared.
+		onActiveChangeRef.current?.(true);
+	}, []);
+
+	const commit = useCallback((text: string) => {
+		if (committedRef.current) return;
+		const trimmed = text.trim();
+		if (!trimmed) return;
+		committedRef.current = true;
+		onActiveChangeRef.current?.(false);
+		onCommitRef.current(trimmed);
+	}, []);
+
+	useEffect(() => {
+		return () => {
+			onActiveChangeRef.current?.(false);
+		};
+	}, []);
+
+	return (
+		// biome-ignore lint/a11y/useSemanticElements: hosts a textarea; native <button> cannot wrap it
+		<div
+			ref={rootRef}
+			role="group"
+			aria-label={t("selection.note")}
+			data-pdf-chrome
+			className={cn(
+				"group/draft pointer-events-auto absolute z-[6] cursor-text overflow-hidden rounded-lg border border-border/50 bg-background/90 text-left shadow-sm ring-1 ring-black/5 backdrop-blur-md backdrop-saturate-150 outline-none supports-backdrop-blur:bg-background/75 dark:ring-white/10",
+				"transition-[width,box-shadow] duration-200 ease-out motion-reduce:transition-none",
+				editing
+					? "z-[7] w-56 shadow-md ring-primary/40"
+					: "w-9 select-none hover:shadow-md",
+				focused && "ring-2 ring-ring/50",
+			)}
+			style={{
+				left: `calc(100% + ${COMMENT_CARD_GAP_PX}px)`,
+				top: topPx,
+				height: editing ? undefined : heightPx,
+				minHeight: heightPx,
+			}}
+			onPointerDown={(e) => {
+				// Page-local hit: stop EmbedPDF from treating this as click-away
+				// before the textarea can take focus. Do not preventDefault.
+				e.stopPropagation();
+			}}
+			onPointerEnter={() => enterEdit()}
+			onPointerLeave={(e) => {
+				const next = e.relatedTarget as Node | null;
+				if (next && rootRef.current?.contains(next)) return;
+				if (draftTextRef.current.trim()) {
+					// Has input: stay in edit (focused) even if the pointer left.
+					setHovered(false);
+					return;
+				}
+				// No input: collapse back to the icon card.
+				collapseToCard();
+				textareaRef.current?.blur();
+			}}
+		>
+			<span
+				className={cn(
+					"absolute inset-0 flex items-center justify-center text-muted-foreground transition-opacity duration-150",
+					editing && "pointer-events-none opacity-0",
+				)}
+				aria-hidden
+			>
+				<MessageSquare className="size-4" />
+			</span>
+			<div
+				className={cn(
+					"w-56 px-2.5 py-2 transition-opacity duration-150",
+					editing ? "opacity-100" : "opacity-0",
+				)}
+			>
+				<span
+					className={cn(
+						"block size-2 rounded-full",
+						swatchColorClass(DEFAULT_HIGHLIGHT_COLOR),
+					)}
+					aria-hidden
+				/>
+				<textarea
+					ref={textareaRef}
+					className="mt-1 max-h-60 w-full resize-none bg-transparent p-0 text-sm text-foreground/80 leading-relaxed outline-none placeholder:text-muted-foreground/70 select-text"
+					placeholder={t("annotations.placeholder")}
+					aria-label={t("annotations.editorLabel")}
+					rows={EDIT_MIN_COMMENT_LINES}
+					tabIndex={editing ? 0 : -1}
+					{...compositionProps}
+					onFocus={() => {
+						setFocused(true);
+						onActiveChangeRef.current?.(true);
+					}}
+					onChange={(e) => {
+						draftTextRef.current = e.currentTarget.value;
+						autosizeTextarea(e.currentTarget);
+					}}
+					onBlur={(e) => {
+						const next = e.relatedTarget as Node | null;
+						if (next && rootRef.current?.contains(next)) return;
+						const text = draftTextRef.current;
+						if (text.trim()) {
+							commit(text);
+							return;
+						}
+						// Empty blur (e.g. leave hover): back to icon card.
+						collapseToCard();
+					}}
+					onClick={(e) => e.stopPropagation()}
+					onPointerDown={(e) => e.stopPropagation()}
+					onKeyDown={(e) => {
+						e.stopPropagation();
+						if (e.key === "Escape") {
+							e.preventDefault();
+							draftTextRef.current = "";
+							e.currentTarget.value = "";
+							setFocused(false);
+							setHovered(false);
+							onActiveChangeRef.current?.(false);
+							onDismissRef.current?.();
+							e.currentTarget.blur();
+							return;
+						}
+						if (
+							e.key === "Enter" &&
+							(e.metaKey || e.ctrlKey) &&
+							!isBlockedByIme(e)
+						) {
+							e.preventDefault();
+							commit(e.currentTarget.value);
+						}
+					}}
+				/>
+			</div>
+		</div>
+	);
+});
+
 export const CommentCardsLayer = memo(function CommentCardsLayer({
 	items,
 	pageHeightPx,
 	editingId,
 	wikiTarget,
 	hoveredId,
+	selectionDraft = null,
+	onCommitSelectionComment,
+	onSelectionCommentActiveChange,
+	onDismissSelectionComment,
 	onOpen,
 	onSave,
 	onCancel,
@@ -500,7 +745,7 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 	onHover,
 	onLeave,
 }: CommentCardsLayerProps) {
-	if (!items.length) return null;
+	if (!items.length && !selectionDraft) return null;
 
 	const laid = layoutCommentCards(items, pageHeightPx, editingId);
 	const byId = new Map(items.map((item) => [item.id, item]));
@@ -532,6 +777,15 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 						/>
 					);
 				})}
+				{selectionDraft && onCommitSelectionComment ? (
+					<SelectionCommentAffordance
+						draft={selectionDraft}
+						pageHeightPx={pageHeightPx}
+						onCommit={onCommitSelectionComment}
+						onActiveChange={onSelectionCommentActiveChange}
+						onDismiss={onDismissSelectionComment}
+					/>
+				) : null}
 			</TooltipProvider>
 		</div>
 	);

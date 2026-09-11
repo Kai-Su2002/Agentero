@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useImeGuard } from "@/hooks/use-ime-guard";
 import { errorText } from "@/lib/core/error";
+import { displayPath } from "@/lib/core/path";
 import { formatShortcutById } from "@/lib/shell/shortcuts";
 import { vaultDisplayName } from "@/lib/vault";
 import {
@@ -541,7 +542,7 @@ export const VaultSidebarHeader = memo(function VaultSidebarHeader({
 										<span className="min-w-0 flex-1">
 											<span className="flex items-center gap-1.5 truncate text-sm">
 												<span className="truncate">{name}</span>
-												<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-[0.625rem] text-muted-foreground">
+												<span className="shrink-0 rounded bg-muted px-1 py-0.5 text-caption text-muted-foreground">
 													{t("app:vault.remoteBadge")}
 												</span>
 											</span>
@@ -580,7 +581,7 @@ export const VaultSidebarHeader = memo(function VaultSidebarHeader({
 											{vaultDisplayName(p)}
 										</span>
 										<span className="block truncate text-muted-foreground text-xs">
-											{p}
+											{displayPath(p)}
 										</span>
 									</span>
 									<button

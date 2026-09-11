@@ -14,6 +14,7 @@ export const DEFAULT_PDF_ASK_SETTINGS: PdfAskSettings = {
 };
 
 export const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = {
+	source: "builtin",
 	baseUrl: "",
 	apiKey: "",
 	model: "",
@@ -22,6 +23,18 @@ export const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = {
 /** Default Translator Runtime endpoint (overridable in Settings). */
 export const DEFAULT_TRANSLATOR_BASE_URL = "https://translator.philfan.cn";
 export const DEFAULT_NETWORK_PROXY_URL = "http://127.0.0.1:7890";
+
+/**
+ * Built-in URL-prefix GitHub mirrors. The user picks from this list instead of
+ * typing a custom URL. All entries must support `{base}/{canonical_github_url}`.
+ * Availability of public mirrors varies, so this list is maintained in-code.
+ */
+export const GITHUB_MIRROR_PRESETS = [
+	"https://gh.llkk.cc",
+	"https://mirror.ghproxy.com",
+	"https://ghproxy.net",
+	"https://github.moeyy.xyz",
+] as const;
 
 /**
  * Discrete UI scale presets exposed in Settings. Keyboard shortcuts and the
@@ -50,6 +63,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	easyScholarKey: "",
 	networkProxyEnabled: false,
 	networkProxyUrl: DEFAULT_NETWORK_PROXY_URL,
+	githubMirrorEnabled: false,
+	githubMirrorBaseUrl: GITHUB_MIRROR_PRESETS[0],
 	paperTreeLabelMode: "title-author",
 	paperTreeSortMode: "folder",
 	autoUpdateInternalLinks: "ask",

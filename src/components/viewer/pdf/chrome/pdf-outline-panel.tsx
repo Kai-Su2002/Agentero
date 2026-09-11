@@ -1,5 +1,7 @@
 import type { PdfBookmarkObject } from "@embedpdf/models";
 import { OutlineTree } from "@/components/viewer/pdf/chrome/outline-tree";
+import { PDF_SIDE_PANEL } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
+import { cn } from "@/lib/core/utils";
 
 type PdfOutlinePanelProps = {
 	/** Document bookmarks; both the toggle and the panel hide when empty. */
@@ -17,7 +19,7 @@ export function PdfOutlinePanel({
 	if (!showOutline || outline.length === 0) return null;
 
 	return (
-		<aside className="agentero-scroll absolute inset-y-0 left-0 z-20 w-80 border-r bg-background/95 pt-11 pb-2 backdrop-blur-sm">
+		<aside data-pdf-chrome className={cn("agentero-scroll", PDF_SIDE_PANEL)}>
 			<div className="px-2">
 				<OutlineTree nodes={outline} depth={0} onGoToPage={onGoToPage} />
 			</div>

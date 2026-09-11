@@ -22,7 +22,7 @@
 - 基础顺序：目录在文件前；同类按数字感知的自然顺序排序（如 `9-...` 在 `10-...` 前）。
 - 默认只展开 `papers/` 及其一级子目录。
 - 所有节点图标统一位于行首并使用一致的左右边距；文件夹与广场行悬停或键盘聚焦时，在同一位置将自身图标替换为展开/收缩箭头，保持行宽稳定并提示该行可展开。
-- 虚拟化：`@tanstack/react-virtual` 拍平窗口化；`getItemKey` 用行稳定 id，避免内联新建草稿插入/移除后按索引缓存行高留下空隙。文件/文件夹行固定为 `h-7`，论文资源操作按钮不改变行高。
+- 虚拟化：`@tanstack/react-virtual` 拍平窗口化；`getItemKey` 用行稳定 id，避免内联新建草稿插入/移除后按索引缓存行高留下空隙。文件/文件夹行固定为 `h-7`，论文资源操作按钮不改变行高。行定位用 `top`（不用 `translateY`），并在视口 Resize 时把 `scrollTop` 同步回 virtualizer，避免 WKWebView 在打开论文 / 刷新树后侧栏整片不绘制、滚动才恢复（见 [bug_fix/vault-sidebar-blank-until-scroll.md](../bug_fix/vault-sidebar-blank-until-scroll.md)）。
 - 外部工具 / CLI 导入论文时，watcher 会刷新文件树，并在 Catalog 或 `papers/` 结构变更后去抖刷新 Library 元数据；论文行标签因此可在不重开论文库的情况下从目录 ID 更新为标题/作者。
 
 ### 论文目录识别
@@ -36,7 +36,7 @@
 
 | 展示 | 说明 |
 |---|---|
-| 标签 | 默认「标题 · 作者」；`paperTreeLabelMode` 可改（展示用，不改磁盘名） |
+| 标签 | 默认「标题 · 作者」；`paperTreeLabelMode` 可改（展示用，不改磁盘名）。标题中的 `$\\pi$` / `\\(...\\)` 等经 KaTeX 内联渲染（`MathText`） |
 | 排序 | `paperTreeSortMode`：默认 `folder` 模式下组织文件夹始终排在论文文件夹之前，再按显示标签 A–Z；其他模式按标题/作者/年份/添加时间排序 |
 | Chevron | 仅当 `{paper}/attachments/` 非空时出现。点三角展开/收起附件；点行仍打开论文 |
 | Download | 缺 PDF，或既无 TeX 也无 `PAPER.md`（`source/` 为懒壳时按其 `hasTex` 标记判定）；指向有效普通文件的 PDF 软链接也视为本地 PDF |
@@ -47,8 +47,9 @@
 | 操作 | 方式 |
 |---|---|
 | 新建文件/文件夹 | 右键 → 树内联命名；菜单会按实际尺寸在窗口边缘自动翻转或滚动，不会被窗口下沿截断。**远程 Vault** 的重名预检走 `vaultPathExists`（`remote_list` 父目录），不可用本机 `plugin-fs` `exists`（伪路径 `remote:<id>/…` 不在本地 scope） |
+| 复制路径 | 右键；Windows 本地路径去掉 `\\?\` 前缀，扩展 UNC 路径显示为 `\\server\share\…`；仅转换剪贴板文本，内部文件路径保持原样 |
 | Finder 显示 | 右键 / `⌥⌘R` |
-| 终端打开 | 右键 / `⌥⌘T`（文件夹=自身，文件=父目录） |
+| 终端打开 | 右键 / `⌥⌘T`（文件夹=自身，文件=父目录）；Windows 先把扩展盘符路径转换为普通盘符路径，再启动 Windows Terminal 或 CMD，目录名中的空格、中文与 shell 特殊字符不作为命令解析 |
 | 删除 | 右键 / `⌘⌫` → 回收站（无确认） |
 | 编辑元数据 | Paper 行右键（仅本地 Vault；查 `paperMetaByRelPath` 打开与 Library 相同的编辑对话框） |
 | 多选与批量操作 | ⌘/Ctrl 单击切换、Shift 单击范围选择；选择后复用 Vault 的固定 `PaneHeader` 显示数量、移动、删除与清除，不在树内插入或悬浮工具条，因此树的高度、滚动位置和可见范围不变。右键已选行作用于整组；右键未选行会先收敛为该单项。Esc 清除，Enter/Space 可用键盘激活。父目录与后代同时进入范围时只保留父目录这个语义目标，避免重复移动/删除。|

@@ -161,9 +161,12 @@ export function TreeRowsViewport(props: TreeRowsViewportProps) {
 						key={row.key}
 						data-index={vi.index}
 						ref={rowVirtualizer.measureElement}
-						className="absolute top-0 left-0 w-full"
+						className="absolute left-0 w-full"
 						style={{
-							transform: `translateY(${vi.start}px)`,
+							// Prefer `top` over `transform: translateY(...)`. Per-row
+							// compositor layers go blank in WKWebView (Tauri macOS)
+							// after paper open / tree refresh until the next scroll.
+							top: vi.start,
 							paddingLeft: depth * 12,
 						}}
 					>

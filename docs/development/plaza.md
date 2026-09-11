@@ -202,7 +202,7 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 |---|---|---|
 | 候选 | 逐个分类 GET `https://rss.arxiv.org/rss/<cat>`，按 arXiv id 去重，丢弃空摘要 | `feeds::parse::parse_feed_bytes`（已 `clean_summary_text` + `extract_paper_url`） |
 | 语料 | catalog 中有 abstract 的论文，按 `added_at` 倒序，上限 2000 篇 | `papers::list_all_unique_by_id` |
-| 向量 | `POST {baseUrl}/embeddings`（batch，OpenAI 兼容），凭据取自设置 → Agent → Embedding | `core::http::client_builder`；请求形状抄 `translate_openai_compatible` |
+| 向量 | `POST {baseUrl}/embeddings`（batch，OpenAI 兼容），凭据取自设置 → Agent → Embedding：`source` 为 `builtin`（默认，需构建期注入了内置 provider key）时用内置网关三元组，为 `custom` 时用用户自填的 Base URL / API Key / Model | `core::http::client_builder`；请求形状抄 `translate_openai_compatible` |
 | 打分 | 归一化后 cosine；语料权重 `w_i = 1/(1+log10(i+1))` 归一化 → `score = Σ sim·w`，降序取 Top-20 | — |
 
 **缓存进 `catalog.sqlite`（schema v6）**，不新建库：
@@ -222,14 +222,15 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 
 - **header**：分类 chip 多选（默认 `ARXIV_FEED_CHIPS`，与订阅共用常量）+ 上次计算时间 + 刷新按钮。**不进 app settings** —— 分类就是页面状态，持久化在 `arxiv_rec_state`。
 - **body**：卡片列表（标题 / arXiv id / 分数 / 摘要三行截断），右上角**阅读**（在应用内打开远程 PDF，不写盘）+ 外链 + 一键入库（走 `lookupSubmit`，与订阅同一条魔棒路线）。
-- **空态分三种**并给对应出路：未配置 embedding → 「打开 Agent 设置」按钮；库里没摘要 → 引导先导入论文；分类下无新论文 → 提示换分类。
+- **空态分三种**并给对应出路：未配置 embedding（构建没有内置 key，且用户也没填自定义端点）→ 「打开 Agent 设置」按钮；库里没摘要 → 引导先导入论文；分类下无新论文 → 提示换分类。
 
 **取舍**
 
 - 首次或大库的整库 embedding 会慢一次（上千篇），之后靠 `embed_cache` 只增量；候选每天仅数十篇。接受首启一次性成本，换掉「每次都重算」。
 - 分类/Top-N 不做设置项：Top-20 是常量，分类留在 header。少一层配置面板。
-- 模型换了会导致缓存维度不一致；打分时按维度不匹配记 0 分，不会崩，但建议换模型后点一次刷新。
-- **隐私**：摘要会发给用户自己配置的 embedding 端点（BYOK）。未配置则整个功能静默不跑。
+- `embed_cache` 主键是 `(text_hash, model)`，所以换 embedding 模型是缓存 miss、整库重 embed 一次（不是维度混用）；打分处的维度不匹配记 0 分只是防御性兜底。换来源后建议点一次刷新，见下条。
+- **`arxiv_rec_state` 不按 model 建键**：当天已排序的结果在切换 embedding 来源后的首次运行仍会被复用（陈旧短路只看 `computed_at` 是否当天 + 分类集合是否一致），除非 `force`。既存行为，未随内置 provider 一起改。
+- **隐私**：摘要会发给当前 embedding 来源的端点。`source: "custom"` 时是用户自己配置的 BYOK 端点；`source: "builtin"`（构建注入了内置 provider key 时的默认）时是产品方自己的网关 `https://api.qiyuanchen.top/v1`——也就是说**新装用户在默认配置下就会把库内摘要发到该网关**，要避开必须显式切到 custom 并留空（功能随之禁用）。构建没有内置 key 时行为回到从前：未配置则整个功能静默不跑。详见 [`../backend/builtin-provider.md`](../backend/builtin-provider.md)。
 
 ### 3.5 ModelScope 论文（已实现）
 
@@ -299,7 +300,7 @@ DocTab：`kind: "plaza"`（或 `file` + mode `plaza` + path 虚拟 URI——实�
 |---|---|---|
 | **P0a 壳** | 侧栏广场 + 三子节点；`PlazaView` 按来源路由 | 虚拟 path 不写盘；i18n；折叠位置正确 |
 | **P0b Cool Papers** | WebView 浏览 papers.cool + 导航 chrome + 外链 | 可分区浏览站点；失败可恢复 |
-| **P0c arXiv Daily** | embedding 相似度 + 时间衰减排序 + 一键入库（已交付） | 配好 embedding 后有排序结果；未配置有引导空态 |
+| **P0c arXiv Daily** | embedding 相似度 + 时间衰减排序 + 一键入库（已交付） | 内置或自定义 embedding 任一可用时有排序结果；两者都没有时有引导空态 |
 | **P0d 播客** | 占位页 | 可进入、文案清晰 |
 | **P1** | 入库（解析 arXiv / 魔棒管线）、预览抽屉、批量加入 Library | 与魔棒语义一致 |
 | **P2** | 播客实体、Agent 推荐、命令面板、@ 广场条目 | — |
@@ -310,7 +311,7 @@ DocTab：`kind: "plaza"`（或 `file` + mode `plaza` + path 虚拟 URI——实�
 - 广场 → Vault **批量入库**（单条已实现，见 §3.2.1）。  
 - 把 feed 写入 catalog（订阅条目缓存走 XDG，见 [`plaza-feeds.md`](plaza-feeds.md)）。  
 - 播客播放器。订阅管理见 [`plaza-feeds.md`](plaza-feeds.md)，不进本篇原 P0。  
-- 云端协同过滤，或把本地库上传到 Agentero 自有服务。arXiv Daily 只把摘要发给**用户自己配置的** BYOK embedding 端点；未配置则整个功能不跑。  
+- 云端协同过滤，或把整个本地库上传到 Agentero 自有服务。arXiv Daily 只把**有摘要的论文条目**（title + abstract）发给当前 embedding 端点：默认是内置网关，用户可切到自己配置的 BYOK 端点，也可以留空把功能整个关掉（见 §3.4 取舍 · 隐私）。  
 - 注入脚本只做导航上报与 `[入库]`；**不注入任何凭据 / API Key / 登录态**。
 
 ## 8. 实现落点（编码时）
@@ -350,3 +351,4 @@ DocTab：`kind: "plaza"`（或 `file` + mode `plaza` + path 虚拟 URI——实�
 *修订：2026-08-15 — 订阅列为广场来源，规格拆到 [`plaza-feeds.md`](plaza-feeds.md)。*  
 *修订：2026-08-15 — 订阅 MVP 落地（XDG `feeds.sqlite` + 原生双栏 + 论文入库）。*  
 *修订：2026-08-21 — arXiv 推荐落地（embedding + 时间衰减；缓存进 catalog schema v6；`vault:opened` 预热）。*
+*修订：2026-09-10 — arXiv Daily 的 embedding 凭据新增内置来源（`embedding.source`），新装默认走产品网关；隐私取舍与空态条件随之改写，见 §3.4。*

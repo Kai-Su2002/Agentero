@@ -8,6 +8,7 @@ import {
 	SettingsRow,
 } from "@/components/settings/settings-layout";
 import type { SettingsHostContext } from "@/components/settings/types";
+import { useBuiltinProviderAvailable } from "@/components/settings/use-builtin-provider";
 import { Button } from "@/components/ui/button";
 import {
 	Collapsible,
@@ -36,6 +37,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { BUILTIN_PROVIDER_ID } from "@/lib/core/builtin";
 import { errorMessage, notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
@@ -50,6 +52,7 @@ import {
 	probeLayoutProvider,
 } from "@/lib/pdf/layout/provider-config";
 import {
+	isProviderCardConfigurable,
 	isRemoteLayoutProvider,
 	LAYOUT_PROVIDERS,
 	layoutProviderCard,
@@ -129,6 +132,7 @@ export function LayoutPane({
 }) {
 	const { t } = useTranslation(["settings", "common"]);
 	const layout = settings.layout;
+	const builtinAvailable = useBuiltinProviderAvailable();
 	const isLocalVault = hostContext.kind === "local";
 	const canManageResults = Boolean(vaultPath) && isLocalVault && isTauri();
 	const [dialogOpen, setDialogOpen] = useState(false);
@@ -139,12 +143,13 @@ export function LayoutPane({
 		(layout.providerConfigs[id]?.apiKey ?? "").trim().length > 0;
 	// All remote providers are listed for configuration, like the translate
 	// pane; the backend selects only offer the configured ones (plus local).
+	// Cards with no editable field (the built-in parser) render nothing.
 	const cards = mergeProviderCards([
 		...Object.values(LAYOUT_PROVIDERS).map((descriptor) =>
 			layoutProviderCard(descriptor),
 		),
 		...Object.values(PARSER_PROVIDERS),
-	]);
+	]).filter(isProviderCardConfigurable);
 	const backendOptions = Object.values(LAYOUT_PROVIDERS).filter(
 		(descriptor) => {
 			if (!isRemoteLayoutProvider(descriptor)) return true;
@@ -152,12 +157,16 @@ export function LayoutPane({
 			return isProviderConfigured(descriptor.id);
 		},
 	);
-	const parserBackendOptions = PARSER_BACKENDS.filter(
-		(backend) =>
-			backend === "local" ||
-			backend === layout.parserBackend ||
-			isProviderConfigured(backend),
-	);
+	const parserBackendOptions = PARSER_BACKENDS.filter((backend) => {
+		if (backend === "local") return true;
+		// The built-in parser has no apiKey, so it is exempt from the configured
+		// check like `local`; gate it on Host availability, keeping a carried-over
+		// selection visible so it renders disabled rather than vanishing.
+		if (backend === BUILTIN_PROVIDER_ID) {
+			return builtinAvailable || backend === layout.parserBackend;
+		}
+		return backend === layout.parserBackend || isProviderConfigured(backend);
+	});
 
 	const openDialog = useCallback((mode: "clear" | "reparse") => {
 		setDialogMode(mode);
@@ -264,7 +273,13 @@ export function LayoutPane({
 						</SelectTrigger>
 						<SelectContent className="max-h-72">
 							{parserBackendOptions.map((backend) => (
-								<SelectItem key={backend} value={backend}>
+								<SelectItem
+									key={backend}
+									value={backend}
+									disabled={
+										backend === BUILTIN_PROVIDER_ID && !builtinAvailable
+									}
+								>
 									{t(
 										`layout.parserBackend.${backend}` as "layout.parserBackend.local",
 									)}

@@ -623,7 +623,7 @@ export function AskUserQuestionForm({
 			{collapsed ? null : (
 				/* Footer: keyboard hints left · nav / submit right */
 				<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-					<p className="min-w-0 flex-1 text-muted-foreground text-[11px] leading-snug">
+					<p className="min-w-0 flex-1 text-muted-foreground text-caption leading-snug">
 						{t(
 							multi
 								? "askUserQuestion.keyboardHintMulti"

@@ -81,6 +81,10 @@ pub async fn scan_remote_agents(
             acp_agent_name: None,
             last_probe_error: None,
             last_probed_at: None,
+            // Remote has no silent update check; Upgrade stays hidden.
+            installed_version: None,
+            latest_version: None,
+            update_available: None,
         });
     }
 

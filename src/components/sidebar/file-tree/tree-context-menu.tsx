@@ -207,7 +207,7 @@ export function TreeContextMenuPortal({
 							aria-hidden
 						>
 							{hidden ? null : (
-								<span className="text-[9px] leading-none">✓</span>
+								<span className="text-caption leading-none">✓</span>
 							)}
 						</span>
 						<span>{plazaSourceLabel(source)}</span>

@@ -124,7 +124,7 @@ function FigureCard({
 			>
 				<span
 					className={cn(
-						"absolute z-10 rounded bg-background/80 px-1.5 py-0.5 text-[10px] tabular-nums text-muted-foreground backdrop-blur-sm",
+						"absolute z-10 rounded bg-background/80 px-1.5 py-0.5 text-caption tabular-nums text-muted-foreground backdrop-blur-sm",
 						isFormula ? "top-1 right-1" : "top-1.5 right-1.5",
 					)}
 				>
@@ -146,14 +146,14 @@ function FigureCard({
 							className={cn("opacity-60", isFormula ? "size-4" : "size-6")}
 							aria-hidden
 						/>
-						<span className="text-[10px]">{t("figures.thumbPending")}</span>
+						<span className="text-caption">{t("figures.thumbPending")}</span>
 					</div>
 				)}
 			</div>
 			<div className={cn("px-2", isFormula ? "py-1" : "py-1.5")}>
 				<p
 					className={cn(
-						"font-medium text-xs",
+						"font-medium text-sm",
 						caption ? "line-clamp-2" : "truncate",
 					)}
 					title={title}
@@ -195,7 +195,7 @@ function Section({
 				}
 				onClick={() => setOpen((v) => !v)}
 			>
-				<span className="flex min-w-0 items-center gap-1 font-medium text-xs uppercase tracking-wide">
+				<span className="flex min-w-0 items-center gap-1 font-medium text-sm uppercase tracking-wide">
 					<ChevronRight
 						className={cn(
 							"size-3 shrink-0 transition-transform",
@@ -205,7 +205,7 @@ function Section({
 					/>
 					<span className="truncate">{title}</span>
 				</span>
-				<span className="shrink-0 text-[10px] tabular-nums opacity-80">
+				<span className="shrink-0 text-caption tabular-nums opacity-80">
 					{count}
 				</span>
 			</button>
@@ -496,7 +496,7 @@ export function FiguresPanel({
 							)}
 						/>
 						{analysisProgress != null || analysisPageTotal != null ? (
-							<p className="text-center text-[10px] text-muted-foreground tabular-nums">
+							<p className="text-center text-caption text-muted-foreground tabular-nums">
 								{analysisPageTotal != null && analysisPageCurrent != null
 									? t("figures.progressPages", {
 											page: analysisPageCurrent,

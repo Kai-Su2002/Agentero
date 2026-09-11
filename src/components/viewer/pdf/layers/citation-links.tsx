@@ -165,7 +165,12 @@ export const CitationLinkLayer = memo(function CitationLinkLayer({
 					}}
 					// Match floating preview cards (pointerenter/leave) so hide
 					// timers do not race mouse-only leave on trackpads.
-					onPointerEnter={() => onHover(link)}
+					// Skip while a primary button is held so drag-select across
+					// citations does not flash hover cards mid-gesture.
+					onPointerEnter={(e) => {
+						if ((e.buttons & 1) === 1) return;
+						onHover(link);
+					}}
 					onPointerLeave={() => onHover(null)}
 				/>
 			))}

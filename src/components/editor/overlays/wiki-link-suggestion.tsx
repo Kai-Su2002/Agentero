@@ -657,7 +657,7 @@ export function WikiLinkSuggestion({
 					);
 				})}
 			</div>
-			<p className="shrink-0 border-t px-2 py-1.5 text-[11px] text-muted-foreground text-center leading-4">
+			<p className="shrink-0 border-t px-2 py-1.5 text-caption text-muted-foreground text-center leading-4">
 				{t("wikiCompletion.syntaxHint")}
 			</p>
 		</ViewportFloating>

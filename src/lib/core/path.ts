@@ -3,6 +3,13 @@ export function normalizeSlashes(path: string): string {
 	return path.replace(/\\/g, "/");
 }
 
+/** User-facing local path; keep extended paths unchanged for filesystem IO. */
+export function displayPath(path: string): string {
+	return path
+		.replace(/^\\\\\?\\UNC\\/i, "\\\\")
+		.replace(/^\\\\\?\\(?=[a-z]:\\)/i, "");
+}
+
 /** Forward slashes, no trailing slashes. */
 export function normalizePath(path: string): string {
 	return normalizeSlashes(path).replace(/\/+$/, "");

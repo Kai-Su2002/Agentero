@@ -21,7 +21,6 @@ export type {
 export type AgentTemplate =
 	| "opencode"
 	| "openclaw"
-	| "antigravity"
 	| "hermes"
 	| "claude-acp"
 	| "codex-acp"
@@ -370,6 +369,14 @@ export async function scanCatalog(): Promise<CatalogScanResponse> {
 	)) as CatalogScanResponse;
 }
 
+/** PATH scan + version compare for Settings Upgrade visibility. */
+export async function checkCatalogUpdates(): Promise<CatalogScanResponse> {
+	return (await callApiResult(
+		() => commands.agentCheckCatalogUpdates(),
+		AGENT_CALL_OPTS,
+	)) as CatalogScanResponse;
+}
+
 export async function upsertAgent(request: {
 	id?: string;
 	name: string;
@@ -455,11 +462,20 @@ export async function runToolLifecycle(
 	);
 }
 
-export type UninstallInfo = {
+export type UninstallScope = "agent" | "acp" | "all";
+
+export type UninstallScopeInfo = {
 	/** Complete `npm uninstall` commands (best-effort), mirroring install. */
 	npmCommands: string[];
 	/** Agentero-managed directories to delete (e.g. dsh launcher, kimi code). */
 	dirs: string[];
+};
+
+export type UninstallInfo = {
+	/** Host CLI / main binary uninstall payload. */
+	agent: UninstallScopeInfo;
+	/** ACP adapter uninstall payload. */
+	acp: UninstallScopeInfo;
 };
 
 /** What a silent uninstall of this template would remove; null if unsupported. */
@@ -468,6 +484,21 @@ export async function toolUninstallInfo(
 ): Promise<UninstallInfo | null> {
 	return callApi(
 		() => commands.agentToolUninstallInfo(templateId),
+		AGENT_CALL_OPTS,
+	);
+}
+
+/**
+ * Silently uninstall a catalog Agent CLI, its ACP adapter, or both. Host only
+ * allows known templates — no free-form shell from the UI.
+ */
+export async function runPartialUninstall(
+	templateId: string,
+	scope: UninstallScope,
+	taskId?: string,
+): Promise<void> {
+	await callApiResult(
+		() => commands.agentRunPartialUninstall(templateId, scope, taskId ?? null),
 		AGENT_CALL_OPTS,
 	);
 }

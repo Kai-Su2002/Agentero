@@ -47,10 +47,13 @@ import {
 	isFinishedBackgroundTask,
 	setBackgroundTasksExpanded,
 } from "@/lib/core/background-tasks";
+import { MOTION_MS, prefersReducedMotion } from "@/lib/core/motion";
 import { cn } from "@/lib/core/utils";
 
 /** Dwell before expanding detail from the ring (avoids flicker on pass-over). */
 const HOVER_EXPAND_MS = 400;
+/** Brief leave delay so a slip off the HUD does not slam it shut. */
+const LEAVE_COLLAPSE_MS = 100;
 
 /** Default icon per row kind; params-dependent rows carry an explicit hint. */
 const KIND_ICONS: Partial<Record<BackgroundTaskKind, BackgroundTaskIcon>> = {
@@ -143,16 +146,16 @@ function TaskRow({ task }: { task: BackgroundTask }) {
 				<div className="min-w-0 flex-1">
 					<div className="flex items-baseline gap-1.5">
 						{task.queueIndex > 0 ? (
-							<span className="shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums">
+							<span className="shrink-0 font-mono text-caption text-muted-foreground tabular-nums">
 								#{task.queueIndex}
 							</span>
 						) : null}
-						<span className="truncate font-medium text-xs leading-tight">
+						<span className="truncate font-medium text-sm leading-tight">
 							{task.title}
 						</span>
 						{task.progress != null &&
 						(task.status === "running" || task.status === "queued") ? (
-							<span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground tabular-nums">
+							<span className="ml-auto shrink-0 font-mono text-caption text-muted-foreground tabular-nums">
 								{Math.round(task.progress)}%
 							</span>
 						) : null}
@@ -160,7 +163,7 @@ function TaskRow({ task }: { task: BackgroundTask }) {
 					{task.detail ? (
 						<div
 							className={cn(
-								"mt-0.5 flex min-w-0 items-baseline gap-1 text-[11px] leading-snug text-muted-foreground",
+								"mt-0.5 flex min-w-0 items-baseline gap-1 text-caption leading-snug text-muted-foreground",
 								task.status === "failed" && "text-destructive",
 							)}
 							title={task.detail}
@@ -250,7 +253,7 @@ function ProgressRing({
 	const active = activeCount > 0 && !failed;
 
 	useEffect(() => {
-		if (!active) {
+		if (!active || prefersReducedMotion()) {
 			setPhase("progress");
 			return;
 		}
@@ -299,14 +302,14 @@ function ProgressRing({
 		// progress phase
 		if (activeCount > 1) {
 			return (
-				<span className="relative font-mono font-medium text-[11px] tabular-nums">
+				<span className="relative font-mono font-medium text-caption tabular-nums">
 					{activeCount}
 				</span>
 			);
 		}
 		if (normalizedProgress != null) {
 			return (
-				<span className="relative font-mono font-medium text-[9px] tabular-nums leading-none text-foreground">
+				<span className="relative font-mono font-medium text-caption tabular-nums leading-none text-foreground">
 					{Math.round(normalizedProgress)}%
 				</span>
 			);
@@ -319,7 +322,7 @@ function ProgressRing({
 		<button
 			type="button"
 			className={cn(
-				"relative flex size-9 items-center justify-center rounded-full bg-background text-foreground shadow-sm ring-1 ring-border transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+				"relative flex size-9 items-center justify-center rounded-full bg-background text-foreground shadow-sm ring-1 ring-border transition-[opacity,transform] duration-100 hover:opacity-90 active:scale-[0.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
 				celebrate && "task-ring-success-pulse",
 			)}
 			aria-label={label}
@@ -389,40 +392,93 @@ const ERROR_DETAIL_MS = 5000;
 export function BackgroundTasksPanel({ className }: { className?: string }) {
 	const { t } = useTranslation("app");
 	const { tasks } = useBackgroundTasks();
-	/** Detail open is hover-driven; store.expanded is only a fail signal. */
-	const [detailOpen, setDetailOpen] = useState(false);
+	/**
+	 * Detail open is hover-driven; store.expanded is only a fail signal.
+	 * `detailMounted` keeps the panel in the DOM through the exit transition;
+	 * `detailVisible` drives opacity/scale so enter and exit share one path.
+	 */
+	const [detailMounted, setDetailMounted] = useState(false);
+	const [detailVisible, setDetailVisible] = useState(false);
 	const pointerInsideRef = useRef(false);
 	const hoverExpandTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
+	const leaveCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+		null,
+	);
+	const exitAnimTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 	const errorCollapseTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
 	const seenFailedIdsRef = useRef<Set<string>>(new Set());
+	const detailOpen = detailMounted && detailVisible;
 
-	const openDetail = useCallback(() => {
-		setDetailOpen(true);
-		setBackgroundTasksExpanded(true);
-	}, []);
-
-	const closeDetail = useCallback(() => {
+	const clearHoverTimers = useCallback(() => {
 		if (hoverExpandTimerRef.current) {
 			clearTimeout(hoverExpandTimerRef.current);
 			hoverExpandTimerRef.current = null;
 		}
+		if (leaveCollapseTimerRef.current) {
+			clearTimeout(leaveCollapseTimerRef.current);
+			leaveCollapseTimerRef.current = null;
+		}
+	}, []);
+
+	const openDetail = useCallback(() => {
+		clearHoverTimers();
+		if (exitAnimTimerRef.current) {
+			clearTimeout(exitAnimTimerRef.current);
+			exitAnimTimerRef.current = null;
+		}
 		if (errorCollapseTimerRef.current) {
 			clearTimeout(errorCollapseTimerRef.current);
 			errorCollapseTimerRef.current = null;
 		}
-		setDetailOpen(false);
-		setBackgroundTasksExpanded(false);
-	}, []);
+		setBackgroundTasksExpanded(true);
+		setDetailMounted(true);
+		// Double rAF so the enter transition starts from the collapsed frame.
+		requestAnimationFrame(() => {
+			requestAnimationFrame(() => setDetailVisible(true));
+		});
+	}, [clearHoverTimers]);
 
-	const scheduleHoverExpand = useCallback(() => {
-		pointerInsideRef.current = true;
+	const closeDetail = useCallback(() => {
+		clearHoverTimers();
 		if (errorCollapseTimerRef.current) {
 			clearTimeout(errorCollapseTimerRef.current);
 			errorCollapseTimerRef.current = null;
+		}
+		setDetailVisible(false);
+		setBackgroundTasksExpanded(false);
+		if (exitAnimTimerRef.current) {
+			clearTimeout(exitAnimTimerRef.current);
+		}
+		const exitMs = prefersReducedMotion() ? 0 : MOTION_MS.normal;
+		exitAnimTimerRef.current = setTimeout(() => {
+			exitAnimTimerRef.current = null;
+			setDetailMounted(false);
+		}, exitMs);
+	}, [clearHoverTimers]);
+
+	const scheduleHoverExpand = useCallback(() => {
+		pointerInsideRef.current = true;
+		if (leaveCollapseTimerRef.current) {
+			clearTimeout(leaveCollapseTimerRef.current);
+			leaveCollapseTimerRef.current = null;
+		}
+		if (errorCollapseTimerRef.current) {
+			clearTimeout(errorCollapseTimerRef.current);
+			errorCollapseTimerRef.current = null;
+		}
+		if (detailMounted) {
+			// Re-entering mid-exit: cancel unmount and show again.
+			if (exitAnimTimerRef.current) {
+				clearTimeout(exitAnimTimerRef.current);
+				exitAnimTimerRef.current = null;
+			}
+			setDetailVisible(true);
+			setBackgroundTasksExpanded(true);
+			return;
 		}
 		if (hoverExpandTimerRef.current) {
 			clearTimeout(hoverExpandTimerRef.current);
@@ -430,17 +486,23 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 		}
 		hoverExpandTimerRef.current = setTimeout(() => {
 			hoverExpandTimerRef.current = null;
-			if (pointerInsideRef.current) {
-				setDetailOpen(true);
-				setBackgroundTasksExpanded(true);
-			}
+			if (pointerInsideRef.current) openDetail();
 		}, HOVER_EXPAND_MS);
-	}, []);
+	}, [detailMounted, openDetail]);
 
 	const collapseOnLeave = useCallback(() => {
 		pointerInsideRef.current = false;
-		// Always return to the ring when the pointer leaves the panel.
-		closeDetail();
+		if (hoverExpandTimerRef.current) {
+			clearTimeout(hoverExpandTimerRef.current);
+			hoverExpandTimerRef.current = null;
+		}
+		if (leaveCollapseTimerRef.current) {
+			clearTimeout(leaveCollapseTimerRef.current);
+		}
+		leaveCollapseTimerRef.current = setTimeout(() => {
+			leaveCollapseTimerRef.current = null;
+			if (!pointerInsideRef.current) closeDetail();
+		}, LEAVE_COLLAPSE_MS);
 	}, [closeDetail]);
 
 	const active = useMemo(() => getActiveBackgroundTasks(tasks), [tasks]);
@@ -493,6 +555,14 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 				clearTimeout(hoverExpandTimerRef.current);
 				hoverExpandTimerRef.current = null;
 			}
+			if (leaveCollapseTimerRef.current) {
+				clearTimeout(leaveCollapseTimerRef.current);
+				leaveCollapseTimerRef.current = null;
+			}
+			if (exitAnimTimerRef.current) {
+				clearTimeout(exitAnimTimerRef.current);
+				exitAnimTimerRef.current = null;
+			}
 			if (errorCollapseTimerRef.current) {
 				clearTimeout(errorCollapseTimerRef.current);
 				errorCollapseTimerRef.current = null;
@@ -502,8 +572,8 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 
 	// No tasks left → force ring state for the next job.
 	useEffect(() => {
-		if (tasks.length === 0 && detailOpen) closeDetail();
-	}, [tasks.length, detailOpen, closeDetail]);
+		if (tasks.length === 0 && detailMounted) closeDetail();
+	}, [tasks.length, detailMounted, closeDetail]);
 
 	if (tasks.length === 0) return null;
 
@@ -524,11 +594,15 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 				? (active[0]?.title ?? t("tasks.title"))
 				: t("tasks.activeCount", { count: active.length });
 
+	const reduceMotion = prefersReducedMotion();
+
 	return (
 		<TooltipProvider delayDuration={300}>
 			<section
 				className={cn(
-					"pointer-events-auto fixed bottom-3 left-3 z-50 flex flex-col items-start gap-1",
+					"pointer-events-auto fixed bottom-3 left-3 z-50 flex flex-col items-start origin-bottom-left",
+					"transition-[width] ease-out",
+					reduceMotion ? "duration-0" : "duration-200",
 					detailOpen ? "w-[min(20rem,calc(100vw-1.5rem))]" : "w-9",
 					className,
 				)}
@@ -536,10 +610,21 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 				onMouseEnter={scheduleHoverExpand}
 				onMouseLeave={collapseOnLeave}
 			>
-				{detailOpen ? (
-					<div className="w-full overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg">
+				{detailMounted ? (
+					<div
+						className={cn(
+							"w-full origin-bottom-left overflow-hidden rounded-md border bg-popover text-popover-foreground shadow-lg",
+							"transition-[opacity,transform] ease-out",
+							reduceMotion ? "duration-150" : "duration-200",
+							detailVisible
+								? "scale-100 opacity-100"
+								: reduceMotion
+									? "opacity-0"
+									: "scale-95 opacity-0",
+						)}
+					>
 						<div className="flex h-8 items-center gap-1 border-b bg-muted/40 px-2">
-							<span className="min-w-0 flex-1 truncate px-1 font-medium text-xs">
+							<span className="min-w-0 flex-1 truncate px-1 font-medium text-sm">
 								{t("tasks.title")}
 								{active.length > 0 ? (
 									<span className="ml-1.5 text-muted-foreground tabular-nums">
@@ -586,10 +671,7 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 						icon={taskIcon(active[0])}
 						onActivate={() => {
 							pointerInsideRef.current = true;
-							if (hoverExpandTimerRef.current) {
-								clearTimeout(hoverExpandTimerRef.current);
-								hoverExpandTimerRef.current = null;
-							}
+							clearHoverTimers();
 							openDetail();
 						}}
 					/>

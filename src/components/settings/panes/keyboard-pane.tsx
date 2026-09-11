@@ -2,6 +2,8 @@ import { useTranslation } from "react-i18next";
 import {
 	PageTitle,
 	SettingsGroup,
+	SettingsSectionLabel,
+	settingsRowClassName,
 } from "@/components/settings/settings-layout";
 import {
 	formatShortcut,
@@ -25,10 +27,10 @@ export function KeyboardPane() {
 		<>
 			<PageTitle title={t("keyboard.title")} />
 			{groups.map(({ group, items }) => (
-				<div key={group} className="mb-5">
-					<p className="mb-1.5 px-1 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+				<div key={group}>
+					<SettingsSectionLabel>
 						{t(`shortcuts:groups.${GROUP_KEY[group]}`)}
-					</p>
+					</SettingsSectionLabel>
 					<SettingsGroup>
 						{items.map((item) => (
 							<ShortcutRow key={item.id} def={item} />
@@ -48,9 +50,9 @@ export function ShortcutRow({ def }: { def: ShortcutDef }) {
 			? t(`sidebar:${revealInOsLabelKey()}`)
 			: t(`labels.${def.id}`);
 	return (
-		<div className="flex items-center justify-between gap-4 border-b px-3.5 py-2.5 last:border-b-0">
-			<span className="text-[13px]">{label}</span>
-			<kbd className="rounded-md border bg-muted/60 px-1.5 py-0.5 font-medium font-sans text-[12px] text-foreground tracking-wide">
+		<div className={settingsRowClassName}>
+			<span className="text-sm text-foreground">{label}</span>
+			<kbd className="rounded-md border border-border/70 bg-muted/70 px-1.5 py-0.5 font-medium font-sans text-xs text-foreground tabular-nums tracking-wide">
 				{formatShortcut(def)}
 			</kbd>
 		</div>

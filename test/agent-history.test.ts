@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	hydrateSessionTitles,
+	isSessionIdPrefixTitle,
 	mergeImportedSessions,
 	sanitizeChatLines,
+	sessionsNeedingTitleHydration,
 	titleFromLoadedHistory,
 } from "@/components/agent/hooks/use-agent-history";
 import * as agentApi from "@/lib/agent";
 import type { AgentSessionRecord } from "@/lib/agent/agent-session-store";
 import type { AcpSessionInfo } from "@/lib/agent/api";
+import * as titleCache from "@/lib/agent/history-title-cache";
 
 vi.mock("@/lib/agent", async (importOriginal) => {
 	const actual = await importOriginal<typeof import("@/lib/agent")>();
@@ -102,6 +105,17 @@ describe("sanitizeChatLines", () => {
 	});
 });
 
+describe("isSessionIdPrefixTitle", () => {
+	it("matches the historical 8-char slice and leading Kimi-style leftovers", () => {
+		expect(isSessionIdPrefixTitle("ses_3a2a", "ses_3a2abcdef")).toBe(true);
+		expect(isSessionIdPrefixTitle("ses_3a2", "ses_3a2abcdef")).toBe(true);
+		expect(isSessionIdPrefixTitle("ses_3a2abcdef", "ses_3a2abcdef")).toBe(true);
+		expect(
+			isSessionIdPrefixTitle("Summarize this paper", "ses_3a2abcdef"),
+		).toBe(false);
+	});
+});
+
 describe("titleFromLoadedHistory", () => {
 	it("uses the first user turn when present", () => {
 		const history = {
@@ -146,7 +160,8 @@ describe("mergeImportedSessions", () => {
 		);
 
 		expect(sessions).toHaveLength(1);
-		expect(sessions[0].title).toBe("s1");
+		// Empty until hydration / open — never seed with the session-id prefix (#484).
+		expect(sessions[0].title).toBe("");
 		expect(hydrationCandidates).toHaveLength(1);
 		expect(hydrationCandidates[0].id).toBe("s1");
 	});
@@ -169,7 +184,7 @@ describe("mergeImportedSessions", () => {
 		expect(hydrationCandidates).toHaveLength(0);
 	});
 
-	it("keeps existing local title when session has lines", () => {
+	it("derives title from first local user turn when ACP title is empty", () => {
 		const prev = [
 			makeRecord({
 				id: "s1",
@@ -195,16 +210,43 @@ describe("mergeImportedSessions", () => {
 			"zh-CN",
 		);
 
-		expect(sessions[0].title).toBe("Local title");
+		expect(sessions[0].title).toBe("local question");
 		expect(hydrationCandidates).toHaveLength(0);
 	});
 
-	it("flags existing local sessions without lines when ACP title is empty", () => {
+	it("drops session-id placeholder titles and flags for hydration", () => {
+		const prev = [
+			makeRecord({
+				id: "s1abcdef",
+				source: "local",
+				title: "s1abcdef".slice(0, 8),
+				lines: [],
+				providerSessionId: "s1abcdef",
+			}),
+		];
+		const chatSessions = [
+			makeAcpSession({ sessionId: "s1abcdef", title: null }),
+		];
+
+		const { sessions, hydrationCandidates } = mergeImportedSessions(
+			prev,
+			chatSessions,
+			"agent-1",
+			"Agent",
+			"zh-CN",
+		);
+
+		expect(sessions[0].title).toBe("");
+		expect(hydrationCandidates).toHaveLength(1);
+		expect(hydrationCandidates[0].id).toBe("s1abcdef");
+	});
+
+	it("keeps a prior human title when there are no lines and ACP title is empty", () => {
 		const prev = [
 			makeRecord({
 				id: "s1",
-				source: "local",
-				title: "s1",
+				source: "external",
+				title: "Earlier hydrated title",
 				lines: [],
 				providerSessionId: "s1",
 			}),
@@ -219,15 +261,37 @@ describe("mergeImportedSessions", () => {
 			"zh-CN",
 		);
 
-		expect(sessions[0].title).toBe("s1");
-		expect(hydrationCandidates).toHaveLength(1);
-		expect(hydrationCandidates[0].id).toBe("s1");
+		expect(sessions[0].title).toBe("Earlier hydrated title");
+		expect(hydrationCandidates).toHaveLength(0);
+	});
+});
+
+describe("sessionsNeedingTitleHydration", () => {
+	it("includes empty and id-prefix titles, skips derived local lines", () => {
+		const sessions = [
+			makeRecord({ id: "a", title: "" }),
+			makeRecord({
+				id: "ses_abcdxxxx",
+				title: "ses_abcd",
+				providerSessionId: "ses_abcdxxxx",
+			}),
+			makeRecord({
+				id: "c",
+				title: "",
+				lines: [{ id: "l1", kind: "user" as const, text: "hello" }],
+			}),
+			makeRecord({ id: "d", title: "Real title" }),
+		];
+		const need = sessionsNeedingTitleHydration(sessions, "agent-1");
+		expect(need.map((s) => s.id)).toEqual(["a", "ses_abcdxxxx"]);
 	});
 });
 
 describe("hydrateSessionTitles", () => {
 	beforeEach(() => {
 		vi.resetAllMocks();
+		vi.spyOn(titleCache, "getCachedHistoryTitle").mockReturnValue(null);
+		vi.spyOn(titleCache, "setCachedHistoryTitle").mockImplementation(() => {});
 	});
 
 	it("loads untitled sessions and updates their titles", async () => {
@@ -263,6 +327,33 @@ describe("hydrateSessionTitles", () => {
 		) => AgentSessionRecord[];
 		const next = updater(items);
 		expect(next[0].title).toBe("what is the main claim?");
+		expect(titleCache.setCachedHistoryTitle).toHaveBeenCalledWith(
+			"agent-1",
+			"s1",
+			"what is the main claim?",
+		);
+	});
+
+	it("uses the title cache and skips session/load", async () => {
+		vi.mocked(titleCache.getCachedHistoryTitle).mockReturnValue("cached title");
+		const mockedLoadSession = vi.mocked(agentApi.loadSession);
+		const setSessionHistory = vi.fn();
+		const historyGenRef = { current: 1 };
+		const items = [makeRecord({ id: "s1", providerSessionId: "s1" })];
+
+		await hydrateSessionTitles(items, {
+			generation: 1,
+			historyGenRef,
+			selectedAgentId: "agent-1",
+			vaultPath: "/vault",
+			setSessionHistory,
+		});
+
+		expect(mockedLoadSession).not.toHaveBeenCalled();
+		const updater = setSessionHistory.mock.calls[0][0] as (
+			prev: AgentSessionRecord[],
+		) => AgentSessionRecord[];
+		expect(updater(items)[0].title).toBe("cached title");
 	});
 
 	it("does nothing when generation changes", async () => {

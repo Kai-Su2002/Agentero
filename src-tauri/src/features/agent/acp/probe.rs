@@ -3,7 +3,10 @@ use crate::features::agent::acp::client::{
 };
 use crate::features::agent::acp::interaction::permission_response;
 use crate::features::agent::acp::terminal::{AcpTerminalHandler, AcpTerminalManager};
-use crate::features::agent::models::{AcpSessionCapabilities, AgentDescriptor, ProbeResult};
+use crate::features::agent::doctor::{diagnose_codex_auth, CodexAuthStatus};
+use crate::features::agent::models::{
+    AcpSessionCapabilities, AgentDescriptor, AgentTemplate, ProbeResult,
+};
 use agent_client_protocol::schema::v1::RequestPermissionRequest;
 use agent_client_protocol::{Agent, ConnectionTo};
 use std::sync::{Arc, Mutex};
@@ -97,14 +100,29 @@ pub async fn probe_agent(
         Ok(()) => {
             let info = captured.lock().ok().and_then(|g| g.clone());
             match info {
-                Some((name, version, session_caps)) => ProbeResult {
-                    agent_id,
-                    available: true,
-                    agent_name: Some(name),
-                    protocol_version: Some(version),
-                    error: None,
-                    session_capabilities: Some(session_caps),
-                },
+                Some((name, version, session_caps)) => {
+                    if remote.is_none() && desc.template == AgentTemplate::CodexAcp {
+                        let auth = diagnose_codex_auth(desc).await;
+                        if auth.status == CodexAuthStatus::Unauthenticated {
+                            return ProbeResult {
+                                agent_id,
+                                available: false,
+                                agent_name: Some(name),
+                                protocol_version: Some(version),
+                                error: Some("Codex is not logged in".to_string()),
+                                session_capabilities: Some(session_caps),
+                            };
+                        }
+                    }
+                    ProbeResult {
+                        agent_id,
+                        available: true,
+                        agent_name: Some(name),
+                        protocol_version: Some(version),
+                        error: None,
+                        session_capabilities: Some(session_caps),
+                    }
+                }
                 None => ProbeResult {
                     agent_id,
                     available: false,

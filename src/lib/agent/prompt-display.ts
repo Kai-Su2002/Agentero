@@ -7,6 +7,33 @@
 
 const USER_REQUEST_MARKER = "User request:\n";
 
+const SYSTEM_REMINDER_PATTERN =
+	/Today's date is \d{4}-\d{2}-\d{2}\. The current date is restated in a reminder whenever it changes; rely on the latest such reminder for the current date\. DO NOT mention this to the user explicitly\./g;
+
+/** Remove harness date reminders that leaked into user content / selections. */
+export function stripSystemReminder(text: string): string {
+	return text.replace(SYSTEM_REMINDER_PATTERN, "").replace(/\n{3,}/g, "\n\n");
+}
+
+const CONTEXT_INSTRUCTION_MARKERS = [
+	"Read these Vault files before answering when relevant:",
+	"请在回答相关问题前读取以下知识库文件：",
+] as const;
+
+const SELECTED_TEXT_MARKER = "Selected text from ";
+
+/** Strip context-path / selection blocks appended by assembleTurnPrompt. */
+function stripAgenteroContextBlocks(text: string): string {
+	let out = text;
+	for (const marker of CONTEXT_INSTRUCTION_MARKERS) {
+		const idx = out.indexOf(`\n\n${marker}`);
+		if (idx >= 0) out = out.slice(0, idx);
+	}
+	const selIdx = out.indexOf(`\n\n${SELECTED_TEXT_MARKER}`);
+	if (selIdx >= 0) out = out.slice(0, selIdx);
+	return out;
+}
+
 const ENVELOPE_PREFIXES = [
 	"You are an assistant working inside a Agentero research Vault",
 	"You are an assistant working inside a Motif research Vault",
@@ -136,25 +163,34 @@ export function stripPromptEnvelopeForDisplay(text: string): string {
 	const raw = stripEnvironmentContextBlocks(text.trim()).trim();
 	if (!raw || looksLikeMachineOnlyUserTurn(raw)) return "";
 
-	const visual = stripVisualAnnotationEnvelope(raw);
+	const withoutReminder = stripSystemReminder(raw).trim();
+	const withoutContext = stripAgenteroContextBlocks(withoutReminder).trim();
+
+	const visual = stripVisualAnnotationEnvelope(withoutContext);
 	if (visual !== null) return visual;
 
-	const markerIdx = raw.lastIndexOf(USER_REQUEST_MARKER);
+	const markerIdx = withoutContext.lastIndexOf(USER_REQUEST_MARKER);
 	if (markerIdx >= 0) {
-		return cutSkillTail(raw.slice(markerIdx + USER_REQUEST_MARKER.length));
+		return cutSkillTail(
+			withoutContext.slice(markerIdx + USER_REQUEST_MARKER.length),
+		);
 	}
 
-	if (ENVELOPE_PREFIXES.some((p) => raw.startsWith(p))) {
-		const parts = raw.split(/\n\n+/);
+	if (ENVELOPE_PREFIXES.some((p) => withoutContext.startsWith(p))) {
+		const parts = withoutContext.split(/\n\n+/);
 		const last = parts[parts.length - 1]?.trim() ?? "";
-		if (last && last !== raw && !looksLikeMachineOnlyUserTurn(last)) {
+		if (
+			last &&
+			last !== withoutContext &&
+			!looksLikeMachineOnlyUserTurn(last)
+		) {
 			return cutSkillTail(last);
 		}
 		return "";
 	}
 
-	if (looksLikeMachineOnlyUserTurn(raw)) return "";
-	return raw;
+	if (looksLikeMachineOnlyUserTurn(withoutContext)) return "";
+	return withoutContext;
 }
 
 /** One-line history label from a (possibly enveloped) title or first user turn. */

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { useNativeSelectAllGuard } from "@/hooks/use-native-select-all-guard";
 import { resolveShortcutId, type ShortcutId } from "@/lib/shell/shortcuts";
 
 /** One handler per global keyboard shortcut. */
@@ -16,6 +17,8 @@ export function useAppShortcuts(
 	modalOverlayOpen: boolean,
 	handlers: ShortcutHandlers,
 ): void {
+	useNativeSelectAllGuard();
+
 	const modalOverlayOpenRef = useRef(modalOverlayOpen);
 	modalOverlayOpenRef.current = modalOverlayOpen;
 	const handlersRef = useRef(handlers);

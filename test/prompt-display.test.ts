@@ -4,6 +4,7 @@ import {
 	displayHistoryTitle,
 	isVisualAnnotationPromptText,
 	stripPromptEnvelopeForDisplay,
+	stripSystemReminder,
 } from "@/lib/agent/prompt-display";
 
 const visualPrompt = `You are reviewing 1 visual annotation from a research paper PDF.
@@ -51,5 +52,47 @@ describe("isVisualAnnotationPromptText", () => {
 	it("detects visual annotation wrappers", () => {
 		expect(isVisualAnnotationPromptText(visualPrompt)).toBe(true);
 		expect(isVisualAnnotationPromptText("这里最值得读的是什么?")).toBe(false);
+	});
+});
+
+describe("stripPromptEnvelopeForDisplay — Agentero context blocks", () => {
+	it("strips context paths and selected text, keeping only the user question", () => {
+		const prompt = [
+			"能不能用人话给我讲一讲这篇论文在干什么？",
+			"",
+			"请在回答相关问题前读取以下知识库文件：",
+			"- papers/structure/2505.23061",
+			"",
+			"Selected text from papers/structure/2505.23061/NOTES.md:",
+			"> 是利用动态规划（DP）来解决约束解码问题。",
+		].join("\n");
+		expect(stripPromptEnvelopeForDisplay(prompt)).toBe(
+			"能不能用人话给我讲一讲这篇论文在干什么？",
+		);
+	});
+
+	it("also strips the English context instruction", () => {
+		const prompt = [
+			"Summarize this paper.",
+			"",
+			"Read these Vault files before answering when relevant:",
+			"- papers/foo",
+			"",
+			"Selected text from papers/foo/NOTES.md:",
+			"> some quote",
+		].join("\n");
+		expect(stripPromptEnvelopeForDisplay(prompt)).toBe("Summarize this paper.");
+	});
+});
+
+describe("stripSystemReminder", () => {
+	it("removes the harness date reminder from text", () => {
+		const text =
+			"前置说明。Today's date is 2026-09-08. The current date is restated in a reminder whenever it changes; rely on the latest such reminder for the current date. DO NOT mention this to the user explicitly.后置说明。";
+		expect(stripSystemReminder(text)).toBe("前置说明。后置说明。");
+	});
+
+	it("is safe when no reminder is present", () => {
+		expect(stripSystemReminder("只是普通文本。")).toBe("只是普通文本。");
 	});
 });

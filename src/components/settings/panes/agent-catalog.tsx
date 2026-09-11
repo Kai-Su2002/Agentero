@@ -25,7 +25,7 @@ export function StatusBadge({
 		<span
 			title={title}
 			className={cn(
-				"inline-flex shrink-0 items-center justify-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-medium leading-none",
+				"inline-flex shrink-0 items-center justify-center gap-1 rounded px-1.5 py-0.5 text-caption font-medium leading-none",
 				tone === "ok" &&
 					"bg-emerald-500/15 text-emerald-700 dark:text-emerald-400",
 				tone === "warn" && "bg-amber-500/15 text-amber-800 dark:text-amber-400",
@@ -110,9 +110,16 @@ export function showInstallAcp(entry: CatalogEntry): boolean {
 	return Boolean(entry.offerInstall || entry.canInstall);
 }
 
-/** Host CLI already on PATH — silent upgrade via `runToolLifecycle(..., "update")`. */
+/**
+ * Host CLI on PATH and a newer silent-update target is known.
+ * Hidden while versions are unknown / equal / check failed.
+ */
 export function showUpdateAgent(entry: CatalogEntry): boolean {
-	return Boolean(entry.canInstall) && entry.binaryAvailable;
+	return (
+		Boolean(entry.canInstall) &&
+		entry.binaryAvailable &&
+		entry.updateAvailable === true
+	);
 }
 
 /**
@@ -143,7 +150,6 @@ function catalogTemplateFromId(templateId: string): AgentTemplate {
 	switch (templateId) {
 		case "opencode":
 		case "openclaw":
-		case "antigravity":
 		case "hermes":
 		case "claude-acp":
 		case "codex-acp":

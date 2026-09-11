@@ -1,6 +1,6 @@
 # Windows 上 Gemini CLI 反复弹浏览器登录
 
-> 历史复盘：Gemini CLI 已被 Google Antigravity CLI 取代，Agentero 的 Agent 模板也已从 Gemini 迁移到 Antigravity。本文档保留当时的分析与修复思路，新模板的 `NO_BROWSER=true` 逻辑继承至 Antigravity。
+> 历史复盘：Gemini CLI 与后来的 Antigravity 模板均已移除——Google 不为这两者提供官方 ACP 入口。本文档保留当时的分析与修复思路（`NO_BROWSER=true` 注入；Antigravity 及旧 Gemini 注册项会在加载时清理）。
 
 ## 现象
 

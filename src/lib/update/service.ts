@@ -55,15 +55,51 @@ function emit(next: UpdateSnapshot): UpdateSnapshot {
 	return snapshot;
 }
 
-async function closeAvailableUpdate(): Promise<void> {
-	const update = availableUpdate;
-	availableUpdate = null;
-	if (!update) return;
+async function closeUpdate(update: Update): Promise<void> {
 	try {
 		await update.close();
 	} catch {
 		// The native resource may already have been released by a failed download.
 	}
+}
+
+async function closeAvailableUpdate(): Promise<void> {
+	const update = availableUpdate;
+	availableUpdate = null;
+	if (!update) return;
+	await closeUpdate(update);
+}
+
+function compareVersions(a: string, b: string): number {
+	const left = a.split(".").map((part) => Number.parseInt(part, 10) || 0);
+	const right = b.split(".").map((part) => Number.parseInt(part, 10) || 0);
+	for (let i = 0; i < Math.max(left.length, right.length); i++) {
+		const diff = (left[i] ?? 0) - (right[i] ?? 0);
+		if (diff !== 0) return diff;
+	}
+	return 0;
+}
+
+async function refreshStaleUpdate(cached: Update): Promise<Update> {
+	let latest: Update | null = null;
+	try {
+		const proxy = await resolveProxyUrl();
+		const { check } = await import("@tauri-apps/plugin-updater");
+		latest = await check({ timeout: 10_000, proxy });
+	} catch {
+		return cached;
+	}
+	if (!latest || compareVersions(latest.version, cached.version) <= 0) {
+		if (latest) await closeUpdate(latest);
+		return cached;
+	}
+	availableUpdate = latest;
+	await closeUpdate(cached);
+	logger.info("updater_install refresh", {
+		from: cached.version,
+		to: latest.version,
+	});
+	return latest;
 }
 
 export function getUpdateSnapshot(): UpdateSnapshot {
@@ -128,18 +164,30 @@ export async function installAvailableUpdate(): Promise<UpdateSnapshot> {
 	if (!availableUpdate)
 		return emit({ phase: "error", errorOperation: "install" });
 
-	const update = availableUpdate;
+	const cached = availableUpdate;
 	installPromise = (async () => {
+		emit({
+			phase: "downloading",
+			currentVersion: cached.currentVersion,
+			availableVersion: cached.version,
+			notes: cached.body,
+			downloadedBytes: 0,
+		});
+		// The cached manifest can be days old when the app stayed open across
+		// releases (#481); re-check so users always install the latest version.
+		const update = await refreshStaleUpdate(cached);
 		logger.info("op start updater_install", { version: update.version });
 		let downloadedBytes = 0;
 		let totalBytes: number | undefined;
-		emit({
-			phase: "downloading",
-			currentVersion: update.currentVersion,
-			availableVersion: update.version,
-			notes: update.body,
-			downloadedBytes,
-		});
+		if (update !== cached) {
+			emit({
+				phase: "downloading",
+				currentVersion: update.currentVersion,
+				availableVersion: update.version,
+				notes: update.body,
+				downloadedBytes,
+			});
+		}
 		try {
 			await update.download((event) => {
 				if (event.event === "Started") {

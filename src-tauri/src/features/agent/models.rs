@@ -8,9 +8,6 @@ pub enum AgentTemplate {
     /// OpenClaw native ACP (`openclaw acp`).
     /// Docs: https://docs.openclaw.ai/cli/acp
     OpenClaw,
-    /// Google Antigravity CLI with native ACP (`agy --acp`).
-    /// Replaces the previous Google Gemini CLI template.
-    Antigravity,
     /// Hermes Agent native ACP (`hermes acp`).
     /// Docs: https://github.com/NousResearch/hermes-agent
     Hermes,
@@ -44,8 +41,6 @@ impl<'de> serde::Deserialize<'de> for AgentTemplate {
         Ok(match s.as_str() {
             "opencode" => Self::Opencode,
             "openclaw" => Self::OpenClaw,
-            // Backward compatibility: old Gemini registrations deserialize as Antigravity.
-            "antigravity" | "gemini" => Self::Antigravity,
             "hermes" => Self::Hermes,
             "claude-acp" => Self::ClaudeAcp,
             "codex-acp" => Self::CodexAcp,
@@ -69,7 +64,6 @@ impl AgentTemplate {
         match self {
             Self::Opencode => "opencode",
             Self::OpenClaw => "openclaw",
-            Self::Antigravity => "antigravity",
             Self::Hermes => "hermes",
             Self::ClaudeAcp => "claude-acp",
             Self::CodexAcp => "codex-acp",
@@ -252,6 +246,16 @@ pub struct CatalogEntry {
     pub last_probe_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_probed_at: Option<String>,
+    /// Normalized local host CLI version (`detect_command --version`), when known.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub installed_version: Option<String>,
+    /// Target version the silent updater can reach (npm latest or dsh pin).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_version: Option<String>,
+    /// True only when a newer silent-update target is known. Settings shows
+    /// the Upgrade button solely when this is `Some(true)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub update_available: Option<bool>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

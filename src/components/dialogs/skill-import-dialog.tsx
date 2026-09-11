@@ -170,7 +170,7 @@ export function SkillImportDialog({
 																{candidate.name}
 															</span>
 															{candidate.alreadyInstalled ? (
-																<span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+																<span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-caption text-muted-foreground">
 																	{t("lookup.skillImportInstalled")}
 																</span>
 															) : null}

@@ -82,7 +82,7 @@ export function PlazaSelectionMenu({
 				<div className="relative">
 					{copied ? (
 						<span
-							className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border/80 bg-background px-1.5 py-0.5 text-[11px] text-foreground shadow-sm ring-1 ring-black/5 dark:ring-white/10"
+							className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-border/80 bg-background px-1.5 py-0.5 text-caption text-foreground shadow-sm ring-1 ring-black/5 dark:ring-white/10"
 							role="status"
 							aria-live="polite"
 						>

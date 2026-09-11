@@ -7,6 +7,7 @@ import {
 	PageTitle,
 	SettingsGroup,
 	SettingsRow,
+	SettingsSectionLabel,
 } from "@/components/settings/settings-layout";
 import {
 	Select,
@@ -16,6 +17,7 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { cn } from "@/lib/core/utils";
 import type {
 	AppSettings,
 	LocalePreference,
@@ -179,9 +181,9 @@ function AppearancePaneInner({
 						</SelectContent>
 					</Select>
 				</SettingsRow>
-				<div className="border-b px-3.5 py-3.5">
+				<div className="border-b border-border/50 px-3.5 py-3.5">
 					<div className="mb-2.5 flex items-center justify-between gap-3">
-						<span className="font-normal text-[13px]">
+						<span className="font-normal text-sm text-foreground">
 							{t("appearance.uiThemeLabel")}
 						</span>
 						<span className="truncate text-muted-foreground text-xs">
@@ -189,7 +191,7 @@ function AppearancePaneInner({
 								uiTheme}
 						</span>
 					</div>
-					<div className="agentero-scroll grid max-h-[15rem] grid-cols-2 auto-rows-[7.25rem] gap-2 overflow-y-auto pr-1 sm:grid-cols-3">
+					<div className="agentero-scroll grid max-h-[15rem] grid-cols-2 auto-rows-[7.25rem] gap-2 overflow-y-auto overscroll-y-contain pr-1 sm:grid-cols-3">
 						{previewThemes.map((item) => {
 							const colors = isDark ? item.dark : item.light;
 							const selected = item.name === uiTheme;
@@ -205,7 +207,15 @@ function AppearancePaneInner({
 										patch({ uiTheme: item.name });
 										void applyUiTheme(item.name);
 									}}
-									className="group h-[7.25rem] min-w-0 rounded-lg border border-border/70 p-1 text-left outline-none transition-colors hover:border-primary/60 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
+									className={cn(
+										"group h-[7.25rem] min-w-0 rounded-lg border p-1 text-left outline-none",
+										"transition-[border-color,box-shadow,transform,background-color] duration-[var(--motion-duration-micro)] ease-[var(--motion-ease-out)]",
+										"hover:border-primary/55 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50",
+										"active:scale-[0.98]",
+										selected
+											? "border-primary/80 bg-primary/5 shadow-[inset_0_0_0_1px_color-mix(in_oklch,var(--primary)_35%,transparent)]"
+											: "border-border/70",
+									)}
 								>
 									<div
 										className="overflow-hidden rounded-md border border-black/10 p-1.5 dark:border-white/10"
@@ -245,9 +255,14 @@ function AppearancePaneInner({
 										</div>
 									</div>
 									<div className="flex min-w-0 items-center gap-1.5 px-1 py-1">
-										<span className="truncate text-xs">{item.title}</span>
+										<span className="truncate font-medium text-xs">
+											{item.title}
+										</span>
 										{selected ? (
-											<Check className="ml-auto size-3.5 shrink-0 text-primary" />
+											<Check
+												className="ml-auto size-3.5 shrink-0 text-primary"
+												aria-hidden
+											/>
 										) : null}
 									</div>
 								</button>
@@ -287,6 +302,12 @@ function AppearancePaneInner({
 							step={1}
 							value={Math.round(scale * 100)}
 							onChange={(e) => setScale(Number(e.target.value) / 100)}
+							aria-valuemin={80}
+							aria-valuemax={150}
+							aria-valuenow={Math.round(scale * 100)}
+							aria-valuetext={t("appearance.uiScale.value", {
+								percent: Math.round(scale * 100),
+							})}
 							className="w-28 accent-primary"
 						/>
 						<span className="w-12 text-right text-muted-foreground text-xs tabular-nums">
@@ -298,9 +319,9 @@ function AppearancePaneInner({
 				</SettingsRow>
 			</SettingsGroup>
 
-			<p className="mb-1.5 mt-4 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+			<SettingsSectionLabel className="mt-4">
 				{t("appearance.fonts.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow
 					label={t("appearance.fonts.interface")}
@@ -331,9 +352,9 @@ function AppearancePaneInner({
 				</SettingsRow>
 			</SettingsGroup>
 
-			<p className="mb-1.5 mt-4 font-medium text-muted-foreground text-xs uppercase tracking-wide">
+			<SettingsSectionLabel className="mt-4">
 				{t("appearance.markdownEditor.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow label={t("appearance.fontSize.label")} htmlFor={fontId}>
 					<div className="flex items-center gap-2">
@@ -345,6 +366,12 @@ function AppearancePaneInner({
 							step={1}
 							value={fontSize}
 							onChange={(e) => setFontSize(Number(e.target.value))}
+							aria-valuemin={12}
+							aria-valuemax={20}
+							aria-valuenow={fontSize}
+							aria-valuetext={t("appearance.fontSize.value", {
+								size: fontSize,
+							})}
 							className="w-28 accent-primary"
 						/>
 						<span className="w-12 text-right text-muted-foreground text-xs tabular-nums">
@@ -365,6 +392,12 @@ function AppearancePaneInner({
 							step={EDITOR_LINE_HEIGHT_STEP}
 							value={lineHeight}
 							onChange={(e) => setLineHeight(Number(e.target.value))}
+							aria-valuemin={EDITOR_LINE_HEIGHT_MIN}
+							aria-valuemax={EDITOR_LINE_HEIGHT_MAX}
+							aria-valuenow={lineHeight}
+							aria-valuetext={t("appearance.lineHeight.value", {
+								value: lineHeight.toFixed(1),
+							})}
 							className="w-28 accent-primary"
 						/>
 						<span className="w-12 text-right text-muted-foreground text-xs tabular-nums">

@@ -52,7 +52,7 @@ export function AgentCustomForm({
 				<div className="flex min-w-0 flex-1 items-center gap-4">
 					<div className="flex w-32 shrink-0 items-center gap-2">
 						<AgentLogo template="custom" />
-						<span className="min-w-0 truncate font-medium text-[13px]">
+						<span className="min-w-0 truncate font-medium text-sm">
 							{t("agent.custom")}
 						</span>
 					</div>
@@ -79,7 +79,7 @@ export function AgentCustomForm({
 			{adding ? (
 				<div className="space-y-2.5 border-b px-3.5 py-3 last:border-b-0">
 					<div className="space-y-1">
-						<Label className="font-normal text-[13px]">
+						<Label className="font-normal text-sm">
 							{t("agent.form.name")}
 						</Label>
 						<Input
@@ -89,7 +89,7 @@ export function AgentCustomForm({
 						/>
 					</div>
 					<div className="space-y-1">
-						<Label className="font-normal text-[13px]">
+						<Label className="font-normal text-sm">
 							{t("agent.form.command")}
 						</Label>
 						<Input
@@ -101,7 +101,7 @@ export function AgentCustomForm({
 						/>
 					</div>
 					<div className="space-y-1">
-						<Label className="font-normal text-[13px]">
+						<Label className="font-normal text-sm">
 							{t("agent.form.args")}
 						</Label>
 						<Input

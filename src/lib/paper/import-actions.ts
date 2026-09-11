@@ -227,8 +227,10 @@ export async function runLookupImportJob(
 		}
 	}
 	// Papers that already have a PDF after import: start layout now.
-	// Those still downloading enqueue layout after download completes.
+	// Those still downloading enqueue layout after DownloadAssets completes —
+	// do not kick layout (or it fails with "No local PDF") before the file lands.
 	for (const paper of result.imported) {
+		if (!paper.pdf) continue;
 		const abs = paper.paperDir
 			? paper.paperDir.replace(/[\\/]+$/, "")
 			: joinVaultPath(

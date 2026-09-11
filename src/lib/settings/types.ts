@@ -119,6 +119,13 @@ export type AppSettings = {
 	networkProxyEnabled: boolean;
 	networkProxyUrl: string;
 	/**
+	 * URL-prefix GitHub mirror for Skill import. When enabled and GitHub is
+	 * unreachable, Host retries via `{base}/https://api|codeload.github.com/...`.
+	 */
+	githubMirrorEnabled: boolean;
+	/** e.g. `https://gh.llkk.cc` (no trailing slash). Empty = no fallback. */
+	githubMirrorBaseUrl: string;
+	/**
 	 * How paper folders are labeled in the file tree (display-only).
 	 * Default: title · author.
 	 */
@@ -218,9 +225,10 @@ export type AppSettings = {
 	locale: LocalePreference;
 	editorFontSize: number;
 	/**
-	 * UI chrome font (sidebars, toolbars, settings). Empty = app default (Geist).
-	 * Also accepts built-in stacks (`system` | `serif` | `mono`) or a system
-	 * family name discovered via `list_system_fonts`.
+	 * UI chrome font (sidebars, toolbars, settings). Empty = app default
+	 * (platform system UI). Also accepts built-in stacks
+	 * (`system` | `geist` | `serif` | `mono`) or a system family name
+	 * discovered via `list_system_fonts`.
 	 */
 	interfaceFontFamily: string;
 	/**
@@ -287,8 +295,19 @@ export type PdfAskSettings = {
 	modelId: string;
 };
 
+/**
+ * Embedding credential source: the built-in provider (Host-injected) or a
+ * custom OpenAI-compatible BYOK endpoint.
+ */
+export type EmbeddingSource = "builtin" | "custom";
+
 /** OpenAI-compatible embedding endpoint (BYOK). All-empty = disabled. */
 export type EmbeddingSettings = {
+	/**
+	 * Credential source. The Host wire type is a plain string (empty = unset);
+	 * `normalizeEmbeddingSettings` narrows it to this union at the boundary.
+	 */
+	source: EmbeddingSource;
 	/** Endpoint base, e.g. `https://api.openai.com/v1`. Empty = unset. */
 	baseUrl: string;
 	/** BYOK secret; masked (`*`) when echoed back from the Host. */

@@ -27,6 +27,8 @@ import {
 import { cn } from "@/lib/core/utils";
 
 import { ExternalLink } from "./external-link";
+import { PlainCodeBlock } from "./plain-code-block";
+import { PlainTable } from "./plain-table";
 import { Shimmer } from "./shimmer";
 
 interface ReasoningContextValue {
@@ -138,6 +140,7 @@ export type ReasoningTriggerProps = ComponentProps<
 	typeof CollapsibleTrigger
 > & {
 	getThinkingMessage?: (isStreaming: boolean) => ReactNode;
+	swapIconOnHover?: boolean;
 };
 
 export const ReasoningTrigger = memo(
@@ -145,6 +148,7 @@ export const ReasoningTrigger = memo(
 		className,
 		children,
 		getThinkingMessage,
+		swapIconOnHover = false,
 		...props
 	}: ReasoningTriggerProps) => {
 		const { t } = useTranslation("aiElements");
@@ -156,7 +160,7 @@ export const ReasoningTrigger = memo(
 			if (streaming) {
 				return <Shimmer duration={1}>{t("reasoning.thinking")}</Shimmer>;
 			}
-			return <p>{t("reasoning.thought")}</p>;
+			return <span>{t("reasoning.thought")}</span>;
 		};
 
 		const renderThinkingMessage =
@@ -165,23 +169,48 @@ export const ReasoningTrigger = memo(
 		return (
 			<CollapsibleTrigger
 				className={cn(
-					"flex w-full items-center gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+					"flex w-full items-center justify-start gap-2 text-muted-foreground text-sm transition-colors hover:text-foreground",
+					swapIconOnHover && "group/reasoning-trigger",
 					className,
 				)}
 				{...props}
 			>
-				{children ?? (
-					<>
-						<BrainIcon className="size-4" />
-						{renderThinkingMessage(isStreaming)}
-						<ChevronDownIcon
-							className={cn(
-								"size-4 transition-transform",
-								isOpen ? "rotate-180" : "rotate-0",
-							)}
-						/>
-					</>
-				)}
+				{children ??
+					(swapIconOnHover ? (
+						<>
+							<span className="relative flex size-4 shrink-0 items-center justify-center">
+								<ChevronDownIcon
+									className={cn(
+										"absolute size-4 text-muted-foreground opacity-0 transition-all",
+										"group-hover/reasoning-trigger:opacity-100",
+										"-rotate-90 group-data-[state=open]/reasoning-trigger:rotate-0",
+									)}
+								/>
+								<BrainIcon
+									className={cn(
+										"absolute size-4 text-muted-foreground transition-opacity",
+										"group-hover/reasoning-trigger:opacity-0",
+									)}
+								/>
+							</span>
+							<span className="min-w-0 truncate font-medium text-xs">
+								{renderThinkingMessage(isStreaming)}
+							</span>
+						</>
+					) : (
+						<>
+							<BrainIcon className="size-4" />
+							<span className="min-w-0 truncate font-medium text-xs">
+								{renderThinkingMessage(isStreaming)}
+							</span>
+							<ChevronDownIcon
+								className={cn(
+									"size-4 transition-transform",
+									isOpen ? "rotate-180" : "rotate-0",
+								)}
+							/>
+						</>
+					))}
 			</CollapsibleTrigger>
 		);
 	},
@@ -200,13 +229,18 @@ export const ReasoningContent = memo(
 		<CollapsibleContent
 			className={cn(
 				"mt-4 text-sm",
+				"[&_ul]:list-disc [&_ul]:pl-4 [&_ol]:list-decimal [&_ol]:pl-4 [&_li]:my-0.5",
 				"data-[state=closed]:fade-out-0 data-[state=closed]:slide-out-to-top-2 data-[state=open]:slide-in-from-top-2 text-muted-foreground outline-none data-[state=closed]:animate-out data-[state=open]:animate-in",
 				className,
 			)}
 			{...props}
 		>
 			<Streamdown
-				components={{ a: ExternalLink }}
+				components={{
+					a: ExternalLink,
+					code: PlainCodeBlock,
+					table: PlainTable,
+				}}
 				linkSafety={{ enabled: false }}
 				plugins={streamdownPlugins}
 			>

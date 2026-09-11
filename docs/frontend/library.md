@@ -2,6 +2,11 @@
 
 中间栏 catalog 表格；数据一次 `paper_list` 进内存。
 
+## 外观
+
+- 画布用 `bg-background`（与侧栏 `bg-sidebar` 分层）；表头 sticky 半透明 + `backdrop-blur`（滚动边缘用 soft shadow，非硬分割线）；行间 hairline `border-border/40`，悬停 `accent` 浅洗。
+- 配色跟默认主题 token，见 [settings.md](settings.md)「主题」。
+
 ## 视图
 
 - 虚拟路径 `agentero:library`（不写盘）。
@@ -16,8 +21,8 @@
 | 能力 | 说明 |
 |---|---|
 | 排序 | 表头点击；排序/标签筛选变化时行区 150ms 淡入提示重排（搜索键入不触发） |
-| 列 | 表头右键选列 / 拖拽排序；顺序+显隐持久化 `libraryColumns`；标题列不可隐藏 |
-| 滚动 | 横向 + 纵向 |
+| 列 | 表头右键选列 / 拖拽排序；顺序+显隐持久化 `libraryColumns`；标题列不可隐藏；标题单元格对 `$...$` / `\\(...\\)` 做 KaTeX 内联渲染（复制仍为原始 TeX） |
+| 滚动 | 横向 + 纵向；滚动中表头控件瞬间隐藏为纯列名（搜索框与刷新/筛选等图标，固定 `h-9` 行高与占位不变；当前排序列仍保留方向箭头；有标签筛选时 Tags 列名旁留小圆点），停滚约 450ms 后淡入恢复（入 300ms） |
 | tags | 染色 chip；搜索框匹配用户标签子串；`@zotero:` / `@arxiv:` 内部标签不显示 |
 | 阅读热力 | 标题列左侧显示该论文阅读进度热力条；基于 `marks/` 中逐页标注与阅读位置聚合。激活 Library 时经 `paper_reading_activity_batch` 一次批量 IPC 刷新全部活动点（缓存保温，不再逐论文 3 次 IPC）；PDF 页数走 catalog `pdf_page_counts` 缓存，缺缓存时仅对可视行懒加载并回写 |
 | Rescan | `paper_rescan`：盘上有、catalog 无则补齐 |

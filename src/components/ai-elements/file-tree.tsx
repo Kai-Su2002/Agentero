@@ -233,8 +233,7 @@ export type FileTreeFolderProps = HTMLAttributes<HTMLDivElement> & {
 
 /** Ring shown on the row a drag is currently hovering (valid drop target). */
 const DROP_RING = "ring-1 ring-inset ring-primary bg-accent";
-const SELECTED_ROW =
-	"border-primary bg-primary/10 hover:bg-primary/15 active:bg-primary/20";
+const SELECTED_ROW = "bg-primary/10 hover:bg-primary/15 active:bg-primary/20";
 
 export const FileTreeFolder = ({
 	path,
@@ -275,7 +274,7 @@ export const FileTreeFolder = ({
 					data-path={path}
 					draggable
 					className={cn(
-						"group flex h-7 min-h-7 w-full items-center gap-1 rounded border-l-2 border-transparent px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+						"group flex h-7 min-h-7 w-full items-center gap-1 rounded px-4 text-left transition-colors duration-100 hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 						isSelected && SELECTED_ROW,
 						dropTargetPath === path && DROP_RING,
 					)}
@@ -370,7 +369,7 @@ export const FileTreeFolderRow = ({
 			data-path={path}
 			draggable
 			className={cn(
-				"group flex h-7 min-h-7 w-full items-center gap-1 rounded border-l-2 border-transparent px-4 text-left transition-colors hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+				"group flex h-7 min-h-7 w-full items-center gap-1 rounded px-4 text-left transition-colors duration-100 hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 				isSelected && SELECTED_ROW,
 				dropTargetPath === path && DROP_RING,
 				className,
@@ -520,7 +519,7 @@ export const FileTreeFile = ({
 				data-path={path}
 				draggable
 				className={cn(
-					"group flex h-7 min-h-7 cursor-pointer items-center gap-1 rounded border-l-2 border-transparent px-4 transition-colors hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
+					"group flex h-7 min-h-7 cursor-pointer items-center gap-1 rounded px-4 transition-colors duration-100 hover:bg-muted/50 active:bg-muted/80 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",
 					isSelected && SELECTED_ROW,
 					dropTargetPath === path && DROP_RING,
 					className,

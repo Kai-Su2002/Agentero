@@ -1,7 +1,8 @@
 use crate::core::error::AppError;
-use crate::features::agent::models::{AgentDescriptor, AgentResultPayload, AgentTemplate};
+pub(crate) use crate::core::process::windows_shell_path as simplified_agent_cwd;
+use crate::features::agent::models::{AgentDescriptor, AgentResultPayload};
 use crate::features::agent::prompt::envelope::extract_sources;
-use crate::features::agent::registry::discovery::{login_shell_env, path_entries, resolve_command};
+use crate::features::agent::registry::discovery::{login_shell_env, path_entries};
 use agent_client_protocol::schema::v1::{
     ClientCapabilities, ElicitationCapabilities, ElicitationFormCapabilities, EnvVariable,
     InitializeRequest, McpServer, McpServerStdio,
@@ -78,11 +79,7 @@ pub(crate) fn windows_shell_quote(s: &str) -> String {
 /// True UNC paths stay unchanged; supporting them requires a separate `pushd` flow.
 #[cfg(any(windows, test))]
 pub(crate) fn windows_cmd_cwd(cwd: &Path) -> String {
-    let cwd = cwd.to_string_lossy();
-    cwd.strip_prefix(r"\\?\")
-        .filter(|path| path.as_bytes().get(1) == Some(&b':'))
-        .unwrap_or(cwd.as_ref())
-        .to_string()
+    simplified_agent_cwd(cwd).to_string_lossy().into_owned()
 }
 
 /// Pre-quote the cwd environment value so metacharacters remain literal after
@@ -122,11 +119,36 @@ pub(crate) fn wrap_local_command_with_cwd(
     )
 }
 
+/// Summarize an ACP stdio line for debug logs without dumping the full payload.
+fn summarize_acp_line(line: &str) -> String {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(line) {
+        if let Some(method) = value.get("method").and_then(|m| m.as_str()) {
+            return method.to_string();
+        }
+        if let Some(id) = value.get("id") {
+            if value.get("error").is_some() {
+                return format!("error(id={id})");
+            }
+            return format!("response(id={id})");
+        }
+    }
+    if line.len() > 120 {
+        format!("{}...", &line[..120])
+    } else {
+        line.to_string()
+    }
+}
+
 fn acp_agent_with_debug(agent: AcpAgent, name: &str) -> AcpAgent {
     let name = name.to_string();
     agent.with_debug(
         move |line: &str, direction: agent_client_protocol::LineDirection| {
+            let summary = summarize_acp_line(line);
             log::debug!(
+                target: "agentero::acp::stdio",
+                "{name} {direction:?}: {summary}",
+            );
+            log::trace!(
                 target: "agentero::acp::stdio",
                 "{name} {direction:?}: {line}",
             );
@@ -134,23 +156,29 @@ fn acp_agent_with_debug(agent: AcpAgent, name: &str) -> AcpAgent {
     )
 }
 
+fn append_path_entries(entries: &mut Vec<PathBuf>, value: Option<&String>) {
+    let Some(value) = value else {
+        return;
+    };
+    for entry in std::env::split_paths(value) {
+        if !entry.as_os_str().is_empty() && !entries.iter().any(|existing| existing == &entry) {
+            entries.push(entry);
+        }
+    }
+}
+
 /// Build the environment for an ACP child process.
 ///
-/// Priority (low → high):
-/// 1. `process_env` (current process)
-/// 2. `shell_env` (login-shell exports like `.zshrc` / `.bashrc`)
-/// 3. `desc_env` (user-configured values)
-///
-/// `shell_env` only fills missing keys so the current process values are not
-/// unexpectedly overwritten; callers that need shell overrides can pass them
-/// explicitly via `desc_env`.
-fn build_child_env(
+/// Non-PATH priority (low → high): process, missing login-shell values, descriptor.
+/// PATH is merged in executable-resolution order: descriptor, process, login shell,
+/// then common GUI-missing locations.
+pub(crate) fn build_child_env(
     process_env: impl Iterator<Item = (String, String)>,
     shell_env: Option<&HashMap<String, String>>,
     desc_env: &HashMap<String, String>,
-    template: AgentTemplate,
 ) -> HashMap<String, String> {
-    let mut child_env: HashMap<String, String> = process_env.collect();
+    let process_env: HashMap<String, String> = process_env.collect();
+    let mut child_env = process_env.clone();
     if let Some(shell_env) = shell_env {
         for (key, value) in shell_env {
             child_env.entry(key.clone()).or_insert(value.clone());
@@ -160,32 +188,47 @@ fn build_child_env(
         child_env.insert(key.clone(), value.clone());
     }
 
-    if !child_env.contains_key("PATH") {
-        if let Ok(path) = std::env::join_paths(path_entries()) {
-            child_env.insert("PATH".to_string(), path.to_string_lossy().to_string());
+    let mut merged_path = Vec::new();
+    append_path_entries(&mut merged_path, desc_env.get("PATH"));
+    append_path_entries(&mut merged_path, process_env.get("PATH"));
+    append_path_entries(
+        &mut merged_path,
+        shell_env.and_then(|environment| environment.get("PATH")),
+    );
+    for entry in path_entries() {
+        if !merged_path.iter().any(|existing| existing == &entry) {
+            merged_path.push(entry);
         }
     }
-    // Antigravity (formerly Gemini) launches a browser OAuth flow from
-    // `new_session` when it has no cached credentials; our 15s ACP timeout kills
-    // the child before login can finish, so the browser would pop up on every
-    // spawn. Sign-in must happen in a terminal instead (BYOA).
-    if matches!(template, AgentTemplate::Antigravity) && !child_env.contains_key("NO_BROWSER") {
-        child_env.insert("NO_BROWSER".to_string(), "true".to_string());
+    if let Ok(path) = std::env::join_paths(&merged_path) {
+        child_env.insert("PATH".to_string(), path.to_string_lossy().to_string());
     }
+
     child_env
+}
+
+pub(crate) fn effective_local_agent_env(desc: &AgentDescriptor) -> HashMap<String, String> {
+    build_child_env(std::env::vars(), login_shell_env(), &desc.env)
+}
+
+pub(crate) fn resolve_command_in_agent_env(
+    command: &str,
+    environment: &HashMap<String, String>,
+) -> Option<PathBuf> {
+    let paths = environment
+        .get("PATH")
+        .map(|value| std::env::split_paths(value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    crate::core::process::resolve_command_in_paths(command, &paths)
 }
 
 pub(crate) fn to_acp_agent_local(
     desc: &AgentDescriptor,
     cwd: Option<&Path>,
 ) -> Result<AcpAgent, AppError> {
-    let command = resolve_command(&desc.command).unwrap_or_else(|| PathBuf::from(&desc.command));
-    let mut child_env = build_child_env(
-        std::env::vars(),
-        login_shell_env(),
-        &desc.env,
-        desc.template.clone(),
-    );
+    let mut child_env = effective_local_agent_env(desc);
+    let command = resolve_command_in_agent_env(&desc.command, &child_env)
+        .unwrap_or_else(|| PathBuf::from(&desc.command));
 
     let (command, args) =
         if let Some(cwd) = cwd.filter(|_| desc.template.needs_local_cwd_shell_wrap()) {
@@ -278,20 +321,6 @@ where
         .await
         .map_err(|_| acp_err(format!("{label} timed out after {}s", budget.as_secs())))?
         .map_err(|error| acp_err(format!("{label}: {error}")))
-}
-
-/// The vault path can arrive as Rust's canonicalized extended-length form
-/// (`\\?\D:\…`). Agents forward it to MSYS2-based shells (Git Bash), which
-/// cannot `cd` into `\\?\` paths and mis-initialize their POSIX cwd when
-/// spawned under one (mktemp/cd fail with ENOENT), so hand agents the plain
-/// drive path. Extended UNC paths stay unchanged until their shell semantics
-/// are handled separately.
-pub(crate) fn simplified_agent_cwd(cwd: &Path) -> PathBuf {
-    let cwd = cwd.to_string_lossy();
-    match cwd.strip_prefix(r"\\?\") {
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
-        _ => cwd.as_ref().into(),
-    }
 }
 
 pub(crate) fn cancelled_payload(
@@ -450,12 +479,7 @@ mod cwd_shell_wrap_tests {
         let mut desc_env = HashMap::new();
         desc_env.insert("OPENAI_API_KEY".to_string(), "desc-key".to_string());
 
-        let env = build_child_env(
-            process_env,
-            Some(&shell_env),
-            &desc_env,
-            AgentTemplate::CodexAcp,
-        );
+        let env = build_child_env(process_env, Some(&shell_env), &desc_env);
 
         // desc_env wins over everything.
         assert_eq!(env.get("OPENAI_API_KEY"), Some(&"desc-key".to_string()));
@@ -468,26 +492,39 @@ mod cwd_shell_wrap_tests {
     }
 
     #[test]
-    fn build_child_env_injects_no_browser_for_antigravity() {
-        let env = build_child_env(
-            std::iter::empty(),
-            None,
-            &HashMap::new(),
-            AgentTemplate::Antigravity,
+    fn build_child_env_merges_path_in_resolution_order() {
+        let process_path = std::env::join_paths(["/process/bin", "/shared/bin"]).unwrap();
+        let shell_path = std::env::join_paths(["/shell/bin", "/shared/bin"]).unwrap();
+        let descriptor_path = std::env::join_paths(["/descriptor/bin"]).unwrap();
+        let process_env = vec![(
+            "PATH".to_string(),
+            process_path.to_string_lossy().into_owned(),
+        )]
+        .into_iter();
+        let mut shell_env = HashMap::new();
+        shell_env.insert(
+            "PATH".to_string(),
+            shell_path.to_string_lossy().into_owned(),
         );
-        assert_eq!(env.get("NO_BROWSER"), Some(&"true".to_string()));
-    }
-
-    #[test]
-    fn build_child_env_respects_existing_no_browser() {
         let mut desc_env = HashMap::new();
-        desc_env.insert("NO_BROWSER".to_string(), "false".to_string());
-        let env = build_child_env(
-            std::iter::empty(),
-            None,
-            &desc_env,
-            AgentTemplate::Antigravity,
+        desc_env.insert(
+            "PATH".to_string(),
+            descriptor_path.to_string_lossy().into_owned(),
         );
-        assert_eq!(env.get("NO_BROWSER"), Some(&"false".to_string()));
+
+        let env = build_child_env(process_env, Some(&shell_env), &desc_env);
+        let entries = std::env::split_paths(env.get("PATH").unwrap()).collect::<Vec<_>>();
+
+        assert_eq!(entries[0], PathBuf::from("/descriptor/bin"));
+        assert_eq!(entries[1], PathBuf::from("/process/bin"));
+        assert_eq!(entries[2], PathBuf::from("/shared/bin"));
+        assert_eq!(entries[3], PathBuf::from("/shell/bin"));
+        assert_eq!(
+            entries
+                .iter()
+                .filter(|entry| entry.as_path() == Path::new("/shared/bin"))
+                .count(),
+            1
+        );
     }
 }

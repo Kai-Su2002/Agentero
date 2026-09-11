@@ -634,12 +634,12 @@ export function ZoteroMigrateDialog({
 														</label>
 														{it.itemType &&
 														!STANDARD_ITEM_TYPES.has(it.itemType) ? (
-															<span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground">
+															<span className="shrink-0 rounded bg-muted px-1 text-caption text-muted-foreground">
 																{it.itemType}
 															</span>
 														) : null}
 														{it.hasPdf ? (
-															<span className="shrink-0 rounded bg-muted px-1 text-[10px] text-muted-foreground uppercase">
+															<span className="shrink-0 rounded bg-muted px-1 text-caption text-muted-foreground uppercase">
 																pdf
 															</span>
 														) : null}

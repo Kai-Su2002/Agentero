@@ -71,7 +71,7 @@ Skill 不写入 catalog、不创建 `papers/` 条目、不执行 `scripts/`。�
 | 情况 | 行为 |
 |---|---|
 | 有 TeX | 优先 TeX；不强制 `PAPER.md` |
-| 无 TeX 有 PDF | 下载后由选定的正文解析引擎生成 `PAPER.md`（默认本地 liteparse 隔离子进程，单次解析限时 120 秒） |
+| 无 TeX 有 PDF | 下载后由选定的正文解析引擎生成 `PAPER.md`（默认按构建是否注入内置 provider key 决定：注入则 `agentero`，否则本地 liteparse 隔离子进程，单次解析限时 120 秒） |
 | 解析失败或超时 | 保留 PDF、`NOTES.md` 与 catalog；`paper_parse_body` 返回 `error`，对应 job 标记 `Failed` 并在任务面板展示原因，后续可重新执行 `paper parse` |
 | 质量字段 | catalog `body_source` / `body_quality`（实现以 schema 为准） |
 
@@ -79,20 +79,24 @@ Skill 不写入 catalog、不创建 `papers/` 条目、不执行 `scripts/`。�
 
 ### 正文解析引擎（可插拔）
 
-`settings.layout.parserBackend` 选择 PAPER.md 的生成引擎（Settings →「版面解析」），凭据与版面分析共用 `layout.providerConfigs`：
+`settings.layout.parserBackend` 选择 PAPER.md 的生成引擎（Settings →「版面解析」）。除内置 provider 外，凭据与版面分析共用 `layout.providerConfigs`；`agentero` 的凭据在构建期编入 Host，不落设置（见 [builtin-provider.md](builtin-provider.md)）：
 
 | backend | 流程 | `body_source` | `body_quality` |
 |---|---|---|---|
-| `local`（默认） | liteparse worker 子进程 + PDFium | `pdf` / `ocr` | `medium` / `low` |
-| `mineru` | 复用 MinerU 批量提取（上传 → 轮询 → 结果 zip），读取 zip 内 `full.md` | `mineru` | `high` |
+| `local`（无编译期 key 时的默认） | liteparse worker 子进程 + PDFium | `pdf` / `ocr` | `medium` / `low` |
+| `mineru` | 复用 MinerU 批量提取（上传 → 轮询 → 结果 zip）；写入 `full.md`，并保留其 ZIP 中 `images/` 下的派生图片资产，保持 `images/...` 相对链接可渲染 | `mineru` | `high` |
 | `paddle` | 复用 AI Studio 异步任务，拼接 JSONL 中每页 `markdown.text`。正文模型默认 `PaddleOCR-VL-1.6`，可在设置里改（版面分析固定 `PP-StructureV3`，不受影响） | `paddle` | `high` |
 | `openaiCompatible` | 渲染 worker 逐页出 150 DPI PNG（上限 100 页）→ OpenAI 兼容 `/chat/completions` 多模态 OCR（预设硅基流动；`PaddlePaddle/PaddleOCR-VL-1.5` 提示词 `OCR:`，`deepseek-ai/DeepSeek-OCR` 用 grounding 提示词，按 model id 自动选择） | `vlm` | `medium` |
+| `agentero`（注入 key 的构建里的默认） | **复用同一个 `OpenAiVlmBodyEngine`，没有新引擎**：流程与 `openaiCompatible` 完全一致，只是 endpoint / key / model 来自构建期的内置网关（model 兜底 `PaddlePaddle/PaddleOCR-VL-1.5`，提示词按 model id 自动选）。引擎携带自己注册时的 id，所以回退提示读作 `agentero failed: …` | `vlm` | `medium` |
 
+- **`agentero` 只是 parser backend，不是版面分析 backend**：`LAYOUT_BACKENDS` 仍是 `local` / `paddle` / `mineru`，`default_layout_backend()` 无条件 `local`——版面分析跑随包的离线 PP-DocLayoutV3 ONNX，切云端只会让每个 PDF 都产生费用而无收益。`layout_prompt` / `layout_language` / `layout_is_ocr` 对它不特判，因此提示词由 model id 推导，而**语言与强制 OCR 是 MinerU 专用**；前端内置描述符的 `requiresApiKey` / `supports*` 全 false，整张凭证卡被 `isProviderCardConfigurable` 过滤掉，什么都不渲染。
+- **两处白名单**：`PARSER_BACKENDS` 必须含 `agentero`，否则 `normalize()` 在每次保存时把它重置为默认值并写盘；引擎注册表也必须显式注册，因为未注册的 backend 会**静默回退**到 `LocalBodyEngine` 而不报错。两者都有测试守着。
 - **回退**：云端引擎失败或产出空 markdown 时自动回退本地 liteparse，原因追加进 `messages`；用户取消不回退。`body_source` 始终记录实际来源。
 - **凭据注入**：引擎配置以进程级快照持有（启动与 `settings_set` 时从 `AppSettingsStore` 刷新，模式同 `core::http::configure_proxy`），明文 key 不出 Host。
 - **提示词**：默认按 model id 自动选择（含 `deepseek-ocr` → grounding 提示词；含 `paddleocr` → `OCR:`；其余 → 通用指令）。设置里的 Prompt 输入框可覆盖，留空即走自动。
   - ⚠️ `PaddleOCR-VL` 是**任务提示词**模型，只认它自己那几个固定提示词；换成自由指令会退化成检测模式并吐出 `<|LOC_n|>` 坐标 token。自定义提示词请配指令型 VLM（如 DeepSeek-OCR 去掉 `<|grounding|>`、Qwen-VL 等）。
 - **MinerU 高级选项**：`language`（OCR 语言包，默认 `ch` 中英文，Host 白名单校验）与 `isOcr`（强制 OCR，默认关闭、按文本层自动判断）存在共用的 `layout.providerConfigs.mineru`，版面分析与正文解析复用同一套请求参数。
+- **MinerU 图片资产**：MinerU 的 `full.md` 使用 `images/...` 相对链接引用结果 ZIP 中的裁图。Agentero 将这些图片与 `PAPER.md` 一起写到论文目录中的 `images/`；二者均为可重建的派生物，不改变 PDF、TeX 或 `NOTES.md` 的归档地位。
 - **输出清洗**：grounding 输出形如 `<|ref|>label<|/ref|><|det|>[[box]]<|/det|>\n正文`，`<|ref|>` 内是版面**类别名**（`text` / `title`）而非正文，两段都整体丢弃，否则正文里会混入 `text` / `sub_title` 噪声行；`<|LOC_n|>` 同样剥离。
 - **实现**：`src-tauri/src/features/paper/analyze/parse/engines/`（`BodyParseEngine` trait + local / mineru / paddle / openai_vlm）；云端上传/轮询复用 `features/paper/analyze/layout/hosted` 的 `run_mineru_extract` / `run_paddle_ocr_job`。
 - **Live 验证**（`#[ignore]`，需自备 key，密钥只走环境变量）：

@@ -64,7 +64,7 @@ export function PaperTagChip({
 }: PaperTagChipProps) {
 	const colored = tagChipStyle(tag.color);
 	const classNames = cn(
-		"inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] leading-none",
+		"inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-caption leading-none",
 		colored ? "font-medium" : "bg-muted text-muted-foreground",
 		onClick &&
 			"cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring",

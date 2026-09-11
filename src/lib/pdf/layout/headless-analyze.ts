@@ -139,7 +139,13 @@ export async function analyzePaperLayoutHeadless(opts: {
 
 	const pdfPath = await findLocalPdfPath(paperAbsPath);
 	if (!pdfPath) {
-		throw new Error("No local PDF for layout analysis");
+		// Soft-skip: callers may race ahead of DownloadAssets. Re-enqueue after
+		// the PDF lands rather than failing the job with "No local PDF".
+		return {
+			fromCache: false,
+			summary: "skipped: no local PDF",
+			regionCount: 0,
+		};
 	}
 	const buffer = await localFileToArrayBuffer(pdfPath);
 	if (!buffer) {

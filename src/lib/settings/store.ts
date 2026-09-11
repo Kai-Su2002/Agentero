@@ -26,6 +26,7 @@ import {
 	DEFAULT_PDF_ASK_SETTINGS,
 	DEFAULT_SETTINGS,
 	DEFAULT_TRANSLATOR_BASE_URL,
+	GITHUB_MIRROR_PRESETS,
 	snapUiScale,
 } from "@/lib/settings/defaults";
 import { normalizeFontFamilyValue } from "@/lib/settings/fonts";
@@ -33,6 +34,7 @@ import {
 	type AppSettings,
 	DEFAULT_LIBRARY_COLUMNS,
 	type EmbeddingSettings,
+	type EmbeddingSource,
 	isPaperNoteMode,
 	LIBRARY_COLUMN_KEYS,
 	type LibraryColumnKey,
@@ -326,6 +328,19 @@ function normalizePartial(
 	} else {
 		merged.networkProxyUrl = parsed.networkProxyUrl.trim();
 	}
+	if (typeof parsed.githubMirrorEnabled !== "boolean") {
+		merged.githubMirrorEnabled = DEFAULT_SETTINGS.githubMirrorEnabled;
+	}
+	if (typeof parsed.githubMirrorBaseUrl !== "string") {
+		merged.githubMirrorBaseUrl = DEFAULT_SETTINGS.githubMirrorBaseUrl;
+	} else {
+		const trimmed = parsed.githubMirrorBaseUrl.trim().replace(/\/+$/, "");
+		merged.githubMirrorBaseUrl = (
+			GITHUB_MIRROR_PRESETS as readonly string[]
+		).includes(trimmed)
+			? trimmed
+			: GITHUB_MIRROR_PRESETS[0];
+	}
 	if (!isPaperTreeLabelMode(merged.paperTreeLabelMode)) {
 		merged.paperTreeLabelMode = DEFAULT_SETTINGS.paperTreeLabelMode;
 	}
@@ -567,7 +582,26 @@ function normalizeEmbeddingSettings(
 	if (typeof raw.baseUrl === "string") base.baseUrl = raw.baseUrl.trim();
 	if (typeof raw.apiKey === "string") base.apiKey = raw.apiKey.trim();
 	if (typeof raw.model === "string") base.model = raw.model.trim();
+	// Wire `source` is a plain string (empty on a fresh install); narrow it here.
+	base.source = resolveEmbeddingSource(
+		(raw as { source?: unknown }).source,
+		base,
+	);
 	return base;
+}
+
+/** Mirrors the Rust `resolve_embedding_source` rule case-for-case. */
+function resolveEmbeddingSource(
+	rawSource: unknown,
+	fields: Pick<EmbeddingSettings, "baseUrl" | "apiKey" | "model">,
+): EmbeddingSource {
+	const explicit =
+		typeof rawSource === "string" ? rawSource.trim().toLowerCase() : "";
+	if (explicit === "builtin" || explicit === "custom") return explicit;
+	// Any populated BYOK field (an all-`*` mask counts) implies a custom endpoint.
+	const configured =
+		fields.baseUrl !== "" || fields.apiKey !== "" || fields.model !== "";
+	return configured ? "custom" : "builtin";
 }
 
 function normalizeTranslateSettings(

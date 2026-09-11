@@ -34,6 +34,12 @@ export type CatalogEntry = {
 	acpAgentName?: string | null;
 	lastProbeError?: string | null;
 	lastProbedAt?: string | null;
+	/** Normalized local host CLI version, when known. */
+	installedVersion?: string | null;
+	/** Silent-update target (npm latest or dsh pin), when known. */
+	latestVersion?: string | null;
+	/** Settings shows Upgrade only when this is explicitly true. */
+	updateAvailable?: boolean | null;
 };
 
 export type AcpSessionCapabilities = {

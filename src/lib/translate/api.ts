@@ -5,6 +5,9 @@ import {
 } from "@/lib/core/bindings";
 import { isTauri } from "@/lib/core/tauri";
 
+/** Host marker for "the built-in provider has no compiled-in key". */
+export const ERR_TRANSLATE_NO_BUILTIN_KEY = "translate.no_builtin_key";
+
 export type { TranslateTextArgs, TranslateTextResult };
 
 /**
@@ -39,7 +42,16 @@ export async function invokeTranslateText(args: {
 		timeoutMs: args.timeoutMs ?? null,
 	});
 	if (!res.ok || !res.data) {
-		throw new Error(res.error?.message ?? "translate failed");
+		// Only a known domain marker is surfaced verbatim for `displayTranslateError`
+		// to map. `AppError::code()` also yields generic codes (`io`, `json`,
+		// `sqlite`), so treating "not `message`" as a marker would eventually show
+		// users a bare code instead of the Host's human text.
+		const code = res.error?.code;
+		throw new Error(
+			code === ERR_TRANSLATE_NO_BUILTIN_KEY
+				? code
+				: (res.error?.message ?? "translate failed"),
+		);
 	}
 	return res.data.text;
 }

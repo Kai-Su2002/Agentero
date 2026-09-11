@@ -62,6 +62,7 @@ cargo test -p agentero-cli
 | 0.2.1 | 终端 | 跑上列命令 | 全部通过 | ☐ |
 | 0.2.2 | GitHub Actions | Release job 的 updater secret 校验 | `TAURI_SIGNING_PRIVATE_KEY` 和密码缺失时在创建 Draft 前失败 | ☐ |
 | 0.2.3 | Draft Release | 检查 updater 资产 | 有 `latest.json`、各平台 updater 包与对应 `.sig`；`latest.json` 包含每个平台的 URL 和签名 | ☐ |
+| 0.2.4 | GitHub Actions / 应用·设置 | 确认 `AGENTERO_BUILTIN_API_KEY` secret 已配且本次构建注入了它 | 缺 secret **不会**让构建失败（`option_env!` 当未设置处理），只会静默产出没有内置 provider 的包。信号：设置 → 翻译的「Agentero 内置」可选、设置 → Agent → Embedding 的来源默认「Agentero 内置」、设置 → 版面解析的正文引擎默认「Agentero 内置」。见 [release.md](release.md) §内置 Provider 构建期注入 | ☐ |
 
 ### 0.3 安装启动
 
@@ -71,6 +72,7 @@ cargo test -p agentero-cli
 | 0.3.1b | 终端 | 检查产物不含 CLI（macOS：`ls Agentero.app/Contents/MacOS/ | grep agentero-cli`；Windows：安装目录 `dir agentero-cli*`） | 应**无**任何 agentero-cli 文件（不内置真二进制，也不再有占位 stub；#320） | ☐ |
 | 0.3.2 | 欢迎页 | 不打开 Vault，空看界面 | 同一行有 Create / Open / Open remote / Migrate from Zotero + Recent 列表；无大段说明文案 | ☐ |
 | 0.3.3 | 设置 → 关于 | 已安装旧版时检查已发布新版，点「安装并重启」 | 有新版提示、下载进度；重启后 About 显示新版本 | ☐ |
+| 0.3.3b | 主窗口 | 应用跨多个 Release 长期驻留后点标题栏「新版本」标签 | 安装的是最新版而非驻留期间缓存的旧版（安装前 re-check；#481） | ☐ |
 | 0.3.4 | 主窗口 | 启动已安装旧版 | 首屏不阻塞；有新版时只出现一个「安装并重启」Toast；无更新或离线时不弹错误 | ☐ |
 | 0.3.5 | 访达（macOS） | 安装后启动一次，右键任意文件夹 → 快捷操作 | 出现 **Open with Agentero**；点击后打开为 Vault（运行中/未运行各测一次）；含空格/中文目录名正常；设置 → 关于 移除后菜单消失且重启不再自动恢复 | ☐ |
 | 0.3.6 | 资源管理器（Windows） | 安装后右键文件夹及文件夹空白处 | 均有 **Open with Agentero**（Win11 在「显示更多选项」）；含空格/`&`/中文的目录可打开；卸载后 `reg query` 无 `OpenWithAgentero` 残留 | ☐ |
@@ -228,6 +230,7 @@ cargo test -p agentero-cli
 | 6.2.3 | 同上 | 再导同名冲突 PDF | citekey 带 `-2` / `-3` 等后缀，不互相覆盖 | ☐ |
 | 6.2.4 | 终端 + 应用 | **用安装包装的应用**（非 `tauri dev`），先确认 PDFium 已随包：macOS `ls "/Applications/Agentero.app/Contents/Frameworks/libpdfium.dylib"`，Windows/Linux 查 exe 同级 `pdfium/`。再临时移走构建期缓存 `~/Library/Caches/pdfium-rs`（Linux `~/.cache/pdfium-rs`），导入一个本地 PDF | 仍生成 `PAPER.md`，catalog 写入 `body_source`；测完恢复缓存目录（回归 #303） | ☐ |
 | 6.2.5 | 同上 | 把包内 PDFium 临时改名，再导入一个本地 PDF | 任务面板出现 **失败** 的「解析 PDF 正文」，详情含找不到 PDFium 的真实原因，而不是显示“已完成” | ☐ |
+| 6.2.6 | 设置 → 版面解析 + 左栏·树 | 正文引擎选「Agentero 内置」，导入一篇无 TeX 的 PDF | 生成的 `PAPER.md` 是 OCR 质量正文（catalog `body_source` = `vlm`），**不是**静默退化成本地 liteparse 的纯文本；同时版面后端仍显示 `local`，PP-DocLayoutV3 仍从本地 cache 加载（内置 provider 只是正文引擎，不是版面后端） | ☐ |
 
 ### 6.3 补下载
 
@@ -269,13 +272,13 @@ cargo test -p agentero-cli
 
 | # | 界面 | 操作 | 预期 | 结果 |
 |---|---|---|---|---|
-| 7.2.1 | 中间栏·PDF | 拖选一段文字 | 仅选中文字显示平滑蓝色选区 + 操作菜单（高亮 / 批注 / 提问 / 加入对话 / 翻译），不出现整页 / 大块 PDF 蓝色矩形框选 | ☐ |
+| 7.2.1 | 中间栏·PDF | 拖选一段文字 | 仅选中文字显示平滑蓝色选区 + 操作菜单（高亮 / 提问 / 翻译，无批注按钮；提问图标为 PDF Ask Agent logo）+ 页右缘竖向评论入口；Agent 侧栏关闭时无「加入对话」pill；不出现整页 / 大块 PDF 蓝色矩形框选 | ☐ |
 | 7.2.2 | 菜单 | 选 **高亮** | 高亮保留；磁盘 `marks/` 有记录；**原始 PDF 字节不变** | ☐ |
-| 7.2.3 | 菜单 | 选 **批注**，写 comment | 页边批注针；右侧批注面板有卡片 | ☐ |
+| 7.2.3 | 页右缘 | hover 竖向评论入口 → 移走（无输入）→ 再 hover 输入 | hover 进入编辑；无输入移走缩回图标卡；再 hover 可输入；提交后高亮 + 常驻评论卡 | ☐ |
 | 7.2.4 | 右栏·批注 | 点卡片跳转 / 编辑 / 删除 | 跳页正确；改删同步 | ☐ |
 | 7.2.5 | 菜单 | **翻译** 一段 | 按设置中翻译服务出结果 | ☐ |
 | 7.2.6 | 菜单 | **提问**（已配 Agent） | 选区旁迷你问答卡片；可发问出结果 | ☐ |
-| 7.2.7 | 菜单 | **加入对话** → 在 Agent 输入问题发送 | Composer 有选区 chip；发送后选区旁出现**对话卡片**页边针（`kind: ask`，非视觉批注）；悬停/点开可见本轮问答 | ☐ |
+| 7.2.7 | 选区右下角 | 先打开 Agent 侧栏 → 划词出现 **加入对话** pill → 点击 → 在 Agent 输入问题发送 | 侧栏关闭时无 pill；打开后 Composer 有选区 chip；发送后选区旁出现**对话卡片**页边针（`kind: ask`，非视觉批注）；悬停/点开可见本轮问答 | ☐ |
 
 ### 7.3 视觉批注与版面分析
 
@@ -286,6 +289,7 @@ cargo test -p agentero-cli
 | 7.3.3 | 右栏·Figures | 打开带插图的 paper，点「分析」 | 列出 figure/table/algorithm/formula；点击跳转到对应位置 | ☐ |
 | 7.3.4 | 中间栏·PDF | 悬停有编号公式命中框并单击 | 与插图一致：出现「单击进行批注」提示，单击打开视觉批注编辑器 | ☐ |
 | 7.3.5 | 中间栏·PDF | 点工具栏 Languages 全文翻译 | 按阅读顺序分批出译文并盖在 bbox 上（非整页等齐）；再点可停止/清除；磁盘 `source/layout-translate.json` 有缓存 | ☐ |
+| 7.3.5a | 中间栏·PDF（翻译服务=Agentero 内置） | 对一篇含公式 / URL / 引用标记的论文跑全文翻译，逐段对照原文 | 内置路径的 `[[n]]` 批次由 Host 拆分逐段请求再重组：译文**不错位、不并段、不丢块**；`⟦n⟧` 占位符保护的公式 / URL / 引用在译文里原样还原，**没有**出现裸露的 `⟦0⟧` 或被吞掉后整段回落原文（这两点是尚未用真实 key 验证过的假设，见 [../backend/builtin-provider.md](../backend/builtin-provider.md) §限制与后续） | ☐ |
 
 ### 7.4 图片与 MD 插图
 
@@ -341,6 +345,9 @@ cargo test -p agentero-cli
 | 10.6 | 设置 → Agent | 确认 **入库后自动精读** 默认关 | 默认关闭 | ☐ |
 | 10.7 | 设置 → Agent | 权限模式切 restricted / ask / auto | 选项保存成功（行为见 §11） | ☐ |
 | 10.8 | 设置 → 翻译 | 切换 free / Agent 翻译 | 保存成功；PDF 划词翻译跟新设置 | ☐ |
+| 10.8a | 设置（新装 / 删掉 `settings.json` 后重启） | 依次看翻译默认服务、Agent → Embedding 来源、版面解析 → 正文引擎 | 注入 key 的构建里三处默认都是「Agentero 内置」，且**看不到任何** Base URL / API Key / Model 输入框；未注入 key 的构建里三处回落 `tencenttransmart` / 自定义 / `local` | ☐ |
+| 10.8b | 设置 → 翻译 | 选「Agentero 内置」后在 PDF 划词翻译一段英文 | 出译文；失败时 Toast 是可读文案，**不裸露** `translate.no_builtin_key` 标记 | ☐ |
+| 10.8c | 设置 → Agent → Embedding | 已填过 Base URL / API Key / Model 的老配置升级后打开 | 来源被推断为「自定义接口」，三个输入框仍在且值未丢；**没有**被静默切到内置 | ☐ |
 | 10.9 | 设置 → 通用 → 隐私 | 开关「本地使用记录」；再点清除 | 关闭后不再写入；清除后 CLI `usage timeline` 为空；与 PostHog 开关互不影响 | ☐ |
 
 ---
@@ -354,7 +361,7 @@ cargo test -p agentero-cli
 | # | 界面 | 操作 | 预期 | 结果 |
 |---|---|---|---|---|
 | 11.0.1 | 右栏·Agent | 未配置 Agent 时打开面板 | 有安装/配置指引；**左栏库与 PDF 仍可用** | ☐ |
-| 11.0.2 | 设置 → Agent | 本机未装 Claude/Codex/OpenCode/Antigravity 等预设 Agent 时，点「安装」/「安装 ACP」 | 静默执行官方 installer；安装成功后探测状态变绿 | ☐ |
+| 11.0.2 | 设置 → Agent | 本机未装 Claude/Codex/OpenCode 等预设 Agent 时，点「安装」/「安装 ACP」 | 静默执行官方 installer；安装成功后探测状态变绿 | ☐ |
 | 11.0.3 | 设置 → Agent | 已装 Agent 有可用更新时，点「升级」 | 升级成功；版本号或探测状态更新 | ☐ |
 
 ### 11.1 对话
@@ -475,7 +482,7 @@ agentero --vault /tmp/agentero-cli-vault paper list --json
 | 打开杂乱文件夹自动整理 | Vault 采纳未交付 |
 | 与 Zotero 桌面同时占 23119 | 端口互斥 |
 | Windows 远程 Vault | 不支持 |
-| 应用内填模型 API Key | BYOA，不收集 |
+| 应用内填 **Agent** 的模型 API Key | BYOA，不收集；Agent 的 Key 由 Agent CLI 自己持有。（翻译 / 版面 / embedding 的 BYOK Key 与构建期内置 provider 凭证是另外两条路径，见 [release.md](release.md) §内置 Provider 构建期注入） |
 | 删除时确认框 / Undo toast | 产品设计为无确认进回收站 |
 
 ---

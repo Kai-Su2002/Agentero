@@ -24,6 +24,7 @@ import {
 	runLayoutRegionTranslate,
 	toLayoutTranslateItems,
 } from "@/lib/pdf/layout";
+import { displayTranslateError } from "@/lib/translate";
 
 export type UsePdfLayoutTranslateOptions = {
 	docId: string;
@@ -219,7 +220,7 @@ export function usePdfLayoutTranslate({
 		})()
 			.catch((e) => {
 				if (ac.signal.aborted) return;
-				const message = errorText(e);
+				const message = displayTranslateError(errorText(e));
 				notifyError(t("pdf.layoutTranslate.failed"), { description: message });
 				setLayoutTranslateJob((prev) => ({
 					status: "partial",
@@ -346,7 +347,7 @@ export function usePdfLayoutTranslate({
 			})()
 				.catch((e) => {
 					if (ac.signal.aborted) return;
-					const message = errorText(e);
+					const message = displayTranslateError(errorText(e));
 					notifyError(t("pdf.layoutTranslate.failed"), {
 						description: message,
 					});

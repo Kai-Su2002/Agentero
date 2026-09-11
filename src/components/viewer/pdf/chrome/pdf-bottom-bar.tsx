@@ -15,6 +15,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { PDF_CHROME_CHIP } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
 import { cn } from "@/lib/core/utils";
 import {
 	PDF_PAPER_SWATCH_CLASS,
@@ -64,7 +65,13 @@ export function PdfBottomBar({
 	return (
 		<div className="pointer-events-none absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-1rem)] -translate-x-1/2">
 			<TooltipProvider delayDuration={200}>
-				<div className="pointer-events-auto flex max-w-full select-none items-center gap-0.5 rounded-lg border border-border/80 bg-background/95 p-0.5 shadow-sm backdrop-blur-sm">
+				<div
+					data-pdf-chrome
+					className={cn(
+						"pointer-events-auto flex max-w-full select-none items-center gap-0.5 rounded-lg p-0.5",
+						PDF_CHROME_CHIP,
+					)}
+				>
 					{isRemotePaper ? (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -78,7 +85,7 @@ export function PdfBottomBar({
 										className="size-3.5 shrink-0 text-[#B31B1B]"
 										aria-hidden
 									/>
-									<span className="whitespace-nowrap text-[11px] font-medium">
+									<span className="whitespace-nowrap text-caption font-medium">
 										{t("pdf.remoteMode")}
 									</span>
 								</div>
@@ -90,7 +97,7 @@ export function PdfBottomBar({
 						<input
 							type="text"
 							inputMode="numeric"
-							className="min-w-6 rounded bg-transparent px-0.5 text-center font-medium text-foreground text-xs tabular-nums outline-none focus:bg-muted"
+							className="min-w-6 rounded bg-transparent px-0.5 text-center font-medium text-foreground text-sm tabular-nums outline-none focus:bg-muted"
 							style={{ width: `${pageDigits + 1}ch` }}
 							aria-label={t("pdf.goToPage")}
 							value={pageField}
@@ -113,7 +120,7 @@ export function PdfBottomBar({
 								onCommitPageField();
 							}}
 						/>
-						<span className="shrink-0 px-0.5 text-muted-foreground text-xs tabular-nums">
+						<span className="shrink-0 px-0.5 text-muted-foreground text-sm tabular-nums">
 							/ {totalPages}
 						</span>
 					</div>
@@ -149,7 +156,7 @@ export function PdfBottomBar({
 												aria-label={label}
 												aria-pressed={pdfTone === tone}
 												className={cn(
-													"size-5 shrink-0 rounded-full ring-1 ring-black/15 transition hover:scale-110 dark:ring-white/25",
+													"size-5 shrink-0 rounded-full ring-1 ring-black/15 transition-transform duration-100 hover:scale-105 active:scale-95 dark:ring-white/25",
 													PDF_PAPER_SWATCH_CLASS[tone],
 													pdfTone === tone &&
 														"ring-2 ring-foreground/70 ring-offset-1 ring-offset-popover",

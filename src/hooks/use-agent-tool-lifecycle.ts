@@ -21,10 +21,12 @@ export type LifecycleProgressState = {
 export function useAgentToolLifecycle(opts: {
 	scanOnce: () => Promise<CatalogScanResponse | null>;
 	probeInstalled?: (scan: CatalogScanResponse, force: boolean) => Promise<void>;
+	/** Re-compare CLI versions so Upgrade hides after a successful update. */
+	refreshVersions?: () => Promise<CatalogScanResponse | null>;
 	onError?: (message: string) => void;
 }) {
 	const { t } = useTranslation("settings");
-	const { scanOnce, probeInstalled, onError } = opts;
+	const { scanOnce, probeInstalled, refreshVersions, onError } = opts;
 	const [lifecycleBusyIds, setLifecycleBusyIds] = useState<
 		Map<string, ToolLifecycleAction>
 	>(() => new Map());
@@ -117,6 +119,9 @@ export function useAgentToolLifecycle(opts: {
 					});
 					await probeInstalled(scan, true);
 				}
+				if (refreshVersions) {
+					await refreshVersions();
+				}
 				notifySuccess(
 					t(
 						action === "update"
@@ -153,6 +158,7 @@ export function useAgentToolLifecycle(opts: {
 			onError,
 			patchLifecycleProgress,
 			probeInstalled,
+			refreshVersions,
 			scanOnce,
 			t,
 		],

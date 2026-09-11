@@ -99,7 +99,7 @@ export function MobileAgentPage({
 								placeholder={t("agent.placeholder")}
 								disabled={sending}
 								rows={1}
-								className="min-h-10 max-h-32 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-base shadow-none focus-visible:ring-0 md:text-[15px]"
+								className="min-h-10 max-h-32 flex-1 resize-none border-0 bg-transparent px-2 py-2 text-base shadow-none focus-visible:ring-0 md:text-base"
 							/>
 							<PromptInputSubmit
 								status={sending ? "submitted" : "ready"}
@@ -138,7 +138,7 @@ function MobileChatLine({ line }: { line: AgentLine }) {
 		>
 			<MessageContent
 				className={cn(
-					"text-[15px] leading-6",
+					"text-base leading-6",
 					line.role === "user" && "rounded-lg bg-muted px-3 py-2.5",
 					line.role === "assistant" && "w-full max-w-full",
 				)}

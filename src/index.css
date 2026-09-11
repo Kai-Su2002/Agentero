@@ -166,6 +166,65 @@
 	}
 }
 
+/* Frost translucent chrome when the OS asks for reduced transparency. */
+@media (prefers-reduced-transparency: reduce) {
+	[data-titlebar],
+	[data-pdf-chrome],
+	[data-settings-titlebar] {
+		background-color: var(--background);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+	}
+	[data-settings-titlebar],
+	[data-settings-sidebar] {
+		background-color: var(--sidebar);
+	}
+	[data-library-header] {
+		background-color: var(--background);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+		box-shadow: none;
+		border-bottom-width: 1px;
+	}
+}
+
+/* Settings pane enter: short opacity cross-fade (respects reduced-motion). */
+@keyframes settings-pane-in {
+	from {
+		opacity: 0;
+	}
+	to {
+		opacity: 1;
+	}
+}
+[data-settings-pane][data-active="true"] {
+	animation: settings-pane-in var(--motion-duration-fast) var(--motion-ease-out);
+}
+@media (prefers-reduced-motion: reduce) {
+	[data-settings-pane][data-active="true"] {
+		animation: none;
+	}
+}
+@media (prefers-contrast: more) {
+	[data-settings-sidebar] {
+		border-right-color: var(--sidebar-border);
+	}
+}
+
+/* Stronger structural edges when the user asks for more contrast. */
+@media (prefers-contrast: more) {
+	:root {
+		--border: oklch(0.78 0.012 260);
+		--sidebar-border: oklch(0.78 0.012 260);
+		--input: oklch(0.78 0.012 260);
+	}
+	.dark {
+		--border: oklch(0.98 0.004 260 / 28%);
+		--sidebar-border: oklch(0.98 0.004 260 / 28%);
+		--input: oklch(0.98 0.004 260 / 32%);
+	}
+}
+
 /*
  * Runtime-overridable font stacks (Settings → Appearance → Fonts).
  * @theme inline bakes token values into utilities, so the theme tokens must
@@ -173,21 +232,29 @@
  * interfaceFontFamily / monoFontFamily cannot take effect.
  */
 :root {
+	/*
+	 * Default chrome = platform UI sans (SF Pro / Segoe UI + CJK). Geist stays
+	 * available via Appearance → Fonts → Geist. Keep rem root at 16×uiScale so
+	 * Windows 125% DPR does not shrink spacing tokens with the type scale.
+	 */
 	--agentero-font-sans:
-		"Geist Variable", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-		"PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Microsoft YaHei",
-		"Noto Sans SC", sans-serif;
+		system-ui, "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto,
+		"Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB",
+		"Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", sans-serif;
 	--agentero-font-heading: var(--agentero-font-sans);
 	--agentero-font-mono:
-		ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-		"Courier New", monospace;
+		ui-monospace, SFMono-Regular, Menlo, Monaco, "Cascadia Mono", Consolas,
+		"Liberation Mono", "Courier New", monospace;
 
 	/*
-	 * Motion tokens — single source of truth for custom CSS. Component classes
-	 * mirror them: 100 = micro feedback (hover/press), 150 = overlay enter/exit,
-	 * 200 = layout choreography (rails, panels). Keep RAIL_ANIMATION_MS in
-	 * use-shell-layout.ts in sync with --motion-duration-normal.
+	 * Motion tokens — single source of truth for custom CSS + JS (see
+	 * lib/core/motion.ts). Keep RAIL_ANIMATION_MS in use-shell-layout.ts in
+	 * sync with --motion-duration-normal.
+	 *   micro  100ms — press / hover feedback (Button, tabs, rings)
+	 *   fast   150ms — overlay enter/exit, chrome color fades
+	 *   normal 200ms — layout choreography (rails, panels, task HUD)
 	 */
+	--motion-duration-micro: 100ms;
 	--motion-duration-fast: 150ms;
 	--motion-duration-normal: 200ms;
 	--motion-ease-out: cubic-bezier(0.25, 1, 0.5, 1);
@@ -197,6 +264,43 @@
 	--font-heading: var(--agentero-font-heading);
 	--font-sans: var(--agentero-font-sans);
 	--font-mono: var(--agentero-font-mono);
+	/*
+	 * Apple UI type scale at 16px rem root (Windows-safe rem, not px).
+	 * Hierarchy is size + leading + tracking as a set (WWDC typography):
+	 *   caption 11 → slight +tracking, open leading
+	 *   callout 12 → slight +tracking
+	 *   body    13 → tracking ~0, comfortable leading
+	 *   title3  15 → −tracking, tighter leading
+	 *   title2  17 → more −tracking, tight leading
+	 * Weight stays on utilities (medium/semibold) — do not bake weight into
+	 * size tokens or every `text-base` cell becomes bold.
+	 */
+	--text-caption: 0.6875rem;
+	--text-caption--line-height: 1.35;
+	--text-caption--letter-spacing: 0.012em;
+	--text-xs: 0.75rem;
+	--text-xs--line-height: 1.35;
+	--text-xs--letter-spacing: 0.006em;
+	--text-sm: 0.8125rem;
+	--text-sm--line-height: 1.3846; /* ≈18/13 — Body, was 1.25 (too dense) */
+	--text-sm--letter-spacing: 0em;
+	--text-base: 0.9375rem;
+	--text-base--line-height: 1.25;
+	--text-base--letter-spacing: -0.012em;
+	--text-lg: 1.0625rem; /* 17 — Title 2 */
+	--text-lg--line-height: 1.2;
+	--text-lg--letter-spacing: -0.018em;
+	/* Display tracking: tighten large type; body stays near 0. */
+	--tracking-tighter: -0.04em;
+	--tracking-tight: -0.02em;
+	--tracking-normal: 0em;
+	--tracking-wide: 0.012em;
+	--tracking-wider: 0.03em;
+	--tracking-widest: 0.08em;
+	/* Emphasize with medium/semibold; avoid bold 700 in chrome. */
+	--font-weight-medium: 510;
+	--font-weight-semibold: 590;
+	--font-weight-bold: 680;
 	--color-sidebar-ring: var(--sidebar-ring);
 	--color-sidebar-border: var(--sidebar-border);
 	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -239,75 +343,82 @@
 	--color-highlight: var(--highlight);
 }
 
+/*
+ * Default UI theme — Apple system gray materials.
+ * Cool, low-chroma neutrals (hue ≈260) so chrome reads as gel/structure and
+ * content surfaces lift cleanly. Brand / highlight stay chromatic accents.
+ * Hierarchy: sidebar (heavier) → background (canvas) → card/popover (elevated).
+ */
 :root {
-	--background: oklch(1 0 0);
-	--foreground: oklch(0.145 0 0);
-	--card: oklch(1 0 0);
-	--card-foreground: oklch(0.145 0 0);
-	--popover: oklch(1 0 0);
-	--popover-foreground: oklch(0.145 0 0);
-	--primary: oklch(0.205 0 0);
-	--primary-foreground: oklch(0.985 0 0);
-	--secondary: oklch(0.97 0 0);
-	--secondary-foreground: oklch(0.205 0 0);
-	--muted: oklch(0.97 0 0);
-	--muted-foreground: oklch(0.556 0 0);
-	--accent: oklch(0.97 0 0);
-	--accent-foreground: oklch(0.205 0 0);
+	--background: oklch(0.995 0.002 260);
+	--foreground: oklch(0.21 0.008 260);
+	--card: oklch(1 0.001 260);
+	--card-foreground: oklch(0.21 0.008 260);
+	--popover: oklch(1 0.001 260);
+	--popover-foreground: oklch(0.21 0.008 260);
+	--primary: oklch(0.25 0.012 260);
+	--primary-foreground: oklch(0.99 0.001 260);
+	--secondary: oklch(0.96 0.006 260);
+	--secondary-foreground: oklch(0.25 0.012 260);
+	--muted: oklch(0.962 0.006 260);
+	--muted-foreground: oklch(0.48 0.014 260);
+	--accent: oklch(0.952 0.008 260);
+	--accent-foreground: oklch(0.25 0.012 260);
 	--destructive: oklch(0.577 0.245 27.325);
-	--border: oklch(0.922 0 0);
-	--input: oklch(0.922 0 0);
-	--ring: oklch(0.708 0 0);
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
-	--radius: 0.625rem;
-	--sidebar: oklch(0.985 0 0);
-	--sidebar-foreground: oklch(0.145 0 0);
-	--sidebar-primary: oklch(0.205 0 0);
-	--sidebar-primary-foreground: oklch(0.985 0 0);
-	--sidebar-accent: oklch(0.97 0 0);
-	--sidebar-accent-foreground: oklch(0.205 0 0);
-	--sidebar-border: oklch(0.922 0 0);
-	--sidebar-ring: oklch(0.708 0 0);
+	--border: oklch(0.905 0.008 260);
+	--input: oklch(0.905 0.008 260);
+	--ring: oklch(0.62 0.02 260);
+	--chart-1: oklch(0.87 0.01 260);
+	--chart-2: oklch(0.556 0.014 260);
+	--chart-3: oklch(0.439 0.014 260);
+	--chart-4: oklch(0.371 0.012 260);
+	--chart-5: oklch(0.269 0.01 260);
+	/* 8px base — denser macOS control corners than 10px. */
+	--radius: 0.5rem;
+	--sidebar: oklch(0.965 0.007 260);
+	--sidebar-foreground: oklch(0.21 0.008 260);
+	--sidebar-primary: oklch(0.25 0.012 260);
+	--sidebar-primary-foreground: oklch(0.99 0.001 260);
+	--sidebar-accent: oklch(0.935 0.01 260);
+	--sidebar-accent-foreground: oklch(0.25 0.012 260);
+	--sidebar-border: oklch(0.9 0.008 260);
+	--sidebar-ring: oklch(0.62 0.02 260);
 	--brand: oklch(0.623 0.214 259.815);
 	--highlight: oklch(0.852 0.199 91.936);
 }
 
 .dark {
-	--background: oklch(0.145 0 0);
-	--foreground: oklch(0.985 0 0);
-	--card: oklch(0.205 0 0);
-	--card-foreground: oklch(0.985 0 0);
-	--popover: oklch(0.205 0 0);
-	--popover-foreground: oklch(0.985 0 0);
-	--primary: oklch(0.922 0 0);
-	--primary-foreground: oklch(0.205 0 0);
-	--secondary: oklch(0.269 0 0);
-	--secondary-foreground: oklch(0.985 0 0);
-	--muted: oklch(0.269 0 0);
-	--muted-foreground: oklch(0.708 0 0);
-	--accent: oklch(0.269 0 0);
-	--accent-foreground: oklch(0.985 0 0);
+	--background: oklch(0.155 0.006 260);
+	--foreground: oklch(0.98 0.004 260);
+	--card: oklch(0.215 0.008 260);
+	--card-foreground: oklch(0.98 0.004 260);
+	--popover: oklch(0.215 0.008 260);
+	--popover-foreground: oklch(0.98 0.004 260);
+	--primary: oklch(0.94 0.006 260);
+	--primary-foreground: oklch(0.22 0.01 260);
+	--secondary: oklch(0.255 0.008 260);
+	--secondary-foreground: oklch(0.98 0.004 260);
+	--muted: oklch(0.255 0.008 260);
+	--muted-foreground: oklch(0.72 0.012 260);
+	--accent: oklch(0.27 0.01 260);
+	--accent-foreground: oklch(0.98 0.004 260);
 	--destructive: oklch(0.704 0.191 22.216);
-	--border: oklch(1 0 0 / 10%);
-	--input: oklch(1 0 0 / 15%);
-	--ring: oklch(0.556 0 0);
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
-	--sidebar: oklch(0.205 0 0);
-	--sidebar-foreground: oklch(0.985 0 0);
-	--sidebar-primary: oklch(0.488 0.243 264.376);
-	--sidebar-primary-foreground: oklch(0.985 0 0);
-	--sidebar-accent: oklch(0.269 0 0);
-	--sidebar-accent-foreground: oklch(0.985 0 0);
-	--sidebar-border: oklch(1 0 0 / 10%);
-	--sidebar-ring: oklch(0.556 0 0);
+	--border: oklch(0.98 0.004 260 / 12%);
+	--input: oklch(0.98 0.004 260 / 16%);
+	--ring: oklch(0.58 0.02 260);
+	--chart-1: oklch(0.87 0.01 260);
+	--chart-2: oklch(0.556 0.014 260);
+	--chart-3: oklch(0.439 0.014 260);
+	--chart-4: oklch(0.371 0.012 260);
+	--chart-5: oklch(0.269 0.01 260);
+	--sidebar: oklch(0.18 0.007 260);
+	--sidebar-foreground: oklch(0.98 0.004 260);
+	--sidebar-primary: oklch(0.62 0.18 255);
+	--sidebar-primary-foreground: oklch(0.99 0.001 260);
+	--sidebar-accent: oklch(0.27 0.01 260);
+	--sidebar-accent-foreground: oklch(0.98 0.004 260);
+	--sidebar-border: oklch(0.98 0.004 260 / 12%);
+	--sidebar-ring: oklch(0.58 0.02 260);
 	--brand: oklch(0.707 0.165 254.624);
 	--highlight: oklch(0.852 0.199 91.936);
 }
@@ -323,10 +434,15 @@
 		overflow: hidden;
 	}
 	body {
-		@apply bg-background text-foreground;
+		/* Inherit Body 13 across chrome; surfaces opt into text-xs / text-caption. */
+		@apply bg-background text-foreground text-sm font-normal;
 	}
 	html {
 		@apply font-sans;
+		font-optical-sizing: auto;
+		text-rendering: optimizeLegibility;
+		-webkit-font-smoothing: antialiased;
+		-moz-osx-font-smoothing: grayscale;
 	}
 	:where(
 		button,
@@ -475,15 +591,21 @@
 .agentero-dockview,
 .agentero-dockview-theme {
 	--dv-group-view-background-color: var(--background);
-	--dv-tabs-and-actions-container-background-color: var(--muted);
-	/* Match PaneHeader (`h-10`) so the workspace aligns with side-pane headers. */
-	--dv-tabs-and-actions-container-height: 2.5rem;
-	--dv-tabs-and-actions-container-font-size: 0.75rem;
+	/* Soften the strip so the active tab can lift off it. */
+	--dv-tabs-and-actions-container-background-color: color-mix(
+		in oklab,
+		var(--muted) 72%,
+		var(--background)
+	);
+	/* Match PaneHeader (`h-9` / 2.25rem) so the workspace aligns with side-pane headers. */
+	--dv-tabs-and-actions-container-height: 2.25rem;
+	/* Body 13 — match PaneHeader / sidebar so tab titles sit on the same rung. */
+	--dv-tabs-and-actions-container-font-size: 0.8125rem;
 	--dv-activegroup-visiblepanel-tab-background-color: var(--background);
 	--dv-activegroup-hiddenpanel-tab-background-color: color-mix(
 		in oklab,
-		var(--muted) 80%,
-		transparent
+		var(--muted) 55%,
+		var(--background)
 	);
 	--dv-inactivegroup-visiblepanel-tab-background-color: var(--background);
 	--dv-inactivegroup-hiddenpanel-tab-background-color: transparent;
@@ -597,8 +719,10 @@ body.agentero-dockview-dragging * {
 	flex-shrink: 0;
 	position: relative;
 	z-index: 2;
-	/* Divider vs. the toolbar/content below (#408). */
-	border-bottom: 1px solid var(--border);
+	/* Soft edge vs. content — prefer mask over a hard 1px when possible. */
+	border-bottom: 1px solid color-mix(in oklab, var(--border) 70%, transparent);
+	-webkit-user-select: none;
+	user-select: none;
 }
 
 /*
@@ -609,10 +733,17 @@ body.agentero-dockview-dragging * {
 	max-width: 12rem;
 	min-width: 0;
 	overflow: hidden;
+	-webkit-user-select: none;
+	user-select: none;
 	/* Tab chrome fades like every other row; content still switches instantly. */
 	transition:
 		background-color var(--motion-duration-fast) var(--motion-ease-out),
-		color var(--motion-duration-fast) var(--motion-ease-out);
+		color var(--motion-duration-fast) var(--motion-ease-out),
+		opacity var(--motion-duration-micro) var(--motion-ease-out);
+}
+
+.agentero-dockview .dv-tab:active {
+	opacity: 0.85;
 }
 
 .agentero-dockview .dv-tab .dv-default-tab {

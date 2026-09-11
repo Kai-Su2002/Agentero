@@ -8,20 +8,24 @@ use std::process::Command;
 #[cfg(all(unix, not(target_os = "macos")))]
 type TerminalCommandFactory = fn(&str) -> Command;
 
-/// Resolve the directory to open: folders stay as-is; files use their parent.
+/// Resolve folders/files to a cwd; local Windows paths use a shell-compatible form.
 pub fn terminal_cwd_for_path(path: &Path) -> Result<PathBuf, AppError> {
     if path.as_os_str().is_empty() {
         return Err(AppError::message("path is required"));
     }
     let meta = std::fs::metadata(path)
         .map_err(|e| AppError::message(format!("path not found ({}): {e}", path.display())))?;
-    if meta.is_dir() {
-        return Ok(path.to_path_buf());
-    }
-    path.parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .ok_or_else(|| AppError::message("cannot resolve parent directory"))
+    let cwd = if meta.is_dir() {
+        path.to_path_buf()
+    } else {
+        path.parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .map(Path::to_path_buf)
+            .ok_or_else(|| AppError::message("cannot resolve parent directory"))?
+    };
+    #[cfg(windows)]
+    let cwd = crate::core::process::windows_shell_path(&cwd);
+    Ok(cwd)
 }
 
 /// Open the system default terminal with cwd at `path` (or its parent if a file).
@@ -433,16 +437,33 @@ fn open_terminal_at(cwd: &Path) -> Result<(), AppError> {
 #[cfg(target_os = "windows")]
 fn open_terminal_at(cwd: &Path) -> Result<(), AppError> {
     // Prefer Windows Terminal when available (often the system default on Win11).
-    if Command::new("wt").arg("-d").arg(cwd).spawn().is_ok() {
+    if Command::new("wt.exe").arg("-d").arg(cwd).spawn().is_ok() {
         return Ok(());
     }
-    // Fallback: classic cmd in a new window, cwd set via /K cd.
-    let cd = format!("cd /d {}", cwd.display());
-    Command::new("cmd")
-        .args(["/C", "start", "", "cmd", "/K", &cd])
-        .spawn()
+    let status = cmd_terminal_command(cwd)
+        .status()
         .map_err(|e| AppError::message(format!("failed to open terminal: {e}")))?;
+    if !status.success() {
+        return Err(AppError::message(format!(
+            "failed to open terminal (exit {status})"
+        )));
+    }
     Ok(())
+}
+
+#[cfg(windows)]
+fn cmd_terminal_command(cwd: &Path) -> Command {
+    use std::os::windows::process::CommandExt;
+
+    // `start` gives the interactive shell its own console handles. Directly
+    // spawning cmd with CREATE_NEW_CONSOLE can inherit closed/redirected stdin
+    // from the desktop app and exit immediately. Never put the path in script.
+    let mut command = Command::new("cmd.exe");
+    command
+        .args(["/D", "/C", "start", "", "cmd.exe", "/D"])
+        .current_dir(cwd)
+        .creation_flags(0x0800_0000); // CREATE_NO_WINDOW for the launcher only.
+    command
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]
@@ -501,6 +522,73 @@ fn open_terminal_at(cwd: &Path) -> Result<(), AppError> {
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    #[cfg(windows)]
+    fn cmd_opens_canonical_paths_with_interactive_stdio() {
+        use base64::Engine;
+        use std::process::Stdio;
+        use std::time::{Duration, Instant};
+
+        let temp = tempfile::tempdir().unwrap();
+        let dir = temp.path().join("中文 Vault & %CD% ! (notes)^");
+        fs::create_dir(&dir).unwrap();
+        let file = dir.join("note.md");
+        fs::write(&file, "x").unwrap();
+
+        // The probe runs inside the actual terminal, then exits. No typing or
+        // persistent test windows; redirected parent handles reproduce GUI EOF.
+        let script = r#"
+$result = @{
+    cwd = (Get-Location).Path
+    inputRedirected = [Console]::IsInputRedirected
+    outputRedirected = [Console]::IsOutputRedirected
+}
+[IO.File]::WriteAllText($env:AGENTERO_TERMINAL_PROBE, ($result | ConvertTo-Json -Compress))
+"#;
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            script
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+
+        for (index, path) in [&dir, &file].into_iter().enumerate() {
+            let canonical = fs::canonicalize(path).unwrap();
+            let cwd = terminal_cwd_for_path(&canonical).unwrap();
+            assert!(!cwd.to_string_lossy().starts_with(r"\\?\"));
+            let probe = temp.path().join(format!("probe-{index}.json"));
+            let status = cmd_terminal_command(&cwd)
+                .args([
+                    "/C",
+                    "powershell.exe",
+                    "-NoProfile",
+                    "-EncodedCommand",
+                    &encoded,
+                ])
+                .env("AGENTERO_TERMINAL_PROBE", &probe)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "{status}");
+            let deadline = Instant::now() + Duration::from_secs(10);
+            let result = loop {
+                if let Some(result) = fs::read_to_string(&probe)
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                {
+                    break result;
+                }
+                assert!(Instant::now() < deadline, "terminal probe did not run");
+                std::thread::sleep(Duration::from_millis(20));
+            };
+            assert_eq!(Path::new(result["cwd"].as_str().unwrap()), cwd);
+            assert_eq!(result["inputRedirected"], false);
+            assert_eq!(result["outputRedirected"], false);
+        }
+    }
 
     #[test]
     fn cwd_for_directory_is_self() {

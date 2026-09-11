@@ -67,6 +67,20 @@
 	"chainOfThought": {
 		"title": "Chain of Thought"
 	},
+	"table": {
+		"copy": "Copy table",
+		"copyAsCsv": "Copy as CSV",
+		"copyAsMarkdown": "Copy as Markdown",
+		"copyAsTsv": "Copy as TSV",
+		"download": "Download table",
+		"downloadAsCsv": "Download as CSV",
+		"downloadAsMarkdown": "Download as Markdown",
+		"viewFullscreen": "View fullscreen"
+	},
+	"code": {
+		"copy": "Copy code",
+		"download": "Download code"
+	},
 	"promptInput": {
 		"placeholder": "What would you like to know?",
 		"uploadFiles": "Upload files",

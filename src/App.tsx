@@ -26,6 +26,7 @@ import {
 } from "@/components/ui/resizable";
 import { resolveActivePdfHandle } from "@/components/viewer";
 import { WorkspaceHost } from "@/components/workspace/workspace-host";
+import { useAgentCatalogPrefetch } from "@/hooks/use-agent-catalog-prefetch";
 import { useAppBootstrap } from "@/hooks/use-app-bootstrap";
 import { useAppShortcuts } from "@/hooks/use-app-shortcuts";
 import { useUiStore, useVaultStore } from "@/hooks/use-app-stores";
@@ -193,6 +194,8 @@ export default function App() {
 	useConnectorSync();
 	useMcpSync();
 	useLayoutModelPrefetch();
+	// Soft-probe catalog ACP agents at open (sidebar panel is lazy-mounted).
+	useAgentCatalogPrefetch();
 	// Cancel WebView navigation on any OS file drop (PDF import is tree-only).
 	useExternalFileDrop();
 	// First-vault highlight tour (driver.js) + Settings replay listener.
@@ -411,7 +414,7 @@ export default function App() {
 									<aside
 										ref={sidebarAsideRef}
 										data-vault-sidebar
-										className="flex h-full min-h-0 flex-col overflow-hidden bg-muted/20"
+										className="flex h-full min-h-0 flex-col overflow-hidden bg-sidebar isolate transform-gpu"
 									>
 										<VaultSidebar />
 									</aside>

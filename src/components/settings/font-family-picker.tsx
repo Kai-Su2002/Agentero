@@ -44,11 +44,13 @@ const PRESET_I18N: Record<
 	FontStackPreset,
 	| "appearance.fontFamily.default"
 	| "appearance.fontFamily.system"
+	| "appearance.fontFamily.geist"
 	| "appearance.fontFamily.serif"
 	| "appearance.fontFamily.mono"
 > = {
 	default: "appearance.fontFamily.default",
 	system: "appearance.fontFamily.system",
+	geist: "appearance.fontFamily.geist",
 	serif: "appearance.fontFamily.serif",
 	mono: "appearance.fontFamily.mono",
 };

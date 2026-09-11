@@ -71,8 +71,8 @@ export function captionRoleFromText(text: string): CaptionRole {
 }
 
 /**
- * Geometry fallback when text is missing: short narrow boxes under panels
- * are subpanel titles; wide boxes are main captions.
+ * Geometry fallback when text is missing: wide boxes may be main captions.
+ * Narrow boxes are ambiguous (single-column main caption or subpanel label).
  */
 export function captionRoleFromGeometry(
 	region: PdfLayoutRegion,
@@ -82,15 +82,18 @@ export function captionRoleFromGeometry(
 	if (region.bbox.w >= 0.45 && region.bbox.h <= 0.2) {
 		return region.kind === "figure_title" ? "figure_main" : "other";
 	}
-	// Narrow short box → (a)(b) style subpanel label.
-	if (region.bbox.w <= 0.4 && region.bbox.h <= 0.1) {
-		return "subpanel";
-	}
+	// Only explicit text such as (a) establishes a subpanel role.
 	return null;
 }
 
 export function resolveCaptionRole(region: PdfLayoutRegion): CaptionRole {
-	if (region.captionRole) return region.captionRole;
+	// Old raw sidecars may cache a geometry-only subpanel role. Re-evaluate it
+	// when no text supports that classification, so reopening fixes old results.
+	if (
+		region.captionRole &&
+		!(region.captionRole === "subpanel" && !region.title?.trim())
+	)
+		return region.captionRole;
 	const fromText = region.title ? captionRoleFromText(region.title) : "other";
 	if (fromText !== "other") return fromText;
 	return captionRoleFromGeometry(region) ?? "other";

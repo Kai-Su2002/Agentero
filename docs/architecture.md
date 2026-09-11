@@ -65,7 +65,7 @@ BYOA，连接本机 ACP Agent。详见 [frontend/agent.md](frontend/agent.md) / 
 
 - **空态**：建议 chips → `summary` / `qa` / `related_work`。
 - **上下文**：当前论文默认加入（实心 chip，可 X 移除）。`@` 提及与文件树拖入为可移除 context chip。
-- **选区上下文**：Markdown/PDF 选中文字 → 瞬时选区 chip（虚线）；`⌘L` 或「加入对话」固定为 chip。发送时以引用块消费；PDF 带几何的选区在发送后插入 `kind: ask` 对话卡片页边针（非视觉批注）。
+- **选区上下文**：Markdown/PDF 选中文字 → 瞬时选区 chip（虚线）；`⌘L` 固定为 chip；PDF 仅在 Agent 侧栏打开时于选区右下角显示「加入对话」pill。发送时以引用块消费；PDF 带几何的选区在发送后插入 `kind: ask` 对话卡片页边针（非视觉批注）。
 - **运行中继续输入**：后续消息进 Queue waitlist，当前回复结束后自动发送。
 - **权限**：全局模式 `restricted`（默认）/ `ask` / `auto`。`ask` 时弹权限对话框。
 - **结构化提问**：各 harness 的 ask-user / elicitation / Grok ext 归一为底部问卷（与 free-text composer 互斥）。详见 [frontend/agent.md](frontend/agent.md) / [backend/agent.md](backend/agent.md)。
@@ -73,7 +73,7 @@ BYOA，连接本机 ACP Agent。详见 [frontend/agent.md](frontend/agent.md) / 
 
 ### PDF 阅读
 
-Vault 任意路径 `.pdf` → `blob:` 预览。页码导航/适应宽·整页/大纲/⌘F 查找。真实 scale 渲染 + 平滑划词覆盖层。划词菜单：高亮/批注/提问/翻译。支持视觉区域批注（框选插图/表/算法/公式，可写备注或向 Agent 提问）、版面分析（Figures 侧栏列出检测到的图/表/算法/公式）、有编号公式 hover 符号解析卡。详见 [frontend/pdf.md](frontend/pdf.md) / [frontend/pdf-layout-analysis.md](frontend/pdf-layout-analysis.md)。
+Vault 任意路径 `.pdf` → `blob:` 预览。页码导航/适应宽·整页/大纲/⌘F 查找。真实 scale 渲染 + 平滑划词覆盖层。划词菜单：高亮/提问/翻译；批注走页右缘竖向入口。支持视觉区域批注（框选插图/表/算法/公式，可写备注或向 Agent 提问）、版面分析（Figures 侧栏列出检测到的图/表/算法/公式）、有编号公式 hover 符号解析卡。详见 [frontend/pdf.md](frontend/pdf.md) / [frontend/pdf-layout-analysis.md](frontend/pdf-layout-analysis.md)。
 
 ### Markdown 编辑
 
@@ -139,4 +139,4 @@ Host `tauri-plugin-log` + 前端 `logger` + CLI `env_logger`。详见 [backend/l
 
 ### 翻译服务
 
-可插拔 `TranslateService`（免费 MT + BYOA Agent）。详见 [frontend/translate.md](frontend/translate.md) / [backend/translate.md](backend/translate.md)。
+可插拔 `TranslateService`（内置 provider + 免费 MT + 商用 BYOK + BYOA Agent）。内置 provider（id `agentero`）的凭证在构建期编入 Host，走 Hunyuan-MT，详见 [backend/builtin-provider.md](backend/builtin-provider.md)。其余见 [frontend/translate.md](frontend/translate.md) / [backend/translate.md](backend/translate.md)。

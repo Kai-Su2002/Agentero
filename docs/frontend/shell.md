@@ -2,15 +2,20 @@
 
 ## 布局
 
-- **左栏**：文件树 + Paper Info（显示最近选中的论文；切换到非论文文档时保持不消失；无卡片容器、常驻 collapsible；上边缘可拖拽调整高度，`preserve-pixel-size`；文件树多选时复用固定高度标题栏显示批量操作，不压缩或遮挡树；arXiv 论文在资源按钮下显示 arXiv PDF、魔搭论文解读与 alphaXiv 外链，不再显示摘要按钮；窄宽度下资源按钮退化为仅图标；元信息修改入口位于 Info 底部）。Cool Papers / Kimi 解析入口在论文 `NOTES.md` 的 Markdown 工具栏，不在 Paper Info。
-- **中间**：无 Vault 欢迎页；有 Vault 时为全局 Dockview（见 [workspace.md](workspace.md)）。
-- **右栏**（可选）：Agent / 批注。
+- **左栏**：文件树 + Paper Info（显示最近选中的论文；切换到非论文文档时保持不消失；无卡片容器、常驻 collapsible，点标题行即可折叠，高度 200ms 过渡；上边缘可拖拽调整高度，`preserve-pixel-size`；内容区可滚动但不显示滚动条；文件树多选时复用固定高度标题栏显示批量操作，不压缩或遮挡树；arXiv 论文在资源按钮下显示 arXiv PDF、魔搭论文解读与 alphaXiv 外链，不再显示摘要按钮；窄宽度下资源按钮退化为仅图标；元信息修改入口位于 Info 底部）。Cool Papers / Kimi 解析入口在论文 `NOTES.md` 的 Markdown 工具栏，不在 Paper Info。左右栏共用 `bg-sidebar` 材质，与中间内容区分层。
+- **中间**：无 Vault 欢迎页；有 Vault 时为全局 Dockview（见 [workspace.md](workspace.md)）。Dock 页签条略软于实色 muted，活动页签用 `background` 抬起；页签按下有轻 opacity 反馈。
+- **右栏**（可选）：Agent / 批注（`bg-sidebar`，与左栏同色）。
   - 参考文献与版面解析已移入 PDF 阅读器左侧浮层面板（见 [pdf.md](pdf.md)），不再占用右栏。
   - **移至新窗口**：标题栏右栏功能图标 **右键** →「移动至新窗口」→ 单例 `feature-{view}` Webview；主窗右栏收起。工具视图默认 **跟随主窗当前激活文档**（`workspace:active-changed`）。
 - 左右栏折叠：`⌥⌘S` / `⌘L`（不重叠）。折叠/展开带 200ms `flex-grow` 过渡（`data-rail-animating`，见 `index.css`）；过渡中拖动分隔条立即接管（可打断）；`prefers-reduced-motion` 下直接切换。
-- 标题栏右侧：更新指示器、窗口布局菜单、Agent 切换；有新版本可更新时显示更新指示器按钮（见 [settings.md](settings.md) 「应用更新」）。布局菜单提供 **Agent**（PDF / Agent `1:1`）、**笔记**（PDF / Notes / Agent `1:1:1`）和 **阅读**（仅 PDF）三种预设。预设只调整 panel 宽度并开关当前论文的 Notes / Agent，不关闭其它 PDF tab。
+- **标题栏**：`bg-background/75` + `backdrop-blur-xl` + `backdrop-saturate-150`（`supports-backdrop-blur` 回退更实色；`prefers-reduced-transparency` 下实色无 blur）。右侧：更新指示器、窗口布局菜单、Agent 切换；有新版本可更新时显示更新指示器按钮（见 [settings.md](settings.md) 「应用更新」）。布局菜单提供 **Agent**（PDF / Agent `1:1`）、**笔记**（PDF / Notes / Agent `1:1:1`）和 **阅读**（仅 PDF）三种预设。预设只调整 panel 宽度并开关当前论文的 Notes / Agent，不关闭其它 PDF tab。
+- **默认配色**：冷灰系统材质（侧栏重、内容轻），见 [settings.md](settings.md)「主题」。
 
 实现：`src/components/shell/`、`src/lib/shell/ui-store.ts`、`src/lib/shell/leaf.ts`、`src/lib/shell/feature-window.ts`、`hooks/use-shell-layout.ts`。
+
+## 字号
+
+壳层（顶栏、左右栏、PaneHeader、Dock 页签、底栏任务条）与库表 / Agent chrome 共用 Appearance 字号阶梯：`body` 默认 `text-sm`（13 / 行高约 1.385），次要 `text-xs`（12），密集元数据 `text-caption`（11，略开字距）。Dock 页签字号为 `0.8125rem`（与 Body 同档）；PaneHeader / Dock 页签栏高度均为 `2.25rem`（`h-9`）。细则见 [settings.md](settings.md)。
 
 ## 欢迎页与多窗口
 
@@ -19,6 +24,7 @@
 - **功能单例窗**：`feature_window_open` → `?window=feature&view=…`（`FeatureWindowRoot`）。
 - **文档弹出窗**：文档 tab 右键「移动至新窗口」→ `doc_window_open` → `?window=doc&path=…`（`DocWindowRoot`）；同 path 再开则聚焦。
 - 当前窗口 Vault：`sessionStorage`；MRU / 上次路径：`localStorage`。
+- Vault 切换菜单与欢迎页的最近路径使用 `displayPath` 展示普通 Windows 盘符 / UNC 路径；兼容历史记录中的 `\\?\` 前缀，不改写持久化路径或 Vault 身份。
 - 桌面窗口在 Webview 页面加载完成后显示；React 首次提交前由 `index.html` 的零依赖启动壳占位，避免冷启动和 dev 模块加载期间出现空白窗口。
 
 ## 全局 Toast
@@ -30,9 +36,9 @@
 ## 后台任务条
 
 - 左下角：下载、入库、导入导出、paper-reader、版面解析等。
-- **折叠 = 进度圆环**；**悬停约 400ms 或点击圆环 → 详情列表**；**指针离开即收回圆环**（不常驻详情 Toast）。
-- 圆环使用不透明 `bg-background` 圆盘 + `ring-1 ring-border`（不用 border，避免内容区缩小导致圆环与底盘错位）+ 轨道（`muted-foreground/30`）与进度弧（`primary` / 失败 destructive / 完成 emerald）；中心图标用 `foreground`。避免浅色模式下底层内容透出或轨道过浅。
-- **完成态**：全部任务结束后圆环合并为满环（100%），成功时播放短暂合并/勾选动画（`task-ring-success-*`）；失败为满环 + destructive。进行中无数值进度时短弧旋转（indeterminate），不把完成态画成未闭合短弧。
+- **折叠 = 进度圆环**；**悬停约 400ms 或点击圆环 → 详情列表**；**指针离开约 100ms 后收回圆环**（不常驻详情 Toast）。展开/收起沿左下角 `origin-bottom-left` 做 opacity + scale（200ms，无 bounce）；`prefers-reduced-motion` 下仅短淡入淡出。
+- 圆环使用不透明 `bg-background` 圆盘 + `ring-1 ring-border`（不用 border，避免内容区缩小导致圆环与底盘错位）+ 轨道（`muted-foreground/30`）与进度弧（`primary` / 失败 destructive / 完成 emerald）；中心图标用 `foreground`。按下 `active:scale-[0.96]`。避免浅色模式下底层内容透出或轨道过浅。
+- **完成态**：全部任务结束后圆环合并为满环（100%），成功时播放短暂合并/勾选动画（`task-ring-success-*`）；失败为满环 + destructive。进行中无数值进度时短弧旋转（indeterminate），不把完成态画成未闭合短弧；`prefers-reduced-motion` 下不轮换圆环中心 progress/icon。
 - 新任务 / 打开页面不自动展开。任务失败时短暂展开详情，未悬停约 5s 后收回；进行中可取消，可清除已完成。
 - 论文资源下载的总体进度由 **Host 侧聚合**：PDF 与 TeX 并发下载，两条流的字节合并成一个 `downloadedBytes` / `totalBytes` 后经 `job:progress`（`phase` = `assets`）写回同一行，前端 `mapDownloadProgress` 只做 clamp。这样先下完的一条流不会把进度条钉在 100%，纯 PDF（无 TeX 流）的入库也能走满 0–100%。
 - 版面解析 / 引用解析 / 正文解析 / 资源下载 / 元数据识别 / 论文导入（魔棒、本地 PDF、Skill、广场、Cool Papers）/ Connector 附件保存 / 库级批量操作（引用扫描、书目导入导出、批量元数据刷新）/ 版面模型下载由 JobCenter 投影到任务条（前端门面 `src/lib/core/tasks.ts`，投影/执行器桥接在其内部模块 `job-center.ts`）。取消走 `job_cancel`；迟到的 `running` 事件不得把已取消/已完成的行复活。
@@ -81,8 +87,11 @@
 
 ## 设计约定
 
+- **Motion tokens**（`index.css` / `src/lib/core/motion.ts` 的 `MOTION_MS`）：`micro` 100ms（按压/hover）、`fast` 150ms（浮层进出）、`normal` 200ms（栏折叠 / 任务 HUD）。壳层默认无 bounce；可打断的手势再考虑弹簧。
+- **按压反馈**：`Button` 为 `active:scale-[0.97]`；文件树行 / Dock 页签 / 任务圆环共享同档微反馈（色阶或轻 scale/opacity）。Layout 菜单触发器保留 ghost hover fill。
 - 工具栏优先图标 + `aria-label` + Tooltip；避免常驻解释文案。
-- 操作型 Chrome（按钮、导航、标题栏、工具栏、可点击卡片）默认禁用浏览器文字选择；正文、可复制 metadata、编辑器、PDF 文字层和输入控件必须保持可选。不要在应用根节点统一设置 `user-select: none`，避免误伤第三方内容层和移动端长按选择。
+- 操作型 Chrome（按钮、导航、标题栏、工具栏、Dock 标签、可点击卡片、Agent 空状态）默认禁用浏览器文字选择；正文、可复制 metadata、编辑器、PDF 译文层（`.select-text`）和输入控件必须保持可选。不要在应用根节点统一设置 `user-select: none`，避免误伤第三方内容层和移动端长按选择。
+- **⌘A / Ctrl+A**：仅在输入框、`contenteditable`、`[role=textbox]` 或带 `.select-text` / `.select-all` 的区域内走浏览器原生全选；点在页面空白或 chrome 上时由 `useNativeSelectAllGuard`（主窗经 `useAppShortcuts`，文档/功能弹窗各自挂载）吞掉，避免整页扫到侧栏/标签/空状态文案。⇧⌘A 仍是「固定选区并聚焦 Agent」。判定见 `src/lib/shell/native-select-all.ts`。
 - 基础组件 shadcn/ui；Chat/树 AI UI 用 AI Elements（[components.md](components.md)）。
 - **启动种子放 `boot()`**（`src/main.tsx`），不要在 render 期做副作用。`initSettingsStore` / `initVaultStore` / `initWorkspaceStore` 在 `createRoot` 前调用：既保证首帧前完成，又不依赖 `useState` 初始化器（StrictMode 下可能跑两次）。
 - **订阅 Host 事件一律用类型化事件绑定（`src/lib/core/bindings.ts` 的 `events.*`）：组件内 `useTauriEvent(events.x, cb)`，非 UI 模块 `listenEventSafe(events.x, cb)`（`src/lib/core/tauri-events.ts`）**；字符串事件名仅限前端窗口间广播（`workspace:*`、`agent:attach-context` 等）与 iOS bridge client 事件，非 Tauri wire 的 promise 式订阅（bridge、workspace-broadcast）用 `toSafeDisposer()`。手写 `let off; void (async () => { off = await listen(...) })(); return () => off?.()` 会在 `listen` resolve 前 dispose 时泄漏监听器 —— StrictMode 每次开发挂载都会命中。
