@@ -93,7 +93,7 @@ pub fn resolve_vault(globals: &GlobalOpts) -> Result<PathBuf, CliError> {
     }
 
     Err(CliError::vault_not_found(
-        "could not resolve vault (pass --vault, set AGENTERO_VAULT, cd into a vault, or config set default_vault)",
+        "could not resolve vault (pass --vault, set AGENTERO_VAULT, or cd into a vault)",
     ))
 }
 
@@ -169,7 +169,7 @@ pub fn resolve_paper(
             let candidates: Vec<String> = matches.iter().map(|p| p.path.clone()).collect();
             if let Some(path) = crate::prompt::select_one(
                 globals,
-                &format!("Multiple papers match id '{ref_}'"),
+                &format!("Multiple papers match id '{ref_}'. Choose a vault-relative path"),
                 candidates.clone(),
             )? {
                 return papers::get_by_path(vault, &path)?

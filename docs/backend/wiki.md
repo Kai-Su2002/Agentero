@@ -23,7 +23,7 @@
 - 嵌入目标解析（供前端 `![[...]]`）
 - 链接感知重命名/移动；标题重命名事务
 - 索引：`.md` 变更防抖重建（前端调度 + Host 重建）
-- 只读语义检查：`WikiIndex::check_links` 按全库、Markdown 文件或目录返回状态计数与问题 occurrence；CLI 暴露为 `agentero wiki check [<source>] --json`
+- 只读语义检查：`WikiIndex::check_links` 按全库、Markdown 文件或目录返回状态计数与问题 occurrence；CLI 暴露为 `agentero doctor wiki [<source>] --json`
 
 解析、resolve、嵌入投影、前端导航与显式标题重命名共享“唯一连续后缀”规则。完整路径自然也是自身后缀；不存在或有歧义的 path 保持既有 `invalidFragment` / `ambiguous` 结果，不回退到任意同名叶标题。标题重命名根据已解析的 canonical path 计算后缀在完整路径中的偏移，只改写引用实际包含的被改名段。
 
@@ -38,10 +38,10 @@
 
 ## 只读完整性检查
 
-`agentero wiki check` 每次先构建或校验 Wiki snapshot，再从解析后的 occurrence 生成报告。它不会新建缺失目标、替用户选择歧义候选或修改 stale fragment。
+`agentero doctor wiki` 每次先构建或校验 Wiki snapshot，再从解析后的 occurrence 生成报告。它不会新建缺失目标、替用户选择歧义候选或修改 stale fragment。
 
 ```text
-agentero wiki check [Vault 相对文件或目录] --json
+agentero doctor wiki [Vault 相对文件或目录] --json
   → WikiIndex rebuild / cache validation
   → check_links(scope)
   → resolved / missing / ambiguous / invalidFragment
@@ -69,4 +69,4 @@ Vault Markdown 变更
 - `LinkFragment::Annotation { id }`：`[[target@id]]` sugar 与 `[[target#@id]]` 等价；id 允许 nanoid `_` 与 UUID `-`（Markdown 转义的 `\_` 在解析时规范化）。
 - 解析时不把 annotation id 当 Markdown heading/block；**target 仍走普通文件 resolve**（路径 / 文件名），成功后再由前端按 id 打开 paper PDF 并 `scrollToHighlight` / `scrollToVisualTrace`。
 - `![[…@id]]` 的 `contentKind` 为 `annotation`：Host 只确认 fragment 类型，**quote / 裁剪 / 对话** 由前端读 `marks/annotations.json` 或 `marks/<id>.json` 投影。
-- `wiki check` / 索引：对 annotation 报告 path 级 `resolved|missing|ambiguous` 与 id 形态 `invalidFragment`；**不**打开 marks 验证 id 存活。
+- `doctor wiki` / 索引：对 annotation 报告 path 级 `resolved|missing|ambiguous` 与 id 形态 `invalidFragment`；**不**打开 marks 验证 id 存活。

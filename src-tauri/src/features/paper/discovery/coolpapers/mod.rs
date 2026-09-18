@@ -368,11 +368,34 @@ fn squeeze_blank_lines(input: &str) -> String {
     out
 }
 
+/// Cool Papers ends every FAQ with a "chat on Kimi web" promo (usually Q7).
+fn is_kimi_web_cta_question(question: &str) -> bool {
+    let q = question.trim();
+    q.contains("想要进一步了解") || q.contains("进一步了解论文")
+}
+
+/// Drop the `<div class="faq-a">…</div>` that follows a skipped CTA question.
+fn skip_following_faq_answer(after_q: &str) -> &str {
+    const A_OPEN: &str = "<div class=\"faq-a\"";
+    let Some(start) = after_q.find(A_OPEN) else {
+        return after_q;
+    };
+    let from = &after_q[start..];
+    match from.find("</div>") {
+        Some(close) => &from[close + "</div>".len()..],
+        None => after_q,
+    }
+}
+
 /// Turn the `/kimi` HTML+Markdown hybrid into plain Markdown.
 ///
 /// Questions arrive as `<p class="faq-q"><strong>Q1</strong>: …</p>` and answers
 /// are Markdown wrapped in `<div class="faq-a">`. The `$…$` math is left exactly
 /// as-is; the site escapes it only to feed MathJax.
+///
+/// Heading levels: FAQ questions become `## Qn: …`; answer bodies already use
+/// `###` subsections, so they nest under each Q. The trailing
+/// "想要进一步了解论文" FAQ (Kimi web CTA) is dropped.
 fn kimi_html_to_markdown(raw: &str) -> String {
     const Q_OPEN: &str = "<p class=\"faq-q\">";
     let mut staged = String::with_capacity(raw.len());
@@ -383,9 +406,15 @@ fn kimi_html_to_markdown(raw: &str) -> String {
         match after.find("</p>") {
             Some(end) => {
                 let question = decode_entities(&strip_tags(&after[..end]));
-                staged.push_str("### ");
+                let after_q = &after[end + "</p>".len()..];
+                if is_kimi_web_cta_question(&question) {
+                    rest = skip_following_faq_answer(after_q);
+                    continue;
+                }
+                // `##` so answer-body `###` subsections nest under each Q.
+                staged.push_str("## ");
                 staged.push_str(question.trim());
-                rest = &after[end + "</p>".len()..];
+                rest = after_q;
             }
             None => {
                 rest = after;
@@ -456,8 +485,10 @@ pub async fn fetch_notes(req: FetchNotesRequest<'_>) -> Result<CoolPapersNotes, 
     }
 
     let page_url = format!("{ORIGIN}/{branch}/{encoded}");
+    // Bold label (not a heading) so `## Qn` / answer `###` nest cleanly under
+    // the paper's existing `#` title without a competing section heading.
     let block =
-        format!("## Cool Papers · Kimi 解析\n\n> 来源：[{page_url}]({page_url})\n\n{markdown}");
+        format!("**Cool Papers · Kimi 解析**\n\n> 来源：[{page_url}]({page_url})\n\n{markdown}");
     let appended =
         crate::features::paper::zotero::db::append_markdown_blocks(&notes_path, &[block]);
 
@@ -539,12 +570,41 @@ mod tests {
 
     #[test]
     fn converts_faq_hybrid_to_markdown() {
-        let raw = "<p class=\"faq-q\"><strong>Q1</strong>: 试图解决什么问题？</p>\n\n<div class=\"faq-a\">\n\n答案正文 $x^2$ 保留。\n\n</div>\n";
+        let raw = "<p class=\"faq-q\"><strong>Q1</strong>: 试图解决什么问题？</p>\n\n<div class=\"faq-a\">\n\n答案正文 $x^2$ 保留。\n\n### 小节标题\n\n</div>\n";
         let md = kimi_html_to_markdown(raw);
-        assert!(md.starts_with("### Q1: 试图解决什么问题？"));
+        assert!(md.starts_with("## Q1: 试图解决什么问题？"));
         assert!(md.contains("答案正文 $x^2$ 保留。"));
+        // Answer subsections stay ### so they nest under ## Q.
+        assert!(md.contains("### 小节标题"));
         assert!(!md.contains("faq-a"));
         assert!(!md.contains("</div>"));
+    }
+
+    #[test]
+    fn drops_kimi_web_cta_faq() {
+        let raw = r#"<p class="faq-q"><strong>Q6</strong>: 总结一下论文的主要内容</p>
+<div class="faq-a">
+
+正文摘要。
+
+</div>
+
+<p class="faq-q"><strong>Q7</strong>: 想要进一步了解论文</p>
+
+<div class="faq-a">
+
+以上只是了解一篇论文的几个基本FAQ。如果你还想与Kimi进一步讨论该论文，请点击 <a href="http://kimi.com/_prefill_chat?x=1" target="_blank"><strong>这里 <i class="fa fa-external-link"></i></strong></a> 为你跳转Kimi AI网页版，并启动一个与该论文相关的新会话。
+
+</div>
+"#;
+        let md = kimi_html_to_markdown(raw);
+        assert!(md.contains("## Q6: 总结一下论文的主要内容"));
+        assert!(md.contains("正文摘要。"));
+        assert!(!md.contains("Q7"));
+        assert!(!md.contains("想要进一步了解"));
+        assert!(!md.contains("Kimi AI网页版"));
+        assert!(!md.contains("fa-external-link"));
+        assert!(!md.contains("kimi.com"));
     }
 
     #[test]

@@ -11,7 +11,9 @@
 
 ## 功能导引（Feature tour）
 
-Vault 首次打开后，`useFeatureTour` 用 driver.js 高亮侧栏 / 魔棒 / 工作区 / Agent / 标题栏。`featureTourDone === false` 时自动开始；完成或跳过写入 `featureTourDone: true`。设置侧栏可手动重放（`onboarding:tour`）。
+Onboarding 关闭、Vault 首次打开后，`useFeatureTour` 用 driver.js 高亮侧栏 / 论文库 / Cool Papers / 魔棒 / 阅读记笔记 / 工作区 / 全文翻译 / Cool Paper 笔记抓取 / Agent / 标题栏。`featureTourDone === false` 且引导向导已关闭时自动开始；完成或跳过写入 `featureTourDone: true`。设置侧栏可手动重放（`onboarding:tour`）。
+
+`useFeatureTour` 订阅 `onboardingStore.open`，确保在 onboarding 覆盖层仍在显示时不提前启动，避免高亮层与向导覆盖层竞争。
 
 ## 步骤
 
@@ -21,6 +23,7 @@ Vault 首次打开后，`useFeatureTour` 用 driver.js 高亮侧栏 / 魔棒 / �
 |---|---|---|---|
 | 欢迎 | `welcome` | 品牌 + 价值主张 + 特性 | — |
 | 外观 | `theme` | 明暗模式 + tweakcn 配色主题即时预览 | `patchSettings` + `applyUiTheme` / `next-themes` |
+| 网络 | `proxy` | 配置应用级网络代理，并运行「问题诊断 → 网络连通性」同一组 probe | `saveSettingsAsync` / `doctorCheckNetwork` |
 | Agent | `agent` | 扫描本机 ACP Agent、安装可托管 Agent、探测、设默认（可跳过）；安装期间卡片显示 `agent-lifecycle:progress` 进度与阶段，并提供取消（X）按钮静默中止安装 | `scanCatalog` / `probeCatalogAgent` / `ensureCatalogAgent` / `useAgentToolLifecycle` |
 | 翻译 | `translate` | 选择「用自己的翻译 API」或「内置免费翻译」，选前者则填 Key 并测试 | `probeCommercialMtProvider` |
 | 图表公式 | `layout` | 选择「配置云端服务」或「本地免费模型」，选前者则填 Key 并测试 | `probeLayoutProvider` |

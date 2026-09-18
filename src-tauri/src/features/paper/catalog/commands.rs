@@ -595,6 +595,48 @@ fn move_inner(
     })
 }
 
+#[derive(Debug, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PaperRepathArgs {
+    pub vault_path: String,
+    /// Vault-relative original path (paper folder, org folder, or file under `papers/`).
+    pub from_rel: String,
+    /// Vault-relative new path after the move already happened on disk.
+    pub to_rel: String,
+}
+
+#[derive(Debug, Serialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PaperRepathResult {
+    /// Number of catalog rows whose `path` prefix was rewritten.
+    pub count: usize,
+}
+
+/// Rewrite catalog `path` prefixes after an item was moved outside the app.
+///
+/// This does **not** touch the filesystem; it only keeps `papers` rows and
+/// `pdf_page_counts` in sync with the new disk layout so titles/metadata are
+/// not lost after a Finder/CLI move.
+#[tauri::command]
+#[specta::specta]
+pub async fn paper_repath(args: PaperRepathArgs) -> ApiResult<PaperRepathResult> {
+    run_blocking(move || {
+        let vault = match resolve_vault(&args.vault_path) {
+            Ok(vault) => vault,
+            Err(e) => return map_err(e),
+        };
+        match crate::features::paper::catalog::papers::move_under_path(
+            &vault,
+            &args.from_rel,
+            &args.to_rel,
+        ) {
+            Ok(count) => ApiResult::ok(PaperRepathResult { count }),
+            Err(e) => map_err(e),
+        }
+    })
+    .await
+}
+
 #[cfg(test)]
 mod move_tests {
     use super::*;

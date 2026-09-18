@@ -17,6 +17,7 @@ import {
 	doctorCheckAgents,
 	doctorCheckHost,
 	doctorCheckNetwork,
+	doctorOpenAgentLoginTerminal,
 	type HostDoctorReport,
 	type NetworkDoctorReport,
 } from "@/lib/doctor/api";
@@ -98,6 +99,26 @@ export function DoctorPane({
 		}
 	}, [hostContext.kind]);
 
+	const refreshAgentsAfterLogin = useCallback(() => {
+		for (const delay of [2_000, 5_000, 10_000, 20_000]) {
+			window.setTimeout(() => {
+				void refreshAgents();
+			}, delay);
+		}
+	}, [refreshAgents]);
+
+	const openAgentLogin = useCallback(
+		async (templateId: string) => {
+			try {
+				await doctorOpenAgentLoginTerminal(templateId);
+				refreshAgentsAfterLogin();
+			} catch (error) {
+				setAgentError(errorText(error));
+			}
+		},
+		[refreshAgentsAfterLogin],
+	);
+
 	// Network probes can take up to the timeout per host, so they also load
 	// independently of the fast host/vault checks.
 	const refreshNetwork = useCallback(async () => {
@@ -163,7 +184,11 @@ export function DoctorPane({
 				}
 			/>
 
-			<DoctorHostRuntimeSection report={hostReport} error={hostError} />
+			<DoctorHostRuntimeSection
+				report={hostReport}
+				error={hostError}
+				onRefresh={refresh}
+			/>
 
 			<DoctorNetworkSection
 				report={networkReport}
@@ -175,6 +200,7 @@ export function DoctorPane({
 				report={agentReport}
 				loading={agentsLoading}
 				error={agentError}
+				onLogin={openAgentLogin}
 			/>
 
 			{vaultPath ? (

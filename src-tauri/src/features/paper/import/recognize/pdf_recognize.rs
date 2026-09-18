@@ -99,6 +99,28 @@ fn nonempty(s: &str) -> bool {
     !s.trim().is_empty()
 }
 
+/// Normalize the title returned by Zotero's recognizer.
+///
+/// Some PDFs carry a UTF-8 byte-order mark in their first text run. The
+/// recognizer can echo it back either as the actual U+FEFF character or after
+/// it has been decoded once more as the visible `ï»¿` prefix. Neither is part
+/// of the paper title, and letting it reach the catalog makes the title look
+/// corrupt in the library.
+fn clean_recognizer_title(title: &str) -> Option<String> {
+    let mut title = title.trim();
+    loop {
+        let cleaned = title
+            .trim_start_matches('\u{feff}')
+            .trim_start_matches("ï»¿")
+            .trim_start();
+        if cleaned.len() == title.len() {
+            break;
+        }
+        title = cleaned;
+    }
+    (!title.is_empty()).then(|| title.to_string())
+}
+
 /// Build the recognizer request payload from probe pages.
 ///
 /// Layout (document-worker `getRecognizerData`):
@@ -263,7 +285,12 @@ pub(crate) async fn recognize_pdf(
             return Ok(None);
         }
     };
-    if hit.has_identifier() || hit.title.as_deref().is_some_and(nonempty) {
+    if hit.has_identifier()
+        || hit
+            .title
+            .as_deref()
+            .is_some_and(|title| clean_recognizer_title(title).is_some())
+    {
         Ok(Some(hit))
     } else {
         Ok(None)
@@ -304,6 +331,10 @@ pub struct PdfIdentProbe {
     pub publisher: Option<String>,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub source: String,
+    /// Soft warning code for the UI (e.g. `arxiv_rate_limited`) when
+    /// recognition partially succeeded but an authoritative lookup failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
 }
 
 impl PdfIdentProbe {
@@ -324,6 +355,7 @@ impl PdfIdentProbe {
             pages: meta.pages.clone(),
             publisher: meta.publisher.clone(),
             source: source.to_string(),
+            warning: None,
         }
     }
 
@@ -344,6 +376,7 @@ impl PdfIdentProbe {
             pages: None,
             publisher: None,
             source: String::new(),
+            warning: None,
         }
     }
 
@@ -403,13 +436,20 @@ pub(crate) async fn recognize_and_resolve(
         .filter(|a| !a.is_empty())
     {
         match fetch_arxiv_metadata(arxiv, task_id).await {
+            // The chain names whichever source actually answered (arxiv / s2
+            // / alphaxiv), so meta_source reflects the failover.
             Ok(meta) => {
-                return PdfIdentProbe::from_meta(&file_path, &api_paper_to_meta(&meta), "arxiv")
+                return PdfIdentProbe::from_meta(&file_path, &api_paper_to_meta(&meta), meta.source)
             }
             Err(e) => {
                 log::debug!(target: "agentero::recognize", "arXiv {arxiv} resolve failed: {e}");
                 let mut probe = title_fallback(&file_path, &hit);
                 probe.arxiv_id = Some(arxiv.to_string());
+                // The chain only reports rate limiting after its internal
+                // retry pass, so this warning means every source throttled.
+                if e.code() == "rate_limited" {
+                    probe.warning = Some("arxiv_rate_limited".into());
+                }
                 return probe;
             }
         }
@@ -419,7 +459,11 @@ pub(crate) async fn recognize_and_resolve(
 
 /// Recognizer-provided title/authors without identifiers (Zotero's fallback).
 fn title_fallback(file_path: &str, hit: &RecognizeHit) -> PdfIdentProbe {
-    if hit.title.as_deref().is_some_and(nonempty) {
+    if hit
+        .title
+        .as_deref()
+        .is_some_and(|title| clean_recognizer_title(title).is_some())
+    {
         let stem = Path::new(file_path)
             .file_stem()
             .and_then(|s| s.to_str())
@@ -439,8 +483,8 @@ pub(crate) fn meta_from_recognize(hit: &RecognizeHit, fallback_id: &str) -> Pape
     let authors = hit.author_names();
     let title = hit
         .title
-        .clone()
-        .filter(|t| nonempty(t))
+        .as_deref()
+        .and_then(clean_recognizer_title)
         .unwrap_or_else(|| "Untitled".to_string());
     let year = hit
         .year
@@ -580,6 +624,20 @@ mod tests {
         assert_eq!(meta.year, Some(2019));
         assert_eq!(meta.publication.as_deref(), Some("Nature"));
         assert_eq!(meta.meta_source.as_deref(), Some("recognize"));
+    }
+
+    #[test]
+    fn removes_bom_mojibake_from_recognizer_titles() {
+        for prefix in ['\u{feff}'.to_string(), "ï»¿".to_string()] {
+            let hit = RecognizeHit {
+                title: Some(format!("{prefix}  Attention Is All You Need")),
+                ..Default::default()
+            };
+            let meta = meta_from_recognize(&hit, "attention");
+            assert_eq!(meta.title, "Attention Is All You Need");
+        }
+
+        assert_eq!(clean_recognizer_title("ï»¿\u{feff} "), None);
     }
 
     /// Live end-to-end check against the real Zotero recognizer:

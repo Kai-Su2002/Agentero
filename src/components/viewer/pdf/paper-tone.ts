@@ -13,12 +13,7 @@ import { isPdfPaperTone, type PdfPaperTone } from "@/lib/pdf/page-theme";
 const PDF_COLOR_SCHEME_STORAGE_KEY = "agentero-pdf-color-scheme";
 export const PDF_PAPER_TONE_EVENT = "agentero:pdf-color-scheme";
 
-function getDocumentTone(): PdfPaperTone {
-	if (typeof document === "undefined") return "white";
-	return document.documentElement.classList.contains("dark") ? "dark" : "white";
-}
-
-/** Stored preference, falling back to the app theme on first use. */
+/** Stored preference, falling back to white paper on first use. */
 export function readPdfPaperTone(): PdfPaperTone {
 	const stored = readJsonStorage<string | null>(
 		PDF_COLOR_SCHEME_STORAGE_KEY,
@@ -26,7 +21,7 @@ export function readPdfPaperTone(): PdfPaperTone {
 	);
 	if (isPdfPaperTone(stored)) return stored;
 	if (stored === "light") return "white";
-	return getDocumentTone();
+	return "white";
 }
 
 export function writePdfPaperTone(next: PdfPaperTone): void {

@@ -246,6 +246,16 @@ export function GeneralPane({
 						onCheckedChange={(v) => patch({ autoOpenPaperNotes: v })}
 					/>
 				</SettingsRow>
+				<SettingsRow
+					label={t("general.replaceCurrentTabOnOpenPaper.label")}
+					htmlFor="replace-current-tab-on-open-paper"
+				>
+					<Switch
+						id="replace-current-tab-on-open-paper"
+						checked={settings.replaceCurrentTabOnOpenPaper}
+						onCheckedChange={(v) => patch({ replaceCurrentTabOnOpenPaper: v })}
+					/>
+				</SettingsRow>
 				<SettingsRow label={t("general.autoUpdateInternalLinks.label")}>
 					<Select
 						value={settings.autoUpdateInternalLinks}

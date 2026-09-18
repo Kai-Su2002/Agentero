@@ -1,6 +1,7 @@
 pub mod acp;
 #[cfg(test)]
 mod acp_tests;
+pub mod citation;
 pub mod commands;
 pub mod doctor;
 pub mod doctor_agents;
@@ -22,5 +23,6 @@ pub use runtime::{
     PermissionGate,
 };
 pub use session::{
-    list_acp_sessions, load_acp_session, new_ids, run_once, warm_agent, RunOnceParams,
+    list_acp_sessions, load_acp_session, new_ids, run_once, warm_agent, AgentWarmPool,
+    RunOnceParams,
 };

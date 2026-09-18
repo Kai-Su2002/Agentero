@@ -28,8 +28,6 @@ import {
 } from "react";
 import { useStableDerived } from "@/components/viewer/pdf/hooks/use-stable-derived";
 import type { PdfViewerProps } from "@/components/viewer/pdf/types";
-import { events } from "@/lib/core/bindings";
-import { listenEventSafe } from "@/lib/core/tauri-events";
 import {
 	listPdfVisualTraces,
 	type PdfVisualSessionTrace,
@@ -41,6 +39,7 @@ import { marksDir } from "@/lib/pdf/selection";
 import { isRecentSelfWrite } from "@/lib/pdf/selection/marks-io";
 import { listPdfTranslates } from "@/lib/pdf/translate";
 import type { PdfTranslateRecord } from "@/lib/pdf/translate/types";
+import { listenVaultFileChangedGated } from "@/lib/vault/file-change-gate";
 import { normalizePathKey } from "@/lib/vault/path";
 
 /** One Agent turn can rewrite several mark files; coalesce the burst. */
@@ -190,7 +189,7 @@ export function usePdfMarksIo({
 			}, MARKS_REFRESH_BURST_MS);
 		};
 		const marksKey = `${normalizePathKey(marksDir(paperAbsPath))}/`;
-		const unsubMarks = listenEventSafe(events.vaultFileChanged, (payload) => {
+		const unsubMarks = listenVaultFileChangedGated((payload) => {
 			const paths = [...payload.paths];
 			if (payload.rename) {
 				paths.push(payload.rename.from, payload.rename.to);

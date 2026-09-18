@@ -1,4 +1,6 @@
+import { AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
+import { SelectionCopiedLabel } from "@/components/ui/selection-copied-label";
 import { AskPopover } from "@/components/viewer/pdf/cards/ask-popover";
 import {
 	type CitationPreviewImportMenu,
@@ -14,6 +16,7 @@ import type {
 	CrossrefPreviewState,
 	SelectionMenuState,
 } from "@/components/viewer/pdf/types";
+import { cn } from "@/lib/core/utils";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import type { PdfAskThread } from "@/lib/pdf/ask";
 import type { HighlightColor } from "@/lib/pdf/highlight/palette";
@@ -23,13 +26,15 @@ type PdfCardStackProps = {
 	selectionMenu: {
 		state: SelectionMenuState | null;
 		onHighlight: (color: HighlightColor) => void;
-		onCopy: () => void;
 		onAsk: () => void;
 		onAddToChat: () => void;
 		onTranslate: () => void;
-		/** Hide highlight / translate; keep Copy / Ask. */
-		readOnly?: boolean;
+		/** Hide highlight / translate (no marks/ to persist into); keep Ask. */
+		showHighlight?: boolean;
+		showTranslate?: boolean;
 	};
+	/** Transient screen position for the auto-copy confirmation label. */
+	copiedLabelPos: { x: number; y: number } | null;
 	citationPreview: {
 		state: CitationPreviewState | null;
 		importMenu?: CitationPreviewImportMenu;
@@ -73,6 +78,8 @@ type PdfCardStackProps = {
 		onHide: () => void;
 		onDelete: () => void;
 	};
+	/** Privacy mode: fade the floating cards while the window is unfocused. */
+	hidden?: boolean;
 };
 
 /**
@@ -81,6 +88,7 @@ type PdfCardStackProps = {
  */
 export function PdfCardStack({
 	selectionMenu,
+	copiedLabelPos,
 	citationPreview,
 	crossrefPreview,
 	cardScreen,
@@ -89,22 +97,31 @@ export function PdfCardStack({
 	ask,
 	translate,
 	visual,
+	hidden = false,
 }: PdfCardStackProps) {
 	if (typeof document === "undefined") return null;
 
 	return createPortal(
-		<>
+		<div
+			className={cn(
+				"transition-opacity duration-150",
+				hidden && "pointer-events-none opacity-0",
+			)}
+		>
 			{selectionMenu.state ? (
 				<SelectionMenu
 					screen={selectionMenu.state.screen}
-					bottomRight={selectionMenu.state.bottomRight}
 					onHighlight={selectionMenu.onHighlight}
-					onCopy={selectionMenu.onCopy}
 					onAsk={selectionMenu.onAsk}
 					onAddToChat={selectionMenu.onAddToChat}
 					onTranslate={selectionMenu.onTranslate}
-					readOnly={selectionMenu.readOnly}
+					showHighlight={selectionMenu.showHighlight}
+					showTranslate={selectionMenu.showTranslate}
 				/>
+			) : null}
+
+			{copiedLabelPos ? (
+				<SelectionCopiedLabel x={copiedLabelPos.x} y={copiedLabelPos.y} />
 			) : null}
 
 			{citationPreview.state ? (
@@ -128,52 +145,61 @@ export function PdfCardStack({
 				/>
 			) : null}
 
-			{ask.thread && cardScreen ? (
-				<AskPopover
-					thread={ask.thread}
-					paperTitle={ask.paperTitle}
-					paperLink={ask.paperLink}
-					screen={cardScreen}
-					preferRight={cardScreen.preferRight ?? true}
-					streaming={ask.streaming}
-					error={ask.error}
-					onSend={ask.onSend}
-					onResend={ask.onResend}
-					onHide={ask.onHide}
-					onDelete={ask.onDelete}
-					onPointerEnter={onCardHoverEnter}
-					onPointerLeave={onCardHoverLeave}
-					onStop={ask.onStop}
-				/>
-			) : null}
+			<AnimatePresence>
+				{ask.thread && cardScreen ? (
+					<AskPopover
+						key={`ask-${ask.thread.id}`}
+						thread={ask.thread}
+						paperTitle={ask.paperTitle}
+						paperLink={ask.paperLink}
+						screen={cardScreen}
+						preferRight={cardScreen.preferRight ?? true}
+						streaming={ask.streaming}
+						error={ask.error}
+						onSend={ask.onSend}
+						onResend={ask.onResend}
+						onHide={ask.onHide}
+						onDelete={ask.onDelete}
+						onPointerEnter={onCardHoverEnter}
+						onPointerLeave={onCardHoverLeave}
+						onStop={ask.onStop}
+					/>
+				) : null}
+			</AnimatePresence>
 
-			{translate.record && cardScreen ? (
-				<TranslateCard
-					screen={cardScreen}
-					preferRight={cardScreen.preferRight ?? false}
-					result={translate.record.result ?? ""}
-					streaming={translate.streaming}
-					error={translate.error ?? translate.record.error ?? null}
-					onOpenSettings={translate.onOpenSettings}
-					onHide={translate.onHide}
-					onDelete={translate.onDelete}
-					onPointerEnter={onCardHoverEnter}
-					onPointerLeave={onCardHoverLeave}
-				/>
-			) : null}
+			<AnimatePresence>
+				{translate.record && cardScreen ? (
+					<TranslateCard
+						key={`translate-${translate.record.id}`}
+						screen={cardScreen}
+						preferRight={cardScreen.preferRight ?? false}
+						result={translate.record.result ?? ""}
+						streaming={translate.streaming}
+						error={translate.error ?? translate.record.error ?? null}
+						onOpenSettings={translate.onOpenSettings}
+						onHide={translate.onHide}
+						onDelete={translate.onDelete}
+						onPointerEnter={onCardHoverEnter}
+						onPointerLeave={onCardHoverLeave}
+					/>
+				) : null}
+			</AnimatePresence>
 
-			{visual.trace && cardScreen ? (
-				<VisualTraceCard
-					trace={visual.trace}
-					screen={cardScreen}
-					preferRight={cardScreen.preferRight ?? true}
-					onHide={visual.onHide}
-					onDelete={visual.onDelete}
-					onPointerEnter={onCardHoverEnter}
-					onPointerLeave={onCardHoverLeave}
-				/>
-			) : null}
-		</>,
+			<AnimatePresence>
+				{visual.trace && cardScreen ? (
+					<VisualTraceCard
+						key={`visual-${visual.trace.id}`}
+						trace={visual.trace}
+						screen={cardScreen}
+						preferRight={cardScreen.preferRight ?? true}
+						onHide={visual.onHide}
+						onDelete={visual.onDelete}
+						onPointerEnter={onCardHoverEnter}
+						onPointerLeave={onCardHoverLeave}
+					/>
+				) : null}
+			</AnimatePresence>
+		</div>,
 		document.body,
 	);
 }

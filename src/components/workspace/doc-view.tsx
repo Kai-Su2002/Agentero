@@ -1,4 +1,5 @@
 import { lazy, memo, Suspense, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { PapersLibrary } from "@/components/library/papers-library";
 import { Skeleton } from "@/components/ui/skeleton";
 import type { PdfViewerHandle } from "@/components/viewer";
@@ -14,6 +15,7 @@ import type { LibraryColumnPref } from "@/lib/settings";
 import { isMarkdownPath, paperRelFromNotes } from "@/lib/vault";
 import type { WikiRenameHeadingRequest } from "@/lib/wiki";
 import { type DocTab, tabIsPaperNotes } from "@/lib/workspace/tabs";
+import { isPlainPdfPath } from "@/lib/workspace/viewer";
 
 // Heavyweight viewers are lazy-loaded so the EmbedPDF (PDFium) and Plate
 // editor bundles stay out of the initial chunk and are fetched on first use.
@@ -30,6 +32,16 @@ const MarkdownEditor = lazy(() =>
 const PlazaView = lazy(() =>
 	import("@/components/plaza/plaza-view").then((m) => ({
 		default: m.PlazaView,
+	})),
+);
+const ExcalidrawViewer = lazy(() =>
+	import("@/components/viewer/excalidraw-viewer").then((m) => ({
+		default: m.ExcalidrawViewer,
+	})),
+);
+const TextEditor = lazy(() =>
+	import("@/components/viewer/text-editor").then((m) => ({
+		default: m.TextEditor,
 	})),
 );
 
@@ -89,6 +101,28 @@ export type DocViewPdfProps = {
 	) => void;
 };
 
+/** Excalidraw editor props. */
+export type DocViewExcalidrawProps = {
+	onPersistFile: (
+		path: string,
+		json: string,
+		lastSaved: string,
+	) => Promise<boolean>;
+	onTabPatch: (id: string, patch: Partial<DocTab>) => void;
+};
+
+/** Plain-text (CodeMirror) editor props. */
+export type DocViewTextProps = {
+	onPersistFile: (
+		path: string,
+		content: string,
+		lastSaved: string,
+	) => Promise<boolean>;
+	/** ⌘S manual save: flush landed — TeX compiles here, others no-op. */
+	onManualSave: (path: string) => void;
+	onTabPatch: (id: string, patch: Partial<DocTab>) => void;
+};
+
 export type DocViewProps = {
 	/** Primary tab or split pane (shared fields). */
 	tab: DocTab;
@@ -105,6 +139,8 @@ export type DocViewProps = {
 	library: DocViewLibraryProps;
 	editor: DocViewEditorProps;
 	pdf: DocViewPdfProps;
+	excalidraw: DocViewExcalidrawProps;
+	text: DocViewTextProps;
 	onTrashChanged: () => void;
 	/** Bump to reload recycle bin after Empty Recycle Bin from the sidebar. */
 	trashReloadSignal?: number;
@@ -129,6 +165,24 @@ function TabLoadingSkeleton() {
 					<Skeleton className="library-shimmer h-3 w-2/3" />
 				</div>
 			</div>
+		</div>
+	);
+}
+
+/**
+ * Compiled-PDF pane while its LaTeX compile is still running: a minimal
+ * centered hint (the bytes do not exist on disk yet).
+ */
+function TexCompilingPlaceholder() {
+	const { t } = useTranslation("app");
+	return (
+		<div
+			className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-6"
+			aria-busy="true"
+			role="status"
+		>
+			<Skeleton className="library-shimmer h-3.5 w-28" />
+			<p className="text-muted-foreground text-xs">{t("tabs.texCompiling")}</p>
 		</div>
 	);
 }
@@ -159,6 +213,8 @@ function docViewPropsEqual(prev: DocViewProps, next: DocViewProps): boolean {
 	}
 	if (tab.kind === "plaza") return true;
 	if (tab.mode === "markdown") return prev.editor === next.editor;
+	if (tab.mode === "excalidraw") return prev.excalidraw === next.excalidraw;
+	if (tab.mode === "text") return prev.text === next.text;
 	if (tab.mode === "pdf" || tab.mode === "translation")
 		return prev.pdf === next.pdf;
 	return true;
@@ -173,6 +229,8 @@ export const DocView = memo(function DocView({
 	library,
 	editor,
 	pdf,
+	excalidraw,
+	text,
 	onTrashChanged,
 	trashReloadSignal = 0,
 }: DocViewProps) {
@@ -195,6 +253,9 @@ export const DocView = memo(function DocView({
 		(list: PdfVisualSessionTrace[]) => pdf.onVisualTracesChange(tab.id, list),
 		[pdf, tab.id],
 	);
+	if (tab.texCompiling) {
+		return <TexCompilingPlaceholder />;
+	}
 	if (!tab.loaded) {
 		return <TabLoadingSkeleton />;
 	}
@@ -313,6 +374,7 @@ export const DocView = memo(function DocView({
 						paperMeta={tab.paperMeta}
 						isActive={active}
 						isRemotePaper={isRemoteArxivPath(tab.path)}
+						plainViewer={isPlainPdfPath(tab.path)}
 						importIdentifier={tab.paperMeta?.source_url ?? undefined}
 						onOpenSettings={pdf.onOpenSettings}
 						className="h-full w-full"
@@ -327,8 +389,8 @@ export const DocView = memo(function DocView({
 		);
 	}
 	if (tab.mode === "translation") {
-		// Right-hand pane of a dual-pane translation layout: render the same
-		// PDF viewer as the source pane, but force translation overlays on.
+		// Render the same PDF page stack as the source, but keep this pane read-only
+		// and chrome-free so it only shows the translation overlay.
 		if (!active && !keepMounted) return null;
 		return (
 			<div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
@@ -357,6 +419,7 @@ export const DocView = memo(function DocView({
 						onAsksChange={handlePdfAsksChange}
 						onVisualTracesChange={handlePdfVisualTracesChange}
 						translationPane
+						translationOnly
 					/>
 				</Suspense>
 			</div>
@@ -373,12 +436,62 @@ export const DocView = memo(function DocView({
 			</div>
 		);
 	}
+	if (tab.mode === "excalidraw") {
+		if (!active && !keepMounted) return <TabLoadingSkeleton />;
+		return (
+			<div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+				<Suspense fallback={<TabLoadingSkeleton />}>
+					<ExcalidrawViewer
+						// Stable per-tab key: external disk changes reload in place
+						// via `reloadKey` instead of remounting the whole viewer.
+						key={`excalidraw-${tab.id}`}
+						seed={tab.excalidrawSeed}
+						path={tab.path}
+						reloadKey={tab.excalidrawKey}
+						onPersist={excalidraw.onPersistFile}
+						onDirtyChange={(d) =>
+							excalidraw.onTabPatch(tab.id, { excalidrawDirty: d })
+						}
+						className="h-full w-full"
+					/>
+				</Suspense>
+			</div>
+		);
+	}
+	if (tab.mode === "text") {
+		// Same keep-alive gate as the Markdown editor: an evicted tab's
+		// unmount flushes its pending autosave; remount re-seeds from disk.
+		if (!active && !keepMounted) return <TabLoadingSkeleton />;
+		return (
+			<div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+				<Suspense fallback={<TabLoadingSkeleton />}>
+					<TextEditor
+						// Stable per-tab key: external disk changes swap the document
+						// in place via `reloadKey` (view state and scroll survive).
+						key={`text-${tab.id}`}
+						seed={tab.textSeed}
+						path={tab.path}
+						reloadKey={tab.textKey}
+						active={active}
+						onPersist={text.onPersistFile}
+						onManualSave={text.onManualSave}
+						onDirtyChange={(d) => text.onTabPatch(tab.id, { textDirty: d })}
+						className="h-full w-full"
+					/>
+				</Suspense>
+			</div>
+		);
+	}
 	// HTML pages are remote documents. Do not create their iframe (and therefore
 	// do not start a network request) until the panel is actually activated.
 	if (!active) return null;
 	return (
 		<div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-			<HtmlViewer srcUrl={tab.htmlUrl} className="h-full w-full" />
+			<HtmlViewer
+				srcUrl={tab.htmlUrl}
+				title={tab.title}
+				className="h-full w-full"
+			/>
 		</div>
 	);
 }, docViewPropsEqual);

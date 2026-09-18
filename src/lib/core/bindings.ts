@@ -64,10 +64,17 @@ export const commands = {
 	agentProbeCatalog: (templateId: string) => typedError<ApiResult<ProbeResult_Serialize>, string>(__TAURI_INVOKE("agent_probe_catalog", { templateId })),
 	doctorCheckHost: () => typedError<ApiResult<HostDoctorReport_Serialize>, string>(__TAURI_INVOKE("doctor_check_host")),
 	/**
+	 *  One-click install of Node.js via the host package manager (winget / brew),
+	 *  then re-probe. Can take several minutes while the installer downloads.
+	 */
+	doctorInstallNode: () => typedError<ApiResult<NodeInstallResult_Serialize>, string>(__TAURI_INVOKE("doctor_install_node")),
+	/**
 	 *  Re-probe every registered Agent over ACP and return classified failures.
 	 *  Can take up to ~30s per slow agent (probes run with limited concurrency).
 	 */
 	doctorCheckAgents: () => typedError<ApiResult<AgentAcpDiagnostic_Serialize[]>, string>(__TAURI_INVOKE("doctor_check_agents")),
+	/**  Open the template-owned CLI login command in a confirm-to-run terminal. */
+	doctorOpenAgentLoginTerminal: (templateId: string) => __TAURI_INVOKE<ApiResult<null>>("doctor_open_agent_login_terminal", { templateId }),
 	doctorCheckNetwork: () => typedError<ApiResult<NetworkDoctorReport_Serialize>, string>(__TAURI_INVOKE("doctor_check_network")),
 	/**  Request cooperative cancellation for a currently streaming ACP session. */
 	agentCancelRun: (sessionId: string) => __TAURI_INVOKE<ApiResult<boolean>>("agent_cancel_run", { sessionId }),
@@ -146,6 +153,14 @@ export const commands = {
 	agentRespondElicitation: (request: ElicitationResponseRequest) => __TAURI_INVOKE<ApiResult<PermissionResponded>>("agent_respond_elicitation", { request }),
 	/**  Answer a pending Grok `_x.ai/ask_user_question` extension request. */
 	agentRespondAskUser: (request: AskUserResponseRequest) => __TAURI_INVOKE<ApiResult<PermissionResponded>>("agent_respond_ask_user", { request }),
+	/**
+	 *  Resolve a vault-relative citation link to PDF coordinates.
+	 * 
+	 *  Supports fragments like `#section=2.3`, `#figure=1`, `#table=2`,
+	 *  `#algorithm=1`, `#formula=5`, `#region=figure-1`, and `#page=3`.
+	 *  Remote vaults are not supported yet.
+	 */
+	agentResolveCitation: (vaultPath: string | null, source: string) => typedError<ApiResult<CitationTarget>, string>(__TAURI_INVOKE("agent_resolve_citation", { vaultPath, source })),
 	graphGetBacklinks: (vaultPath: string, path: string) => typedError<ApiResult<BacklinksResponse_Serialize>, string>(__TAURI_INVOKE("graph_get_backlinks", { vaultPath, path })),
 	wikiResolve: (vaultPath: string, sourcePath: string, linkText: string, syntax: "wikilink" | "markdown" | null) => typedError<ApiResult<WikiResolveResponse_Serialize>, string>(__TAURI_INVOKE("wiki_resolve", { vaultPath, sourcePath, linkText, syntax })),
 	/**  Resolve and read the exact source projection for one `![[...]]` embed. */
@@ -299,6 +314,14 @@ export const commands = {
 	 *  catalog path prefixes. Never overwrites an existing target.
 	 */
 	paperMove: (args: PaperMoveArgs) => typedError<ApiResult<PaperMoveResult>, string>(__TAURI_INVOKE("paper_move", { args })),
+	/**
+	 *  Rewrite catalog `path` prefixes after an item was moved outside the app.
+	 * 
+	 *  This does **not** touch the filesystem; it only keeps `papers` rows and
+	 *  `pdf_page_counts` in sync with the new disk layout so titles/metadata are
+	 *  not lost after a Finder/CLI move.
+	 */
+	paperRepath: (args: PaperRepathArgs) => __TAURI_INVOKE<ApiResult<PaperRepathResult>>("paper_repath", { args }),
 	/**  Update catalog `is_read` after paper-reader workflow completes (or reset). */
 	paperSetIsRead: (args: PaperSetIsReadArgs) => __TAURI_INVOKE<ApiResult<PaperRecord_Serialize>>("paper_set_is_read", { args }),
 	/**
@@ -545,6 +568,45 @@ export const commands = {
 	 *  the main thread (Windows UI message pump).
 	 */
 	exportSystemCjkFont: () => __TAURI_INVOKE<ApiResult<ExportFontPayload>>("export_system_cjk_font"),
+	/**
+	 *  Ensure `host` may be served by the `agentero-web` proxy before its viewer
+	 *  frame loads.
+	 * 
+	 *  Idempotent. Non-public hosts (IP literals, intranet names) are refused, so
+	 *  the entry point itself cannot aim the proxy at link-local endpoints; the
+	 *  caller learns that through `false` and can surface it before the frame
+	 *  fails to load.
+	 */
+	webProxyAllowHost: (args: WebProxyAllowHostArgs) => typedError<ApiResult<boolean>, string>(__TAURI_INVOKE("web_proxy_allow_host", { args })),
+	/**
+	 *  Detect available LaTeX engines on the system.
+	 *  Returns the engines that can actually compile — latexmk (the orchestrator)
+	 *  and the engine binary must both exist. Engines not present on the host are
+	 *  omitted (not greyed out); without latexmk the list is empty and the compile
+	 *  button stays hidden.
+	 */
+	detectLatexEngines: () => __TAURI_INVOKE<ApiResult<LatexEngine[]>>("detect_latex_engines"),
+	/**
+	 *  Clean the regenerable LaTeX intermediates for one source (`latexmk -c`):
+	 *  drops `.aux` / `.log` / `.fls` / `.fdb_latexmk` / … while keeping the PDF.
+	 * 
+	 *  This is the escape hatch for latexmk's stuck state after a failed run:
+	 *  its fingerprint database (`*.fdb_latexmk`) records the failure, and with
+	 *  an unchanged source it then refuses to recompile — "Nothing to do …
+	 *  pdflatex gave an error in previous invocation". Clearing the
+	 *  intermediates resets that database so the next compile is a full run.
+	 */
+	cleanLatexAuxFiles: (texPath: string) => __TAURI_INVOKE<ApiResult<null>>("clean_latex_aux_files", { texPath }),
+	/**
+	 *  Lint the in-memory TeX buffer with chktex — the rule set Overleaf and VS
+	 *  Code's LaTeX Workshop run. Content goes in via stdin (`-I0`), so findings
+	 *  track the live editor buffer rather than the last autosaved snapshot, and
+	 *  chktex does not follow `\input`s (every open file lints itself). Returns an
+	 *  empty list when chktex is absent: linting degrades to the language pack's
+	 *  built-in checks instead of erroring on every keystroke.
+	 */
+	chktexLint: (texPath: string, content: string) => __TAURI_INVOKE<ApiResult<LatexLintDiagnostic[]>>("chktex_lint", { texPath, content }),
+	jobLatexCompileEnqueue: (args: JobLatexCompileEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_latex_compile_enqueue", { args })),
 };
 
 /** Events */
@@ -563,11 +625,13 @@ export const events = {
 	agentPlan: makeEvent<AgentPlanEvt>("agent:plan"),
 	agentRegistryChanged: makeEvent<AgentRegistryChangedEvent>("agent:registry-changed"),
 	agentSessionInfo: makeEvent<AgentSessionInfoEvt_Deserialize>("agent:session-info"),
+	agentStatus: makeEvent<AgentStatusEvt_Deserialize>("agent:status"),
 	agentStream: makeEvent<AgentStreamEvt>("agent:stream"),
 	agentTool: makeEvent<AgentToolEvt_Deserialize>("agent:tool"),
 	agentUsage: makeEvent<AgentUsageEvt>("agent:usage"),
 	bridgeHostStatus: makeEvent<BridgeHostStatusEvent>("bridge:host-status"),
 	bridgePairRequest: makeEvent<BridgePairRequestEvent>("bridge:pair-request"),
+	compileLog: makeEvent<CompileLogEvent>("compile:log"),
 	connectorError: makeEvent<ConnectorErrorEvent>("connector:error"),
 	connectorItemSaved: makeEvent<ConnectorItemSavedEvent>("connector:item-saved"),
 	connectorProgress: makeEvent<ConnectorProgressEvent>("connector:progress"),
@@ -733,6 +797,8 @@ export type AgentAcpDiagnostic_Deserialize = {
 	command: string,
 	/**  Agent host CLI (`detect_command`), when distinct from the ACP entrypoint. */
 	agentCommand: string | null,
+	/**  Host CLI OAuth/login command from the built-in template. */
+	loginCommand: string | null,
 	agentPath: string | null,
 	agentVersion: string | null,
 	/**  ACP entrypoint resolved path (`command`). */
@@ -755,6 +821,8 @@ export type AgentAcpDiagnostic_Serialize = {
 	command: string,
 	/**  Agent host CLI (`detect_command`), when distinct from the ACP entrypoint. */
 	agentCommand?: string | null,
+	/**  Host CLI OAuth/login command from the built-in template. */
+	loginCommand?: string | null,
 	agentPath?: string | null,
 	agentVersion?: string | null,
 	/**  ACP entrypoint resolved path (`command`). */
@@ -1117,6 +1185,48 @@ export type AgentSkill = {
 	description?: string,
 };
 
+/**
+ *  Phase transition of an in-flight agent turn, driving the streaming UI's
+ *  loading states (label + animation) before the first output arrives.
+ */
+export type AgentStatusEvent = AgentStatusEvent_Serialize | AgentStatusEvent_Deserialize;
+
+/**
+ *  Phase transition of an in-flight agent turn, driving the streaming UI's
+ *  loading states (label + animation) before the first output arrives.
+ */
+export type AgentStatusEvent_Deserialize = {
+	sessionId: string,
+	/**
+	 *  `starting` (spawn/connect) | `waiting-model` (prompt sent, no output
+	 *  yet) | `reconnecting` (upstream connection lost, agent retries).
+	 */
+	phase: string,
+	/**  Optional context, e.g. the reconnect attempt counter (`2/5`). */
+	detail?: string | null,
+};
+
+/**
+ *  Phase transition of an in-flight agent turn, driving the streaming UI's
+ *  loading states (label + animation) before the first output arrives.
+ */
+export type AgentStatusEvent_Serialize = {
+	sessionId: string,
+	/**
+	 *  `starting` (spawn/connect) | `waiting-model` (prompt sent, no output
+	 *  yet) | `reconnecting` (upstream connection lost, agent retries).
+	 */
+	phase: string,
+	/**  Optional context, e.g. the reconnect attempt counter (`2/5`). */
+	detail?: string | null,
+};
+
+export type AgentStatusEvt = AgentStatusEvt_Serialize | AgentStatusEvt_Deserialize;
+
+export type AgentStatusEvt_Deserialize = AgentStatusEvent_Deserialize;
+
+export type AgentStatusEvt_Serialize = AgentStatusEvent_Serialize;
+
 export type AgentStreamEvent = {
 	sessionId: string,
 	chunk: string,
@@ -1164,7 +1274,14 @@ export type AgentTemplate = "opencode" |
  *  Moonshot Kimi Code CLI with native ACP (`kimi acp`).
  *  Docs: https://moonshotai.github.io/kimi-code/en/
  */
-"kimi-code" | "custom";
+"kimi-code" | 
+/**
+ *  ZCode CLI via the community `zcode-acp-server` adapter, which bridges the
+ *  headless `zcode app-server --stdio`. Reuses the ZCode desktop app login
+ *  (`~/.zcode`); the adapter auto-discovers the app-bundled CLI.
+ *  Docs: https://github.com/william0wang/zcode-acp
+ */
+"zcode" | "custom";
 
 /**  ACP tool call create/update for UI (`Tool` element). */
 export type AgentToolEvent = AgentToolEvent_Serialize | AgentToolEvent_Deserialize;
@@ -1305,6 +1422,11 @@ export type AppSettings_Deserialize = {
 	 *  Default on; off opens only the PDF/HTML body.
 	 */
 	autoOpenPaperNotes?: boolean,
+	/**
+	 *  When opening a new paper, close the active tab instead of adding a new one.
+	 *  Default off; useful for users who prefer a single-paper-at-a-time workflow.
+	 */
+	replaceCurrentTabOnOpenPaper?: boolean,
 	autoUpdateInternalLinks?: string,
 	libraryColumns?: LibraryColumnPref[],
 	connectorEnabled?: boolean,
@@ -1383,6 +1505,11 @@ export type AppSettings_Serialize = {
 	 *  Default on; off opens only the PDF/HTML body.
 	 */
 	autoOpenPaperNotes: boolean,
+	/**
+	 *  When opening a new paper, close the active tab instead of adding a new one.
+	 *  Default off; useful for users who prefer a single-paper-at-a-time workflow.
+	 */
+	replaceCurrentTabOnOpenPaper: boolean,
 	autoUpdateInternalLinks: string,
 	libraryColumns: LibraryColumnPref[],
 	connectorEnabled: boolean,
@@ -1552,6 +1679,13 @@ export type BacklinksResponse_Serialize = {
 	backlinks: ResolvedLink_Serialize[],
 };
 
+export type Bbox = {
+	x: number | null,
+	y: number | null,
+	w: number | null,
+	h: number | null,
+};
+
 export type BlobCacheStats = {
 	/**  Total bytes under all (or one) remote blob dirs. */
 	bytes: number,
@@ -1661,6 +1795,8 @@ export type CatalogEntry_Deserialize = {
 	installHint: string,
 	/**  Shell install command for a missing ACP adapter (from the template). */
 	installCommand?: string | null,
+	/**  Host CLI OAuth/login command from the template. */
+	loginCommand?: string | null,
 	/**  Host CLI present but ACP entrypoint missing — Settings may offer ACP install. */
 	offerInstall?: boolean,
 	/**  Silent install/update via `agent_run_tool_lifecycle` is available (local). */
@@ -1698,6 +1834,8 @@ export type CatalogEntry_Serialize = {
 	installHint: string,
 	/**  Shell install command for a missing ACP adapter (from the template). */
 	installCommand?: string | null,
+	/**  Host CLI OAuth/login command from the template. */
+	loginCommand?: string | null,
 	/**  Host CLI present but ACP entrypoint missing — Settings may offer ACP install. */
 	offerInstall: boolean,
 	/**  Silent install/update via `agent_run_tool_lifecycle` is available (local). */
@@ -1776,6 +1914,23 @@ export type CitationMeta_Serialize = {
 	doi?: string | null,
 	arxivId?: string | null,
 	url?: string | null,
+};
+
+export type CitationTarget = {
+	/**  Vault-relative paper folder path (`papers/<id>`). */
+	paperPath: string,
+	/**  Vault-relative path from the citation link. */
+	path: string,
+	/**  Raw fragment (e.g. `figure=1`). */
+	fragment: string,
+	/**  0-based page index for the PDF viewer. */
+	pageIndex: number,
+	/**  Normalized page bbox (0–1) to scroll to and highlight. */
+	bbox: Bbox,
+	/**  Human-readable title when available. */
+	title: string | null,
+	/**  Region id suitable for the PDF highlight registry. */
+	regionId: string,
 };
 
 export type Citation_Deserialize = {
@@ -1974,6 +2129,11 @@ export type CommitStatus =
 "deduped" | 
 /**  `{parent}/{id}` already holds a paper (dir + NOTES or catalog row). */
 "skipped";
+
+/**  Mirror of the inline `json!({ "line" })` in `features::compile::compile_tex`. */
+export type CompileLogEvent = {
+	line: string,
+};
 
 /**
  *  Mirror of the inline `json!({ "message", "sessionId" })` in
@@ -2648,9 +2808,19 @@ export type JobImportEnqueueArgs = {
 	params?: Json | null,
 };
 
-export type JobKind = "parseRefs" | "parseBody" | "layoutAnalyze" | "layoutTranslate" | "downloadAssets" | "pageCount" | "wikiReindex" | "recognizeMetadata" | "import" | "connectorSync" | "modelDownload" | "citingScan" | "libraryIo" | "metadataRefresh";
+export type JobKind = "parseRefs" | "parseBody" | "layoutAnalyze" | "layoutTranslate" | "downloadAssets" | "pageCount" | "wikiReindex" | "recognizeMetadata" | "import" | "connectorSync" | "modelDownload" | "citingScan" | "libraryIo" | "metadataRefresh" | "latexCompile";
 
 export type JobLane = "focus" | "normal" | "idle";
+
+export type JobLatexCompileEnqueueArgs = {
+	vaultPath: string,
+	/**  Absolute, or vault-relative .tex source path. */
+	texPath: string,
+	/**  Engine id from the picker (pdflatex / xelatex / lualatex). */
+	engine: string,
+	lane?: JobLane | null,
+	force?: boolean,
+};
 
 export type JobListArgs = {
 	vaultPath?: string | null,
@@ -2790,6 +2960,28 @@ string |
 Json[] | 
 /**  JSON object. */
 { [key in string]: Json };
+
+/**  A detected LaTeX rendering engine. */
+export type LatexEngine = {
+	id: string,
+	label: string,
+	path: string | null,
+};
+
+/**
+ *  One chktex finding, mapped to editor coordinates (1-based line/column plus
+ *  match length). `code` is chktex's warning number — suppress one inline with
+ *  a `%chktex <n>` comment on the offending line.
+ */
+export type LatexLintDiagnostic = {
+	line: number,
+	column: number,
+	length: number,
+	/**  Mapped chktex kind: "error" | "warning" | "info" (its "Message" level). */
+	severity: string,
+	code: number,
+	message: string,
+};
 
 export type LayoutModelStatus = {
 	ready: boolean,
@@ -3159,6 +3351,30 @@ export type NetworkEndpointDiagnostic_Serialize = {
 };
 
 export type NetworkStatus = "reachable" | "timeout" | "unreachable";
+
+export type NodeInstallOutcome = "installed" | "failed" | "no-package-manager";
+
+export type NodeInstallResult = NodeInstallResult_Serialize | NodeInstallResult_Deserialize;
+
+export type NodeInstallResult_Deserialize = {
+	outcome: NodeInstallOutcome,
+	/**  Package manager used (winget / brew), when one was available. */
+	installer: string | null,
+	/**  Failure detail when the outcome is `failed`. */
+	error: string | null,
+	/**  Host probe re-run after the install attempt. */
+	report: HostDoctorReport_Deserialize,
+};
+
+export type NodeInstallResult_Serialize = {
+	outcome: NodeInstallOutcome,
+	/**  Package manager used (winget / brew), when one was available. */
+	installer?: string | null,
+	/**  Failure detail when the outcome is `failed`. */
+	error?: string | null,
+	/**  Host probe re-run after the install attempt. */
+	report: HostDoctorReport_Serialize,
+};
 
 export type NotesTemplateSeedResult = {
 	created: boolean,
@@ -3570,6 +3786,19 @@ export type PaperRenamedEventPayload = {
 	outcome: string,
 	updatedSources: string[],
 	timestamp: number,
+};
+
+export type PaperRepathArgs = {
+	vaultPath: string,
+	/**  Vault-relative original path (paper folder, org folder, or file under `papers/`). */
+	fromRel: string,
+	/**  Vault-relative new path after the move already happened on disk. */
+	toRel: string,
+};
+
+export type PaperRepathResult = {
+	/**  Number of catalog rows whose `path` prefix was rewritten. */
+	count: number,
 };
 
 export type PaperRescanArgs = {
@@ -4184,19 +4413,26 @@ export type StageImportFileResult = {
 };
 
 export type SyncBackendConfig = {
+	/**  Backend discriminator; S3 fields or WebDAV fields apply accordingly. */
+	backend?: SyncBackendKind,
 	/**  S3-compatible endpoint, e.g. `https://<account>.r2.cloudflarestorage.com`. */
-	endpoint: string,
+	endpoint?: string,
 	region?: string,
-	bucket: string,
+	bucket?: string,
 	/**  Optional key prefix inside the bucket (multiple vaults per bucket). */
 	prefix?: string,
-	accessKey: string,
-	secretKey: string,
+	accessKey?: string,
+	secretKey?: string,
 	/**
 	 *  `{endpoint}/{bucket}/key` instead of `{bucket}.{endpoint}/key`.
 	 *  Path style works with R2 / MinIO / AWS alike, so it is the default.
 	 */
 	forcePathStyle?: boolean,
+	/**  WebDAV server directory, e.g. `https://dav.jianguoyun.com/dav/agentero/`. */
+	webdavUrl?: string,
+	webdavUsername?: string,
+	/**  Masked (`*`) on the way to the WebView, like the S3 secret key. */
+	webdavPassword?: string,
 	/**
 	 *  Automatic background sync: once on scheduler start (vault open), after
 	 *  30s of vault quiet, and every `interval_minutes`.
@@ -4204,9 +4440,9 @@ export type SyncBackendConfig = {
 	autoSync?: boolean,
 	intervalMinutes?: number,
 	/**
-	 *  Connection-test probe result: `false` for backends whose PutObject
-	 *  rejects conditional headers (e.g. Aliyun OSS, 400 NotImplemented).
-	 *  Sync then degrades to plain PUTs; the runtime fallback re-detects.
+	 *  Connection-test probe result: `false` for backends whose PUT rejects
+	 *  or ignores conditional headers (e.g. Aliyun OSS 400 NotImplemented,
+	 *  most WebDAV servers). Sync then degrades to plain PUTs.
 	 */
 	conditionalWrites?: boolean,
 	/**
@@ -4215,6 +4451,12 @@ export type SyncBackendConfig = {
 	 */
 	scope?: SyncScope,
 };
+
+/**
+ *  Which remote storage backend a vault syncs through. Legacy `sync.json`
+ *  entries without the field deserialize as [`SyncBackendKind::S3`].
+ */
+export type SyncBackendKind = "s3" | "webdav";
 
 export type SyncConfigureArgs = {
 	vaultPath: string,
@@ -4650,6 +4892,11 @@ export type WarmResult_Serialize = {
 	usageUsed?: number | null,
 	usageSize?: number | null,
 	error?: string | null,
+};
+
+export type WebProxyAllowHostArgs = {
+	/**  Public DNS host the viewer is about to load through the proxy. */
+	host: string,
 };
 
 export type WikiApplyExternalRenameArgs = {

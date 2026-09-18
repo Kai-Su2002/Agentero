@@ -50,7 +50,22 @@ mod acp_live {
         assert!(ids.contains(&"pi"));
         assert!(ids.contains(&"dsh"));
         assert!(ids.contains(&"kimi-code"));
+        assert!(ids.contains(&"zcode"));
         assert!(!ids.contains(&"custom"));
+    }
+
+    #[test]
+    fn zcode_template_uses_the_acp_adapter() {
+        let zcode = catalog_templates()
+            .into_iter()
+            .find(|entry| entry.id == "zcode")
+            .expect("ZCode template");
+        assert_eq!(zcode.command, "zcode-acp-server");
+        assert_eq!(zcode.args, Vec::<String>::new());
+        // The adapter discovers the desktop app's zcode.cjs itself, so the
+        // "installed" badge tracks the adapter rather than a host `zcode` CLI.
+        assert_eq!(zcode.detect_command.as_deref(), Some("zcode-acp-server"));
+        assert!(zcode.install_command.is_some());
     }
 
     #[test]
@@ -63,6 +78,23 @@ mod acp_live {
         assert_eq!(codex.command, "codex-acp");
         assert_eq!(codex.args, Vec::<String>::new());
         assert_eq!(codex.detect_command.as_deref(), Some("codex"));
+        assert_eq!(codex.login_command.as_deref(), Some("codex login"));
+    }
+
+    #[test]
+    fn oauth_templates_define_login_commands() {
+        let cats = catalog_templates();
+        let claude = cats
+            .iter()
+            .find(|entry| entry.id == "claude-acp")
+            .expect("Claude template");
+        let codex = cats
+            .iter()
+            .find(|entry| entry.id == "codex-acp")
+            .expect("Codex template");
+
+        assert_eq!(claude.login_command.as_deref(), Some("claude auth login"));
+        assert_eq!(codex.login_command.as_deref(), Some("codex login"));
     }
 
     #[test]

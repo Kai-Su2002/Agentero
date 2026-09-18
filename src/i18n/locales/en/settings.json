@@ -86,6 +86,9 @@
 		"autoOpenPaperNotes": {
 			"label": "Open paper notes by default"
 		},
+		"replaceCurrentTabOnOpenPaper": {
+			"label": "Replace current tab when opening a paper"
+		},
 		"autoUpdateInternalLinks": {
 			"label": "Update internal links after external renames",
 			"ask": "Ask",
@@ -200,7 +203,10 @@
 		},
 		"fontSize": {
 			"label": "Editor font size",
-			"value": "{{size}} px"
+			"value": "{{size}} px",
+			"increase": "Increase font size",
+			"decrease": "Decrease font size",
+			"select": "Select font size"
 		},
 		"fontFamily": {
 			"default": "Default (System)",
@@ -286,6 +292,9 @@
 		"installAdapterAria": "Install ACP adapter for {{name}}",
 		"installAdapterTitle": "Install ACP adapter",
 		"installSuccess": "Installed {{name}}",
+		"loginAgent": "Sign in",
+		"loginAgentAria": "Sign in to {{name}}",
+		"loginAgentTitle": "Open terminal for {{command}}",
 		"updateAgent": "Update",
 		"updateAgentAria": "Update {{name}} agent CLI",
 		"updateAgentTitle": "Update agent CLI",
@@ -295,6 +304,7 @@
 		"lifecycleScanning": "Scanning PATH…",
 		"lifecycleProbing": "Probing ACP…",
 		"lifecycleUninstalling": "Uninstalling…",
+		"npmCacheWriteFailed": "npm cannot write to its cache. In Command Prompt, run {{cacheCommand}}, then retry. If it persists, close other Node/npm processes, allow Node.js in your antivirus, or correct the cache folder permissions.",
 		"uninstallAgent": "Uninstall",
 		"uninstallAgentAria": "Uninstall {{name}} agent",
 		"uninstallAgentTitle": "Uninstall agent",
@@ -563,6 +573,13 @@
 				"available": "Available",
 				"missing": "Not found",
 				"unusable": "Cannot run"
+			},
+			"install": {
+				"button": "Install Node.js",
+				"installing": "Installing…",
+				"tooltip": "Install the Node.js LTS through your system package manager (winget or Homebrew)",
+				"hint": "Some ACP Agents need Node.js and npm on PATH. Install the LTS via your system package manager, then re-detect.",
+				"noPackageManager": "No supported package manager found. Install Node.js manually from nodejs.org, then re-detect."
 			}
 		},
 		"network": {
@@ -615,7 +632,10 @@
 				"spawn-failed": "The process could not start; check the executable permission and path.",
 				"protocol-failed": "The process started but the ACP handshake failed; update the ACP adapter.",
 				"unknown": "See the raw error above."
-			}
+			},
+			"login": "Sign in",
+			"loginAria": "Sign in to {{name}}",
+			"loginTitle": "Open terminal for {{command}}"
 		},
 		"visualMarks": {
 			"select": "Select {{path}}",
@@ -710,9 +730,9 @@
 			"description": "Headless Vault / Catalog for scripts and external agents",
 			"notBundled": "CLI is not bundled in this build",
 			"versionMismatch": "CLI {{cli}} ≠ app {{app}}; reinstall to match",
-			"pathMissing": "Installed in {{dir}}, but that folder is not on your PATH",
+			"pathMissing": "CLI is installed; this terminal has not refreshed PATH",
 			"verifyHint": "Verify in a new terminal:",
-			"windowsVerifyHint": "The folder was added to your user PATH automatically — open a new terminal (no restart needed) to verify:",
+			"windowsVerifyHint": "Copy the CMD command below to verify:",
 			"verifyCopy": "Copy verification command",
 			"verifyCopied": "Verification command copied",
 			"verifyCopyFailed": "Could not copy the command",
@@ -756,6 +776,13 @@
 		"title": "Cloud sync",
 		"advanced": "Advanced",
 		"localVaultOnly": "Cloud sync is available for local vaults only.",
+		"backend": "Sync method",
+		"backendS3": "Object storage",
+		"backendWebdav": "WebDAV",
+		"backendLocked": "Disconnect before switching the storage backend.",
+		"serverUrl": "Server URL",
+		"username": "Username",
+		"password": "Password",
 		"endpoint": "Endpoint",
 		"region": "Region",
 		"bucket": "Bucket",
@@ -773,7 +800,7 @@
 		"statusDisconnected": "Not connected",
 		"statusSyncing": "Syncing",
 		"statusError": "Connection error",
-		"providerDocsAria": "Open {{name}} S3 setup guide",
+		"providerDocsAria": "Open {{name}} setup guide",
 		"lastSync": "Last synced {{time}}",
 		"neverSynced": "Not synced yet.",
 		"done": "Sync complete: {{up}} uploaded, {{down}} downloaded",

@@ -26,13 +26,15 @@ Settings → **翻译**：
   - **不翻译**：算法框及其内部文字；`reference` / `reference_content` 文献条目；“References / Bibliography / 参考文献” 标题；侧栏 `aside_text`。
   - **译前归一化**（`normalizeLayoutSourceText`）：文字层是空白折叠后的单行串，先合并行末连字符断词（`repre- sentation` → `representation`，`pre- and` 这类并列保留）、展开 ligature / 去 soft hyphen、清掉落在正文 bbox 里的 arXiv 戳与会议 boilerplate、剥掉句末后粘着的页码与续段前的行号（`Table 2` 这类交叉引用不动，`header` 不做数字剥离）。
   - **跨页/跨栏段落合并**（#340）：一个段落被分栏、分页或图表切开时是多个 region。末尾无句末标点、下一片段以小写开头则判为续段，拼成一个 chain 作为**原子翻译单元**（≤ 4 片段 / 4000 字符），译文再按各片段原文长度加权、在句末→分句→空白边界切回各自 bbox。图题不打断 chain，`header` 打断。chain 内任一片段缺译文即整条重译。
+  - **段落边界与安全扩框**：文字层会按真实行间距将被模型合并的相邻正文段落拆成独立 bbox。标题和图表 caption 的译文估算行宽超过原文 10% 时，覆盖层才会向无检测内容的右侧或下侧留白扩展（最多原框的 1.5× 宽或 1.75× 高）；遇到任何版面检测框即停止，扩展失败才走行距/字号拟合。正文不借用周围空间，避免不完整的版面检测遮住邻栏内容。
   - **占位符保护**（`src/lib/translate/mask.ts`）：行内公式 / LaTeX 命令 / URL / DOI 先换成 `⟦n⟧` 再发引擎，回填时还原；引擎吞掉占位符则该 chain 用原文重译一次。
   - 按阅读顺序把 chain **分批**翻译（`buildTranslateBatches`）：批内 payload ≤ 4500 字符（约一页双栏正文），用 `[[n]]` 编号拼成一次请求，让引擎看到上下文；译文按 `[[n]]` 标记切回、逐块写回原 bbox 位置。标记解析不一致时该批**回退为逐段翻译**，保证不丢块。并发 2（Agent 串行）；**每批完成立刻**在 bbox 上盖译文层（非整页等齐）。这里的并发 2 是**前端批次**并发，与内置 provider 在 Host 内对单批做的段级 fan-out（并发 3）正交：选内置时同时在飞的请求最多 2 × 3。
   - 每页纸张右上角外侧常驻窄页签可只翻译本页；页签 hover 不弹出额外文字；本页已有可见译文时，页签切换为隐藏本页译文。隐藏只影响当前 UI 覆盖层，不删除磁盘缓存。
   - 译文按论文写入 `{paper}/source/layout-translate.json`。缓存命中需匹配 provider / 源语言 / 目标语言 / 非密钥服务配置，并逐块校验 region id + 原文（存的是归一化后的原文，归一化规则变化时旧缓存会 miss 一次并重译）；版面或目标语言变化时只复用仍匹配的块。
   - 单页翻译写缓存时按同一 cache key 增量合并，避免只翻译一页时覆盖其它页已经落盘的译文。
   - 运行中再点=停止；有译文再点=清除。实现：`layout-translate.ts` + `layout-translate-source.ts` + `layout-translate-overlay.tsx`。
-  - 覆盖层按当前 PDF 页面背景 tone 绘制纸面底色（深字）；暗色下套用与页面栅格相同的 invert filter（`PDF_PAGE_RASTER_DARK_CLASS`），使盖住原文的底色与反转后的纸面一致。
+  - 覆盖层按当前 PDF 页面背景 tone 绘制纸面底色（深字）；暗色下套用与页面栅格相同的 invert filter（`PDF_PAGE_RASTER_DARK_CLASS`），使盖住原文的底色与反转后的纸面一致。排版先以原文尺度估算、再用真实浏览器度量校验：译文膨胀时依次收紧行距（1.25 → 1.10）、缩小字号；遵循严格 CJK 断行，只有不可断的 URL/标识符仍溢出时才允许词内断行。因此普通段落不会过早缩成极小字，并尽量避免裁掉译文。
+  - **双栏翻译**（Settings → 翻译 →「在侧窗中打开渲染好的翻译」）：全文翻译按钮在原文右侧打开只读译文 PDF 面板（同页栈 + 译文覆盖层，隐藏工具栏/选区菜单）。左右各是独立 EmbedPDF 实例，通过模块级 peer 注册表（`src/lib/pdf/scroll-sync.ts` + `usePdfScrollSync`）双向同步**滚动比例**与**缩放**（scroll 事件按动画帧合并）；任一侧滚轮滚动或 Ctrl/Cmd+滚轮缩放，另一侧跟到同一相对位置。译文面板走精简 `PdfTranslationViewerInner`：只挂 raster/tiling/zoom 等核心插件（不挂 ONNX 版面分析、批注、搜索、选区，也不调用对应 capability hooks），页面层只渲染纸面 + 译文覆盖；打开时优先读 `layout-translate.json` 缓存，避免与源面板抢跑第二套翻译/版面任务。
 - API：`runTranslate(task)`（`src/lib/translate/`）。
 
 ## Prompt

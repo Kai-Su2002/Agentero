@@ -86,6 +86,9 @@
 		"autoOpenPaperNotes": {
 			"label": "默认打开论文笔记"
 		},
+		"replaceCurrentTabOnOpenPaper": {
+			"label": "打开新论文时替换当前标签页"
+		},
 		"autoUpdateInternalLinks": {
 			"label": "外部改名后更新双链",
 			"ask": "询问",
@@ -200,7 +203,10 @@
 		},
 		"fontSize": {
 			"label": "编辑器字号",
-			"value": "{{size}} px"
+			"value": "{{size}} px",
+			"increase": "增大字号",
+			"decrease": "减小字号",
+			"select": "选择字号"
 		},
 		"fontFamily": {
 			"default": "默认（系统）",
@@ -286,6 +292,9 @@
 		"installAdapterAria": "安装 {{name}} 的 ACP 适配器",
 		"installAdapterTitle": "安装 ACP 适配器",
 		"installSuccess": "已安装 {{name}}",
+		"loginAgent": "登录",
+		"loginAgentAria": "登录 {{name}}",
+		"loginAgentTitle": "打开终端执行 {{command}}",
 		"updateAgent": "升级",
 		"updateAgentAria": "升级 {{name}} Agent CLI",
 		"updateAgentTitle": "升级 Agent CLI",
@@ -295,6 +304,7 @@
 		"lifecycleScanning": "正在扫描 PATH…",
 		"lifecycleProbing": "正在探测 ACP…",
 		"lifecycleUninstalling": "正在卸载…",
+		"npmCacheWriteFailed": "npm 无法写入缓存。请在“命令提示符”中运行 {{cacheCommand}}，然后重试。若仍失败，请关闭其他 Node/npm 进程、在杀毒软件中允许 Node.js，或修正缓存目录权限。",
 		"uninstallAgent": "卸载",
 		"uninstallAgentAria": "卸载 {{name}} Agent",
 		"uninstallAgentTitle": "卸载 Agent",
@@ -563,6 +573,13 @@
 				"available": "可用",
 				"missing": "未找到",
 				"unusable": "无法运行"
+			},
+			"install": {
+				"button": "一键安装 Node.js",
+				"installing": "正在安装…",
+				"tooltip": "通过系统包管理器（winget 或 Homebrew）安装 Node.js LTS",
+				"hint": "部分 ACP Agent 需要 PATH 中的 Node.js 与 npm。可通过系统包管理器安装 LTS 版本，安装完成后重新检测。",
+				"noPackageManager": "未找到受支持的系统包管理器，请前往 nodejs.org 手动安装 Node.js，然后重新检测。"
 			}
 		},
 		"network": {
@@ -615,7 +632,10 @@
 				"spawn-failed": "进程无法启动，检查可执行权限与命令路径。",
 				"protocol-failed": "进程已启动但 ACP 握手失败，请更新 ACP adapter。",
 				"unknown": "查看上方原始错误信息。"
-			}
+			},
+			"login": "登录",
+			"loginAria": "登录 {{name}}",
+			"loginTitle": "打开终端执行 {{command}}"
 		},
 		"visualMarks": {
 			"select": "选择 {{path}}",
@@ -710,9 +730,9 @@
 			"description": "无界面操作 Vault / Catalog，供脚本与外部 Agent 使用",
 			"notBundled": "当前构建未内置 CLI",
 			"versionMismatch": "CLI {{cli}} 与应用 {{app}} 不一致，请重新安装以对齐",
-			"pathMissing": "已安装到 {{dir}}，但该目录不在 PATH 中",
+			"pathMissing": "CLI 已安装，当前终端尚未更新 PATH",
 			"verifyHint": "在新终端中验证：",
-			"windowsVerifyHint": "该目录已自动加入用户 PATH——打开新终端即可生效（无需重启），验证：",
+			"windowsVerifyHint": "复制下面的 CMD 命令验证：",
 			"verifyCopy": "复制验证命令",
 			"verifyCopied": "已复制验证命令",
 			"verifyCopyFailed": "无法复制命令",
@@ -756,6 +776,13 @@
 		"title": "云同步",
 		"advanced": "高级",
 		"localVaultOnly": "云同步仅支持本地 Vault。",
+		"backend": "同步方式",
+		"backendS3": "对象存储",
+		"backendWebdav": "WebDAV",
+		"backendLocked": "切换存储后端前请先解绑。",
+		"serverUrl": "服务器地址",
+		"username": "用户名",
+		"password": "密码",
 		"endpoint": "Endpoint",
 		"region": "区域",
 		"bucket": "Bucket",
@@ -773,7 +800,7 @@
 		"statusDisconnected": "未连接",
 		"statusSyncing": "同步中",
 		"statusError": "连接异常",
-		"providerDocsAria": "打开 {{name}} 的 S3 配置指南",
+		"providerDocsAria": "打开 {{name}} 配置指南",
 		"lastSync": "上次同步 {{time}}",
 		"neverSynced": "尚未同步。",
 		"done": "同步完成：上传 {{up}}，下载 {{down}}",

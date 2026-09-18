@@ -7,6 +7,9 @@
 		"notInstalled": "Not installed"
 	},
 	"defaultName": "Agent",
+	"login": {
+		"action": "Sign in"
+	},
 	"permission": {
 		"title": "Agent permission",
 		"deny": "Deny",
@@ -39,6 +42,7 @@
 		"title": "Session history",
 		"description": "Recent ACP sessions in this chat.",
 		"empty": "No sessions yet.",
+		"restoring": "Restoring session…",
 		"includeExternal": "External",
 		"includeExternalToggle": "Include all sessions",
 		"status": {
@@ -68,6 +72,10 @@
 		"removeSkill": "Remove ${{skill}} from context",
 		"removeSelection": "Remove selected text from context",
 		"selection": "Selection",
+		"selectionChip": "{{title}}",
+		"selectionChipWithPage": "{{title}}:p.{{page}}",
+		"selectionChipWithLine": "{{title}} line {{from}}",
+		"selectionChipWithLines": "{{title}} lines {{from}}-{{to}}",
 		"removeVisualDraft": "Remove visual annotation from context",
 		"visualAnnotation": "Visual annotation",
 		"visualAnnotationPage": "p.{{page}}",
@@ -119,6 +127,9 @@
 		"thinking": "Thinking",
 		"reasoning": "Reasoning",
 		"plan": "Planning",
+		"starting": "Starting agent…",
+		"waitingModel": "Waiting for model…",
+		"reconnecting": "Upstream reconnecting",
 		"elapsed": "{{count}}s"
 	},
 	"copy": "Copy",
@@ -151,7 +162,15 @@
 		"expand": "Expand questionnaire"
 	},
 	"citation": {
-		"vaultPath": "Vault path referenced by agent"
+		"vaultPath": "Vault path referenced by agent",
+		"resolveFailed": "Could not open citation: {{source}}",
+		"figureNotFound": "Figure not found: {{source}}",
+		"sectionNotFound": "Section not found: {{source}}",
+		"tableNotFound": "Table not found: {{source}}",
+		"algorithmNotFound": "Algorithm not found: {{source}}",
+		"formulaNotFound": "Formula not found: {{source}}",
+		"pageNotFound": "Page not found: {{source}}",
+		"regionNotFound": "Region not found: {{source}}"
 	},
 	"models": {
 		"currentSelection": "Current selection",

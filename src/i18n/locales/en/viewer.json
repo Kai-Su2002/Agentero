@@ -9,14 +9,10 @@
 		"empty": "No paper available.",
 		"loading": "Loading PDF…",
 		"loadError": "Failed to load PDF",
-		"zoomIn": "Zoom in",
-		"zoomOut": "Zoom out",
 		"zoomPercentage": "Zoom percentage",
-		"zoomFit": "Fit width",
 		"prevPage": "Previous page",
 		"nextPage": "Next page",
 		"goToPage": "Go to page",
-		"zoomFitPage": "Fit page",
 		"outline": "Outline",
 		"linkAria": "PDF link",
 		"paperTone": "Page background",
@@ -27,6 +23,7 @@
 			"dark": "Dark"
 		},
 		"remoteMode": "Remote mode",
+		"jumpBack": "Jump back",
 		"importToLibrary": "Import to library",
 		"findPlaceholder": "Find in document",
 		"findPrev": "Previous match",
@@ -65,7 +62,12 @@
 			"pageRunning": "Translating this page…",
 			"needLayout": "Run layout analysis first (Figures panel).",
 			"noText": "No extractable text regions to translate.",
-			"failed": "Full-text translate failed"
+			"failed": "Full-text translate failed",
+			"waiting": "Waiting for layout analysis…",
+			"cancelQueue": "Cancel queue",
+			"queuedToast": "Full-text translation queued — waiting for layout analysis",
+			"startedAfterLayout": "Layout analysis finished — full-text translation started",
+			"parseFailedWhileWaiting": "Layout analysis failed; translation cancelled"
 		},
 		"translation": {
 			"title": "Translation",
@@ -187,6 +189,7 @@
 		"analyze": "Detect figures, tables, and formulas",
 		"reanalyze": "Re-run layout analysis",
 		"analyzing": "Analyzing layout…",
+		"queued": "Waiting to analyze layout…",
 		"progressPages": "{{page}} / {{total}} pages",
 		"progressPct": "{{pct}}%",
 		"clickAnnotateAria": "Annotate this {{kind}}",
@@ -223,6 +226,7 @@
 	},
 	"selection": {
 		"menuLabel": "Selection actions",
+		"colorGroupLabel": "Highlight colors",
 		"color": {
 			"yellow": "Yellow",
 			"green": "Green",
@@ -234,6 +238,7 @@
 		"copied": "Copied",
 		"note": "Annotate",
 		"ask": "Ask",
+		"quickChat": "Quick chat",
 		"explainVisual": "Explain formula or selection",
 		"addToChat": "Add to chat",
 		"translate": "Translate",
@@ -250,10 +255,19 @@
 	},
 	"html": {
 		"empty": "No paper available.",
-		"sandboxTitle": "HTML paper sandbox"
+		"sandboxTitle": "HTML paper sandbox",
+		"denied": "This page's host cannot be loaded through the built-in proxy."
 	},
 	"image": {
 		"empty": "No image available.",
 		"altFallback": "Image preview"
+	},
+	"excalidraw": {
+		"empty": "No drawing available."
+	},
+	"textEditor": {
+		"errorCount": "{{count}} errors",
+		"warningCount": "{{count}} warnings",
+		"infoCount": "{{count}} info"
 	}
 }

@@ -26,6 +26,7 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import type { PromptImage } from "@/lib/agent";
+import { backgroundTasksStore } from "@/lib/core/background-tasks";
 import { cn } from "@/lib/core/utils";
 import {
 	compareLayoutReadingOrder,
@@ -38,6 +39,7 @@ import {
 	isTableLayoutKind,
 	LAYOUT_SIDEBAR_MIN_SCORE,
 	layoutAnalysisStore,
+	normalizeLayoutPaperKey,
 	type PdfLayoutKind,
 	type PdfLayoutRegion,
 	toggleLayoutOverlayVisible,
@@ -46,6 +48,10 @@ import {
 type FiguresPanelProps = {
 	/** EmbedPDF documentId / PDF tab id used as layout store key. */
 	documentId: string | null;
+	/** Paper folder abs path — matches headless layoutAnalyze progress. */
+	paperAbsPath?: string | null;
+	/** Vault-relative paper path — matches JobCenter projected task rows. */
+	paperRelPath?: string | null;
 	/** Whether a PDF viewer handle is currently registered for this doc. */
 	viewerReady: boolean;
 	/** Layout analysis in progress (from toolbar / handle). */
@@ -58,6 +64,18 @@ type FiguresPanelProps = {
 	/** Hide the pane header for use inside a floating PDF panel. */
 	compact?: boolean;
 };
+
+function normalizeRelPaperPath(path: string): string {
+	return path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+}
+
+function sameRelPaperPath(
+	a: string | null | undefined,
+	b: string | null | undefined,
+): boolean {
+	if (!a || !b) return false;
+	return normalizeRelPaperPath(a) === normalizeRelPaperPath(b);
+}
 
 type SidebarKind = "image" | "chart" | "table" | "algorithm" | "formula";
 
@@ -221,6 +239,8 @@ function Section({
  */
 export function FiguresPanel({
 	documentId,
+	paperAbsPath = null,
+	paperRelPath = null,
 	viewerReady,
 	analyzing = false,
 	onAnalyze,
@@ -239,6 +259,30 @@ export function FiguresPanel({
 			: null,
 	);
 	const ui = useStore(layoutAnalysisStore, (s) => s.ui);
+	const activeDocumentId = useStore(
+		layoutAnalysisStore,
+		(s) => s.activeDocumentId,
+	);
+	const activePaperAbsPath = useStore(
+		layoutAnalysisStore,
+		(s) => s.activePaperAbsPath,
+	);
+	const layoutJobPending = useStore(backgroundTasksStore, (s) =>
+		s.tasks.some(
+			(task) =>
+				(task.kind === "layoutAnalyze" || task.kind === "layoutRun") &&
+				(task.status === "queued" || task.status === "running") &&
+				sameRelPaperPath(task.paperPath, paperRelPath),
+		),
+	);
+	const layoutJobQueued = useStore(backgroundTasksStore, (s) =>
+		s.tasks.some(
+			(task) =>
+				task.kind === "layoutAnalyze" &&
+				task.status === "queued" &&
+				sameRelPaperPath(task.paperPath, paperRelPath),
+		),
+	);
 	const [thumbs, setThumbs] = useState<Record<string, PromptImage | null>>({});
 
 	const gallery = useMemo(() => {
@@ -356,38 +400,55 @@ export function FiguresPanel({
 		documentId ? (s.overlayVisible[documentId] ?? false) : false,
 	);
 
-	const running =
-		analyzing ||
-		(ui.stage === "running" &&
-			(!documentId ||
-				layoutAnalysisStore.getState().activeDocumentId === documentId));
+	const paperKey = paperAbsPath ? normalizeLayoutPaperKey(paperAbsPath) : null;
+	const storeRunningForPaper =
+		ui.stage === "running" &&
+		(Boolean(documentId && activeDocumentId === documentId) ||
+			Boolean(paperKey && activePaperAbsPath === paperKey) ||
+			// Loose PDF / no paper folder: only documentId can attribute the run.
+			(!documentId && !paperKey));
+	const runningUi = storeRunningForPaper ? ui : null;
+	const running = analyzing || runningUi != null || layoutJobPending;
 
 	const empty = gallery.length === 0;
 	const hasRaw = rawSidebarCount > 0;
 
 	const analysisProgress =
-		ui.stage === "running" && typeof ui.progress === "number"
-			? ui.progress
+		runningUi && typeof runningUi.progress === "number"
+			? runningUi.progress
 			: null;
 	const analysisPageTotal =
-		ui.stage === "running" && typeof ui.total === "number" && ui.total > 0
-			? ui.total
+		runningUi && typeof runningUi.total === "number" && runningUi.total > 0
+			? runningUi.total
 			: null;
 	const analysisPageCurrent =
-		ui.stage === "running" && typeof ui.page === "number" && ui.page > 0
-			? ui.page
-			: ui.stage === "running" && typeof ui.completed === "number"
-				? ui.completed
+		runningUi && typeof runningUi.page === "number" && runningUi.page > 0
+			? runningUi.page
+			: runningUi && typeof runningUi.completed === "number"
+				? runningUi.completed
+				: null;
+	const analysisMessage = runningUi?.message?.trim()
+		? runningUi.message
+		: layoutJobQueued
+			? t("figures.queued")
+			: t("figures.analyzing");
+	const analysisProgressLabel =
+		analysisPageTotal != null && analysisPageCurrent != null
+			? t("figures.progressPages", {
+					page: analysisPageCurrent,
+					total: analysisPageTotal,
+				})
+			: analysisProgress != null
+				? t("figures.progressPct", { pct: Math.round(analysisProgress) })
 				: null;
 
-	const analyzeTooltip =
-		ui.stage === "running"
+	const analyzeTooltip = running
+		? analysisMessage
+		: ui.stage === "error"
 			? ui.message
-			: ui.stage === "error"
-				? ui.message
-				: result
-					? t("figures.reanalyze")
-					: t("figures.analyze");
+			: result
+				? t("figures.reanalyze")
+				: t("figures.analyze");
 
 	const handleToggleOverlay = useCallback(() => {
 		if (!documentId) return;
@@ -481,30 +542,25 @@ export function FiguresPanel({
 				</p>
 			) : running && !hasRaw ? (
 				<div className="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 px-4">
-					<div className="w-full max-w-[14rem] space-y-2">
+					<div
+						className="w-full max-w-[14rem] space-y-2"
+						role="status"
+						aria-live="polite"
+					>
 						<p className="text-center text-muted-foreground text-xs">
-							{ui.stage === "running" ? ui.message : t("figures.analyzing")}
+							{analysisMessage}
 						</p>
 						<Progress
 							value={analysisProgress ?? undefined}
-							aria-label={
-								ui.stage === "running" ? ui.message : t("figures.analyzing")
-							}
+							aria-label={analysisMessage}
 							className={cn(
 								"h-1.5",
 								analysisProgress == null && "animate-pulse opacity-70",
 							)}
 						/>
-						{analysisProgress != null || analysisPageTotal != null ? (
+						{analysisProgressLabel ? (
 							<p className="text-center text-caption text-muted-foreground tabular-nums">
-								{analysisPageTotal != null && analysisPageCurrent != null
-									? t("figures.progressPages", {
-											page: analysisPageCurrent,
-											total: analysisPageTotal,
-										})
-									: t("figures.progressPct", {
-											pct: analysisProgress ?? 0,
-										})}
+								{analysisProgressLabel}
 							</p>
 						) : null}
 					</div>
@@ -534,59 +590,88 @@ export function FiguresPanel({
 					{t("figures.emptyFiltered")}
 				</p>
 			) : (
-				<div className="agentero-scroll min-h-0 flex-1 space-y-4 overflow-y-auto p-2 [scrollbar-gutter:stable]">
-					<Section title={t("figures.sectionFigures")} count={figures.length}>
-						{figures.map((region, i) => (
-							<FigureCard
-								key={region.id}
-								region={region}
-								index={i + 1}
-								selected={focusedId === region.id}
-								thumb={thumbs[region.id]}
-								onJump={handleJump}
+				<div className="flex min-h-0 flex-1 flex-col">
+					{running ? (
+						<div
+							className="border-border/70 border-b bg-background/95 px-2 py-2"
+							role="status"
+							aria-live="polite"
+						>
+							<div className="mb-1 flex items-center justify-between gap-2 text-caption text-muted-foreground">
+								<span className="min-w-0 truncate">{analysisMessage}</span>
+								{analysisProgressLabel ? (
+									<span className="shrink-0 tabular-nums">
+										{analysisProgressLabel}
+									</span>
+								) : null}
+							</div>
+							<Progress
+								value={analysisProgress ?? undefined}
+								aria-label={analysisMessage}
+								className={cn(
+									"h-1",
+									analysisProgress == null && "animate-pulse opacity-70",
+								)}
 							/>
-						))}
-					</Section>
-					<Section title={t("figures.sectionTables")} count={tables.length}>
-						{tables.map((region, i) => (
-							<FigureCard
-								key={region.id}
-								region={region}
-								index={i + 1}
-								selected={focusedId === region.id}
-								thumb={thumbs[region.id]}
-								onJump={handleJump}
-							/>
-						))}
-					</Section>
-					<Section
-						title={t("figures.sectionAlgorithms")}
-						count={algorithms.length}
-					>
-						{algorithms.map((region, i) => (
-							<FigureCard
-								key={region.id}
-								region={region}
-								index={i + 1}
-								selected={focusedId === region.id}
-								thumb={thumbs[region.id]}
-								onJump={handleJump}
-							/>
-						))}
-					</Section>
-					{/* Formulas always last: numbered only (merge drops unnumbered). */}
-					<Section title={t("figures.sectionFormulas")} count={formulas.length}>
-						{formulas.map((region, i) => (
-							<FigureCard
-								key={region.id}
-								region={region}
-								index={i + 1}
-								selected={focusedId === region.id}
-								thumb={thumbs[region.id]}
-								onJump={handleJump}
-							/>
-						))}
-					</Section>
+						</div>
+					) : null}
+					<div className="agentero-scroll min-h-0 flex-1 space-y-4 overflow-y-auto p-2 [scrollbar-gutter:stable]">
+						<Section title={t("figures.sectionFigures")} count={figures.length}>
+							{figures.map((region, i) => (
+								<FigureCard
+									key={region.id}
+									region={region}
+									index={i + 1}
+									selected={focusedId === region.id}
+									thumb={thumbs[region.id]}
+									onJump={handleJump}
+								/>
+							))}
+						</Section>
+						<Section title={t("figures.sectionTables")} count={tables.length}>
+							{tables.map((region, i) => (
+								<FigureCard
+									key={region.id}
+									region={region}
+									index={i + 1}
+									selected={focusedId === region.id}
+									thumb={thumbs[region.id]}
+									onJump={handleJump}
+								/>
+							))}
+						</Section>
+						<Section
+							title={t("figures.sectionAlgorithms")}
+							count={algorithms.length}
+						>
+							{algorithms.map((region, i) => (
+								<FigureCard
+									key={region.id}
+									region={region}
+									index={i + 1}
+									selected={focusedId === region.id}
+									thumb={thumbs[region.id]}
+									onJump={handleJump}
+								/>
+							))}
+						</Section>
+						{/* Formulas always last: numbered only (merge drops unnumbered). */}
+						<Section
+							title={t("figures.sectionFormulas")}
+							count={formulas.length}
+						>
+							{formulas.map((region, i) => (
+								<FigureCard
+									key={region.id}
+									region={region}
+									index={i + 1}
+									selected={focusedId === region.id}
+									thumb={thumbs[region.id]}
+									onJump={handleJump}
+								/>
+							))}
+						</Section>
+					</div>
 				</div>
 			)}
 		</section>

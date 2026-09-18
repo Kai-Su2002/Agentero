@@ -8,7 +8,7 @@
   - 参考文献与版面解析已移入 PDF 阅读器左侧浮层面板（见 [pdf.md](pdf.md)），不再占用右栏。
   - **移至新窗口**：标题栏右栏功能图标 **右键** →「移动至新窗口」→ 单例 `feature-{view}` Webview；主窗右栏收起。工具视图默认 **跟随主窗当前激活文档**（`workspace:active-changed`）。
 - 左右栏折叠：`⌥⌘S` / `⌘L`（不重叠）。折叠/展开带 200ms `flex-grow` 过渡（`data-rail-animating`，见 `index.css`）；过渡中拖动分隔条立即接管（可打断）；`prefers-reduced-motion` 下直接切换。
-- **标题栏**：`bg-background/75` + `backdrop-blur-xl` + `backdrop-saturate-150`（`supports-backdrop-blur` 回退更实色；`prefers-reduced-transparency` 下实色无 blur）。右侧：更新指示器、窗口布局菜单、Agent 切换；有新版本可更新时显示更新指示器按钮（见 [settings.md](settings.md) 「应用更新」）。布局菜单提供 **Agent**（PDF / Agent `1:1`）、**笔记**（PDF / Notes / Agent `1:1:1`）和 **阅读**（仅 PDF）三种预设。预设只调整 panel 宽度并开关当前论文的 Notes / Agent，不关闭其它 PDF tab。
+- **标题栏**：`bg-background/75` + `backdrop-blur-xl` + `backdrop-saturate-150`（`supports-backdrop-blur` 回退更实色；`prefers-reduced-transparency` 下实色无 blur）。macOS 左侧留出避让原生三色按钮的拖拽条（`TrafficLightSpacer`，主窗 / 功能窗 / 文档弹出窗 / 设置窗共用），进入原生全屏（绿灯按钮）后三色按钮隐藏，该条收窄为常规 8px，避免首个控件被顶到 ~92px；进出全屏由 tao 的 resize 事件重新查询 `isFullscreen()`。右侧：更新指示器、窗口布局菜单、Agent 切换；有新版本可更新时显示更新指示器按钮（见 [settings.md](settings.md) 「应用更新」）。布局菜单提供 **Agent**（PDF / Agent `1:1`）、**笔记**（PDF / Notes / Agent `1:1:1`）和 **阅读**（仅 PDF）三种预设。预设只调整 panel 宽度并开关当前论文的 Notes / Agent，不关闭其它 PDF tab。
 - **默认配色**：冷灰系统材质（侧栏重、内容轻），见 [settings.md](settings.md)「主题」。
 
 实现：`src/components/shell/`、`src/lib/shell/ui-store.ts`、`src/lib/shell/leaf.ts`、`src/lib/shell/feature-window.ts`、`hooks/use-shell-layout.ts`。
@@ -22,7 +22,7 @@
 - 无 Vault：最近路径 MRU、打开 / 创建 / 从 Zotero 迁移。
 - `⌘N` → Host `window_new`（`?fresh=1`）；Vault 与 dock 布局按窗口 session 隔离。
 - **功能单例窗**：`feature_window_open` → `?window=feature&view=…`（`FeatureWindowRoot`）。
-- **文档弹出窗**：文档 tab 右键「移动至新窗口」→ `doc_window_open` → `?window=doc&path=…`（`DocWindowRoot`）；同 path 再开则聚焦。
+- **文档弹出窗**：文档 tab 右键「移动至新窗口」→ `doc_window_open` → `?window=doc&path=…`（`DocWindowRoot`）；同 path 再开则聚焦。弹出窗自启 per-window Vault watcher，Agent / 外部改盘后按主窗同一套规则就地重载 Markdown / PDF（Markdown 有未存改动则 toast 确认，PDF 重新读入最新字节）；本窗 autosave 会同步本地 seed，避免自写回声误触发重载。
 - 当前窗口 Vault：`sessionStorage`；MRU / 上次路径：`localStorage`。
 - Vault 切换菜单与欢迎页的最近路径使用 `displayPath` 展示普通 Windows 盘符 / UNC 路径；兼容历史记录中的 `\\?\` 前缀，不改写持久化路径或 Vault 身份。
 - 桌面窗口在 Webview 页面加载完成后显示；React 首次提交前由 `index.html` 的零依赖启动壳占位，避免冷启动和 dev 模块加载期间出现空白窗口。
@@ -45,7 +45,8 @@
 - 导入与 Connector 是 Renderer-host job：Rust 只负责调度（并发、去重、取消），编排在渲染端执行器里（`src/lib/paper/import/import-tasks.ts` 按 `params.mode` 分发；`connector-tasks.ts` 把 `connector:progress` 中继成 job）。库级批量操作同理（`src/lib/paper/library-tasks.ts`：`citingScan` / `libraryIo` 按 `params.op` / `metadataRefresh` 按 `params.papers` 逐项上报 N/M）。job id 同时作为 Host 的 `task_id`：字节/批次进度经 `job:progress`（`taskId` = job id）由投影层写回面板行，协作取消由 JobCenter 的 cancel token 按 task id 索引（`features::jobs::is_task_cancelled`，注入为 `agentero_core::cancel` 探针）。版面模型下载（`modelDownload`）是 Host runner job：全局资源、cap 1，重复触发按 fingerprint 合并。
 - 打开论文时的资源自动下载（`src/lib/workspace/tabs/resources.ts`）同样是 JobCenter `downloadAssets` job：Host runner 下载后续接 PAPER.md / 版面分析，去重合并同篇的并发下载。
 - 纯前端 UI 本地活动不进 JobCenter（无去重/依赖/重启恢复语义）：paper-reader、Zotero 迁移向导、散落 PDF 的 viewer 内版面分析经门面 `runLocalActivity`（`src/lib/core/tasks.ts`）创建本地任务行；取消纯靠本地 AbortController（不经 Rust），同类并发由 `tasks.ts` 内的信号量执行。`background-tasks.ts` 只保留面板 store 与视图辅助（行 CRUD、字节/进度格式化），不含执行编排。
-- 实现：`src/lib/core/background-tasks.ts` + `background-tasks-panel.tsx`。
+- 论文相关行的次要文案优先显示 **论文标题**（catalog `title`），不展示 `papers/<id>` 或裸 identifier；状态/字节进度以 `标题 · 状态` 拼接。魔棒导入的拉取阶段不再附带 id。
+- 实现：`src/lib/core/background-tasks.ts` + `background-tasks-panel.tsx`；标题解析见 `src/lib/paper/task-label.ts`。
 
 ## 弹层栈
 
@@ -64,7 +65,7 @@
 | `⇧⌘T` | 重新打开最近关闭的 panel（内存历史，最多 10 条；关论文正文记正文，恢复时连带 NOTES；切 Vault 清空） |
 | `⌥⌘←/→` | 循环 Dockview panel |
 | `⌘\` | 向右 Split pane：当前论文未打开 NOTES 时右侧打开 NOTES；否则复制当前 pane，并将横向 pane 等宽 |
-| `⌘P` / `⌘K` | 快速打开 |
+| `⌘P` | 快速打开 |
 | `⇧⌘P` | 命令面板 |
 | `⇧⌘I` | 魔棒 |
 | `⌘R` | 刷新文件树 |
@@ -80,8 +81,10 @@
 | `⌘←` | 折叠当前选中文件夹 |
 | `⇧⌘←` | 折叠树到默认状态 |
 | `⌥⌘S` | 开关左侧边栏（`⌘B` 别名） |
-| `⌘L` | 开关右侧 Agent/Graph 等面板 |
+| `⌘L` | 有选区时「加入对话」（固定选区并打开右侧 Agent）；无选区时开关右侧栏 |
+| `⌘K` | 有划词工具栏时「快速对话」（页内 Ask） |
 | `⇧⌘A` | 固定当前选区为 Agent 上下文，打开 Agent 面板并聚焦输入框（无选区时只打开并聚焦） |
+| `F11` | **Windows only**：切换无边框（exclusive）全屏；再按一次退出。实现：`toggleBorderlessFullscreen`（`src/lib/shell/window-fullscreen.ts`） |
 
 完整快捷键绑定：`src/lib/shell/shortcuts.ts`。文案 i18n 见 [settings.md](settings.md)。
 

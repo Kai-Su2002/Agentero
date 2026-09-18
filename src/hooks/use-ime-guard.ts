@@ -41,6 +41,7 @@ export function useImeGuard() {
 
 	return {
 		isBlockedByIme,
+		isComposing,
 		compositionProps: {
 			onCompositionStart,
 			onCompositionEnd,

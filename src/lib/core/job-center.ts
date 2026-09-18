@@ -40,6 +40,7 @@ import {
 import { errorText } from "@/lib/core/error";
 import { callApiResult } from "@/lib/core/ipc";
 import { logger } from "@/lib/core/logger";
+import { joinTaskDetail, paperTaskLabel } from "@/lib/core/task-label";
 import { isTauri } from "@/lib/core/tauri";
 import { toSafeDisposer } from "@/lib/core/tauri-events";
 
@@ -181,6 +182,7 @@ const PROJECTED_JOB_KINDS: ReadonlySet<JobKind> = new Set([
 	"citingScan",
 	"libraryIo",
 	"metadataRefresh",
+	"latexCompile",
 ]);
 
 /**
@@ -259,6 +261,8 @@ function jobPanelTitle(job: JobChangedSnapshot): string {
 			return jobParams(job.params).op === "export"
 				? i18n.t("app:tasks.libraryExport")
 				: i18n.t("app:tasks.libraryImport");
+		case "latexCompile":
+			return i18n.t("app:tasks.latexCompile");
 		default:
 			return i18n.t("app:tasks.layoutAnalysis");
 	}
@@ -278,6 +282,7 @@ type JobParams = {
 	entries?: Array<{ filePath?: string }>;
 	op?: string;
 	papers?: unknown[];
+	texPath?: string;
 };
 
 function jobParams(params: unknown): JobParams {
@@ -286,6 +291,8 @@ function jobParams(params: unknown): JobParams {
 
 function importPanelTitle(params: unknown): string {
 	switch (jobParams(params).mode) {
+		case "skillLookup":
+			return i18n.t("app:tasks.skillLookup");
 		case "skill":
 			return i18n.t("sidebar:lookup.skillImportTask");
 		case "localPdf":
@@ -303,11 +310,16 @@ function importPanelDetail(job: JobChangedSnapshot): string | undefined {
 	const p = jobParams(job.params);
 	switch (p.mode) {
 		case "lookup":
-			return p.text?.slice(0, 80) || undefined;
+			// Prefer a resolved title once the executor reports it via params;
+			// never surface the raw identifier / URL as the row subject.
+			return p.title?.trim().slice(0, 80) || undefined;
 		case "plaza":
-			return (p.title?.trim() || p.id || "").slice(0, 80) || undefined;
+			return (p.title?.trim() || "").slice(0, 80) || undefined;
 		case "coolNotes":
-			return (p.title?.trim() || job.paperPath || "").slice(0, 80) || undefined;
+			return (
+				(p.title?.trim() || paperTaskLabel(job.paperPath) || "").slice(0, 80) ||
+				undefined
+			);
 		case "localPdf": {
 			const first = p.entries?.[0]?.filePath?.split(/[\\/]/).pop();
 			const extra = (p.entries?.length ?? 0) - 1;
@@ -322,6 +334,42 @@ function importPanelDetail(job: JobChangedSnapshot): string | undefined {
 /** Connector rows are titled after the paper the attachment belongs to. */
 function connectorPanelTitle(params: unknown): string {
 	return jobParams(params).title?.trim() || i18n.t("app:tasks.connector");
+}
+
+/**
+ * Stable paper subject for the row (title preferred). Kept across status /
+ * byte-progress updates so the panel does not fall back to `papers/<id>`.
+ * `taskPaperPaths` lets progress events re-resolve after a late catalog refresh.
+ */
+const taskSubjects = new Map<string, string>();
+const taskPaperPaths = new Map<string, string>();
+
+function rememberTaskSubject(
+	jobId: string,
+	subject: string | undefined,
+	paperPath?: string | null,
+): void {
+	const trimmed = subject?.trim();
+	if (trimmed) taskSubjects.set(jobId, trimmed);
+	const path = paperPath?.trim();
+	if (path) taskPaperPaths.set(jobId, path);
+}
+
+function resolveTaskSubject(jobId: string): string | undefined {
+	const path = taskPaperPaths.get(jobId);
+	if (path) {
+		const fresh = paperTaskLabel(path);
+		if (fresh) {
+			taskSubjects.set(jobId, fresh);
+			return fresh;
+		}
+	}
+	return taskSubjects.get(jobId);
+}
+
+function clearTaskSubject(jobId: string): void {
+	taskSubjects.delete(jobId);
+	taskPaperPaths.delete(jobId);
 }
 
 function jobPanelDetail(job: JobChangedSnapshot): string | undefined {
@@ -340,7 +388,30 @@ function jobPanelDetail(job: JobChangedSnapshot): string | undefined {
 	}
 	// Vault-scope kinds carry no paper target.
 	if (job.kind === "citingScan" || job.kind === "libraryIo") return undefined;
-	return job.paperPath ?? undefined;
+	// LaTeX rows show the source file name (the tex lives anywhere, not under
+	// papers/, so there is no catalog title to resolve).
+	if (job.kind === "latexCompile") {
+		return jobParams(job.params).texPath?.split(/[\\/]/).pop();
+	}
+	return paperTaskLabel(job.paperPath);
+}
+
+/**
+ * Subject used when composing status / progress onto the row.
+ * Connector already puts the paper name in `title`, so it has no subject.
+ */
+function jobPanelSubject(job: JobChangedSnapshot): string | undefined {
+	if (job.kind === "import") return importPanelDetail(job);
+	if (
+		job.kind === "connectorSync" ||
+		job.kind === "citingScan" ||
+		job.kind === "libraryIo" ||
+		job.kind === "modelDownload" ||
+		job.kind === "metadataRefresh"
+	) {
+		return undefined;
+	}
+	return paperTaskLabel(job.paperPath);
 }
 
 let projectionSubscription: (() => void) | null = null;
@@ -386,6 +457,7 @@ export function stopJobTaskProjection(): void {
 export function projectJobToBackgroundTask(job: JobChangedSnapshot): void {
 	if (!PROJECTED_JOB_KINDS.has(job.kind)) return;
 	const title = jobPanelTitle(job);
+	const subject = jobPanelSubject(job);
 	const detail = jobPanelDetail(job);
 	const icon = jobRowIcon(job);
 	const status = statusDetail(job);
@@ -402,11 +474,27 @@ export function projectJobToBackgroundTask(job: JobChangedSnapshot): void {
 			if (existing && isFinishedBackgroundTask(existing)) {
 				return;
 			}
+			// Import / Connector carry their subject in params / title; do not
+			// bind their parent-dir paperPath into the re-resolve map.
+			rememberTaskSubject(
+				job.id,
+				subject,
+				job.kind === "import" || job.kind === "connectorSync"
+					? null
+					: job.paperPath,
+			);
+			const remembered = resolveTaskSubject(job.id);
+			const rowDetail = joinTaskDetail(remembered, status ?? detail);
+			const paperPath =
+				job.kind === "import" || job.kind === "connectorSync"
+					? null
+					: (job.paperPath ?? null);
 			startBackgroundTask({
 				id: job.id,
 				kind: job.kind,
 				title,
-				detail,
+				detail: rowDetail,
+				paperPath,
 				icon,
 				running: job.state === "running",
 				progress,
@@ -416,11 +504,12 @@ export function projectJobToBackgroundTask(job: JobChangedSnapshot): void {
 				job.id,
 				{
 					status: job.state === "running" ? "running" : "queued",
+					paperPath,
 					// Byte progress (`job:progress`) owns the bar for
 					// download/import rows, so an absent job progress must not
 					// reset it to indeterminate.
 					...(progress === null ? {} : { progress }),
-					...(status ? { detail: status } : {}),
+					...(rowDetail ? { detail: rowDetail } : {}),
 				},
 				{ absoluteProgress: true },
 			);
@@ -428,15 +517,21 @@ export function projectJobToBackgroundTask(job: JobChangedSnapshot): void {
 		}
 		case "succeeded":
 		case "skipped":
-			completeBackgroundTask(job.id, status ?? detail);
+			completeBackgroundTask(
+				job.id,
+				joinTaskDetail(resolveTaskSubject(job.id), status ?? detail),
+			);
+			clearTaskSubject(job.id);
 			releaseJobCancellation(job.id);
 			return;
 		case "failed":
 			failBackgroundTask(job.id, job.error?.trim() || title);
+			clearTaskSubject(job.id);
 			releaseJobCancellation(job.id);
 			return;
 		case "cancelled":
 			cancelBackgroundTask(job.id);
+			clearTaskSubject(job.id);
 			releaseJobCancellation(job.id);
 			return;
 	}
@@ -493,28 +588,33 @@ function handleJobProgress(payload: JobProgressEvent): void {
 	const id = payload.taskId;
 	const task = getBackgroundTasksSnapshot().tasks.find((t) => t.id === id);
 	if (!task) return;
+	const subject = resolveTaskSubject(id);
 	const { downloadedBytes, totalBytes, currentCount, totalCount } = payload;
 	if (payload.phase === "parse") {
 		updateBackgroundTask(id, {
 			progress: mapDownloadProgress(payload.phase, payload.progress),
-			detail: phaseLabel(payload.phase),
+			detail: joinTaskDetail(subject, phaseLabel(payload.phase)),
 		});
 		return;
 	}
 	if (currentCount != null && totalCount != null) {
 		updateBackgroundTask(id, {
 			progress: payload.progress,
-			detail: i18n.t("app:tasks.batchProgress", {
-				phase: phaseLabel(payload.phase),
-				current: currentCount,
-				total: totalCount,
-			}),
+			detail: joinTaskDetail(
+				subject,
+				i18n.t("app:tasks.batchProgress", {
+					phase: phaseLabel(payload.phase),
+					current: currentCount,
+					total: totalCount,
+				}),
+			),
 		});
 		return;
 	}
 	updateBackgroundTask(id, {
 		progress: mapDownloadProgress(payload.phase, payload.progress),
-		detail:
+		detail: joinTaskDetail(
+			subject,
 			totalBytes == null
 				? i18n.t("app:tasks.downloadBytesUnknown", {
 						phase: phaseLabel(payload.phase),
@@ -525,5 +625,6 @@ function handleJobProgress(payload: JobProgressEvent): void {
 						downloaded: formatBytes(downloadedBytes),
 						total: formatBytes(totalBytes),
 					}),
+		),
 	});
 }

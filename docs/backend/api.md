@@ -153,11 +153,12 @@ Host 通过 Tauri event 向前端推送事件。文件系统、任务和菜单�
 ```
 
 - **行为**
-  - 确保目录存在；脚手架 `papers/`、`notes/`、`.agentero/`、**`.agents/`**、**`.agents/skills/`**。
+  - 确保目录存在；脚手架 `papers/`、`notes/`、`data/`、`.agentero/`、**`.agents/`**、**`.agents/skills/`**。
   - 初始化 `.agentero/catalog.sqlite`（schema 当前版本，含 Translator 元数据列）。详见 [`catalog.md`](catalog.md)。
   - 写入默认 `AGENTS.md`（若不存在）。
+  - 当 `thesis/` 不存在时写入 LaTeX 起手稿 `thesis/main.tex`（现有 `thesis/` 目录保持原样）；`data/` 为远端服务器数据预留的空目录。
   - 写入 **`.agents/README.md`**（若不存在；内容来自仓库 `templates/vault/.agents/`）。
-  - 种子 **bundled skills**：`paper-reader`、`author-lookup`、`agentero-cli`、`vault-normalizer`、`idea-evaluator`、`deep-research`（后两者含 `references/`，来自 [Supervisor-Skills](https://github.com/HKUSTDial/Supervisor-Skills)，**CC BY-NC-SA 4.0**；另写 `skills/README.md` 与 `LICENSE-Supervisor-Skills.txt`）。
+  - 种子 **bundled skills**：构建时自动发现 `templates/vault/.agents/skills/<id>/` 下的 Skill package 并内嵌，创建 Vault 时写入缺失文件；`agentero-cli` 按平台把 POSIX / Windows 模板映射到同一 `.agents/skills/agentero-cli/SKILL.md`。另写 `skills/README.md`。
   - **不**创建根级 `PAPERS.md` / `library.bib`；已有第一方 `SKILL.md` 按 frontmatter 整数 `version` 升级（见 `vault_ensure`）；用户去掉/抬高 `version` 的修改与其它 `.agents/**` 文件保持原样。
   - 最近列表由前端在成功打开后写入 `localStorage`（`agentero-recent-vaults`）。
 
@@ -406,7 +407,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 - **`fs_watch_start`**
   - **参数**：`{ vaultPath: string }`
   - **返回**：`Result<(), String>`
-  - **行为**：为当前窗口（label）启动递归监听；若该窗口已有监听则先停止再重建。命中变更时按窗口 `emit_to` 发送 `vault:file-changed`（去抖 ~300ms，过滤 `.agentero/` 内部文件、`.git/`、`node_modules/`；但放行 `.agentero/catalog.sqlite` 及 SQLite sidecar，供前端刷新 Library 元数据）。只有 `notify` 的单事件 `RenameMode::Both`、恰有两条不同路径且均未被过滤时，payload 才带按顺序排列的 `rename.from` / `rename.to`；其它 rename 事件只用于刷新，绝不能授权改写 Vault 内容。前端只将 Markdown、PDF、受支持图片或疑似目录的 rename 交给双链修复/警告；带明确非目标扩展名的 sidecar / 临时文件仅执行常规工作区刷新。
+  - **行为**：为当前窗口（label）启动递归监听；若该窗口已有监听则先停止再重建。命中变更时按窗口 `emit_to` 发送 `vault:file-changed`（去抖 ~300ms，过滤 `.agentero/` 内部文件、`.git/`、`node_modules/`；但放行 `.agentero/catalog.sqlite` 及 SQLite sidecar，供前端刷新 Library 元数据）。只有 `notify` 的单事件 `RenameMode::Both`、恰有两条不同路径且均未被过滤时，payload 才带按顺序排列的 `rename.from` / `rename.to`；其它 rename 事件只用于刷新，绝不能授权改写 Vault 内容。前端只将 Markdown、PDF、受支持图片或疑似目录的**可信** rename 交给双链修复；不完整路径对只打控制台日志、不弹 Toast（扩展名启发式不检查笔记里是否真有双链）。带明确非目标扩展名的 sidecar / 临时文件仅执行常规工作区刷新。
 - **`fs_watch_stop`**
   - **参数**：无
   - **返回**：`Result<(), String>`
@@ -878,7 +879,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 
 ### 3.5c 全库搜索
 
-命令面板（`⌘K` / `⌘P`）“In contents”层的后端。walk Vault 内 `*.md`（跳过 `.` 隐藏 / `node_modules` / `source`），多词 **AND**，返回 标题 + 片段 + 行号 + 评分。**无索引**（始终新鲜；结构上可后续换 FTS5）。论文 quick-open（标题/作者）在前端对内存 `libraryPapers` 完成，不走本命令。
+命令面板（`⌘P`）“In contents”层的后端。walk Vault 内 `*.md`（跳过 `.` 隐藏 / `node_modules` / `source`），多词 **AND**，返回 标题 + 片段 + 行号 + 评分。**无索引**（始终新鲜；结构上可后续换 FTS5）。论文 quick-open（标题/作者）在前端对内存 `libraryPapers` 完成，不走本命令。
 
 #### `vault_search`
 
@@ -912,7 +913,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 **交互**：侧边栏魔棒 → 粘贴链接/编号 → Host `lookup_import_batch` → Translator → 写 paper 文件夹。  
 详见 [`paper-import.md`](paper-import.md)。
 
-**Translator 默认地址**：`https://translator.philfan.cn`（设置 `translatorBaseUrl` 可改）。  
+**Translator 默认地址**：`https://translation-server.agentero.app`（设置 `translatorBaseUrl` 可改）。  
 `POST {base}/search` 或 `/web`，body 为 plain text。
 
 #### `lookup_import_batch`（魔棒批量入库）
@@ -924,7 +925,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
     vaultPath: string;
     parentDir: string;              // "papers" | "papers/nlp"
     texts: string[];                // 拆分后的原始 token 数组
-    translatorBaseUrl?: string;     // 来自设置，默认 https://translator.philfan.cn
+    translatorBaseUrl?: string;     // 来自设置，默认 https://translation-server.agentero.app
     taskId?: string;                // 前端后台任务 id；单条进度聚合在该任务下
     concurrency?: number;           // 最大并发入库数，默认 5，范围 1–10
   }
@@ -986,7 +987,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 
 #### `paper_download_assets`
 
-为已有 paper 文件夹补下载缺失的 PDF（及 arXiv LaTeX）。用于文件树单篇 Download，以及 Library 行「下载全部缺失」。下载完成后前端会独立入队 `paper_parse_body` 后台任务生成 `PAPER.md`（若该 paper 无 TeX 且有 PDF）。
+为已有 paper 文件夹补下载缺失的 PDF（及 arXiv LaTeX）。用于文件树单篇 Download，以及 `papers/` 论文库节点右键「下载全部不完整论文资源」。下载完成后前端会独立入队 `paper_parse_body` 后台任务生成 `PAPER.md`（若该 paper 无 TeX 且有 PDF）。
 
 - **参数**（invoke 字段名 `args`）：
 
@@ -1010,7 +1011,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 
 #### `paper_import_local_pdf`
 
-把本地 PDF 导入为 paper 文件夹（复制 + catalog + liteparse）。入口：魔棒弹层原生 PDF 选择器；或将 PDF **拖到左侧树 `papers/` 组织夹 / Library 表** → 直接后台导入（无确认对话框，元数据由识别链路自动补全）。
+把本地 PDF 导入为 paper 文件夹（复制 + catalog + liteparse）。入口：魔棒弹层原生 PDF 选择器；或将 PDF **拖到窗口任意区域** → 直接后台导入（无确认对话框，元数据由识别链路自动补全）。拖到左侧树 `papers/` 组织夹或 Library 表时，优先使用对应目标目录；其它区域使用当前 Papers 目标。
 
 - **参数**（invoke 字段名 `args`）：
 
@@ -1392,7 +1393,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 - **契约缺口**：`impl Serialize for PaperTag`（`catalog/papers.rs`）在无色时输出**裸字符串**，而 specta 生成的类型是 `{ name, color }` 对象（`color: string | null`）。生成契约与真实 wire 形态不符，因此前端必须保留 `PaperTagInput[]` + `coercePaperTags`（`src/lib/paper/tags.ts`）而不能直接用生成类型。修法见 [../development/import-api-abstraction.md](../development/import-api-abstraction.md) §11。
 - **规范化**：trim 空白；丢弃空串；大小写不敏感去重（保留首次出现的写法与颜色；同名后续项仅在先无色时补色）；`color` 白名单校验。
 - **前端**：`src/lib/paper/api.ts` → `setPaperTags`；Paper Info 增删 + 色盘；Library 染色 chip + 筛选；`src/lib/ui/tag-colors.ts`。
-- **CLI**：`agentero paper tag set|add|rm <ref> …`（`set` 整表替换，`--clear` 清空；支持 `name:color`，颜色为 Apple 8 色 id）；`paper list --tag` 默认隐藏 `@zotero:` / `@arxiv:` 内部标签，`--all` 包含全部标签；`paper tag list` 同样支持 `--all`。另有 `paper move` 与 `trash list|restore|purge`。见 [`cli.md`](cli.md)。
+- **CLI**：`agentero paper tag set|add|rm <ref> …`（`set` 整表替换，`--clear` 清空；支持 `name:color`，颜色为 Apple 8 色 id）；`paper list --tag` 默认隐藏 `@zotero:` / `@arxiv:` 内部标签，`--all` 包含全部标签；`paper tag list` 同样支持 `--all`。另有 `paper move`。见 [`cli.md`](cli.md)。
 
 #### `paper:list`（扩展规划）
 
@@ -1476,6 +1477,27 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
 
 - **参数 / 返回**：同 `catalog:export_papers_md`（`content` 为 BibTeX 文本）。
 
+### 3.6.2 网页论文代理（`agentero-web` scheme）
+
+「网页」类论文（有 `html_url` 无本地 PDF）由前端 iframe 经 Host 注册的 `agentero-web` 自定义 scheme 加载（`app/mod.rs` 注册，实现 `features/web/proxy.rs`）。这是 discovery 站点代理之外唯一允许**任意 host** 的代理，因此绝不开放中继：
+
+- **allowlist**（进程级 `RwLock<HashSet>`，`features/web/allowlist.rs`）：请求 host、重定向的每一跳 host 都必须在表内，否则 403 / 报错；只收公网 DNS 名（拒绝 IP 字面量 / localhost / `.local` / `.internal` / `.arpa` / 无点主机）。
+- **响应重建**：`text/html` 且 `looks_like_document` 时剥掉上游 CSP / X-Frame-Options，注入 `<base href>`（相对资源直载真实 origin，不经代理）与选区桥脚本（postMessage 协议见 [../frontend/web-view.md](../frontend/web-view.md)）；其余响应原样透传。请求只转发 content-type / accept / accept-language，不带 cookie / Origin。
+
+#### `web_proxy_allow_host`
+
+前端打开网页论文前 ensure 其 host 进入 allowlist（幂等；规范化后不合法的主机丢弃并 warn）。
+
+- **参数**（invoke 字段名 `args`）：
+
+```ts
+{
+  host: string;
+}
+```
+
+- **返回**：`ApiResult<boolean>` —— host 是否被接受（`false` = 非公网 DNS 名）。
+
 ### 3.7 Agent 工作流（ACP Client + BYOA）
 
 Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 Vault），通过 stdio JSON-RPC 会话。**不** 内置 agent 二进制；**不** 在 config 中要求模型 API Key。
@@ -1499,8 +1521,8 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
   reasoningEffort?: string; // 仅写入当前 ACP 会话声明的 thought_level 选项
   fastMode?: boolean; // 仅写入当前 ACP 会话声明的 fast model_config 选项
   skillIds?: string[]; // 已发现的本机 SKILL.md id，最多 5 个
-  autoApprove?: boolean; // 默认 false；true 时选择 ACP 返回的第一个权限选项
-  permissionMode?: string; // "restricted" | "ask" | "auto"；"ask" 时每个 ACP 权限请求转交用户（agent:permission-request）
+  permissionMode?: string; // 首选："restricted" | "ask" | "auto"；"ask" 时每个 ACP 权限请求转交用户（agent:permission-request）
+  // autoApprove?: boolean; // 已弃用；Host 仍兼容旧客户端，新代码请用 permissionMode
   responseLanguage?: string; // 强制回答/笔记语言（如 zh-CN）；省略或 auto 时不注入
   personalPrompt?: string; // 用户个人偏好提示词；省略或空时不注入
   hideFromChatHistory?: boolean; // 默认 false；true 时不写入 Vault Codex 会话索引（精读 / PDF 划词提问等）
@@ -1587,7 +1609,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
 {
   id?: string; // 省略则新建
   name: string;
-  template?: 'opencode' | 'openclaw' | 'hermes' | 'claude-acp' | 'codex-acp' | 'qodercli' | 'grok-build' | 'pi' | 'dsh' | 'kimi-code' | 'custom';
+  template?: 'opencode' | 'openclaw' | 'hermes' | 'claude-acp' | 'codex-acp' | 'qodercli' | 'grok-build' | 'pi' | 'dsh' | 'kimi-code' | 'zcode' | 'custom';
   command: string;
   args?: string[];
   env?: Record<string, string>;
@@ -1636,11 +1658,11 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
 > 已取代旧的 `agent_open_install_terminal`（打开系统终端、Enter 确认后再装）。远端仍用 `remote_agent_open_install_terminal`（SSH 确认安装）。
 
 - **参数**：`{ templateId: string, action: "install" | "update" | "uninstall", taskId?: string }`
-  - 支持的 `templateId`：`opencode` · `openclaw` · `claude-acp` · `codex-acp` · `hermes` · `grok-build` · `pi` · `dsh` · `kimi-code`（不含 `qodercli` / `custom`）
+  - 支持的 `templateId`：`opencode` · `openclaw` · `claude-acp` · `codex-acp` · `hermes` · `grok-build` · `pi` · `dsh` · `kimi-code` · `zcode`（不含 `qodercli` / `custom`）
   - `taskId` 来自设置页 Agent 行内安装进度条；用于匹配 Host progress tick 与接收协作取消信号。
 - **返回**：`{ ok: true; data: null }` 或错误（stderr/stdout 末尾若干行）
 - **行为**
-  - `install`：未装 host 时走官方 installer（POSIX curl→临时文件再 bash，非 `curl|bash`）或 npm；Claude/Codex/Pi 在 host 已存在但 ACP 缺失时只装适配器；两者都缺则 host && adapter；Hermes 走官方 installer；OpenClaw 走 npm。Pi 无原生 ACP，ACP 入口是社区适配器 `pi-acp`（detect 用 host `pi`）；host 与 adapter 两层都走 npm，因为 `pi.dev/install.sh` 是交互式 TUI installer，不能静默执行。Dsh 是目录级 npm 项目安装：Host 先在 `~/.agentero/dsh-acp` 写入默认 `cordis.yml` 与最小 `package.json`（已存在则不覆盖），再 `npm i` 固定版本的 `dsh-acp-demo` + 插件栈；launcher、home npm 根或 PATH 已有入口时 `install` 跳过下载，`update` 仍刷新 launcher 副本。Kimi Code 优先官方 installer（`code.kimi.com`，单二进制装入 `~/.kimi-code`），失败回退 `npm i -g @moonshot-ai/kimi-code`。
+  - `install`：未装 host 时走官方 installer（POSIX curl→临时文件再 bash，非 `curl|bash`）或 npm；Claude/Codex/Pi 在 host 已存在但 ACP 缺失时只装适配器；两者都缺则 host && adapter；Hermes 走官方 installer；OpenClaw 走 npm。Pi 无原生 ACP，ACP 入口是社区适配器 `pi-acp`（detect 用 host `pi`）；host 与 adapter 两层都走 npm，因为 `pi.dev/install.sh` 是交互式 TUI installer，不能静默执行。Dsh 是目录级 npm 项目安装：Host 先在 `~/.agentero/dsh-acp` 写入默认 `cordis.yml` 与最小 `package.json`（已存在则不覆盖），再 `npm i` 固定版本的 `dsh-acp-demo` + 插件栈；launcher、home npm 根或 PATH 已有入口时 `install` 跳过下载，`update` 仍刷新 launcher 副本。Kimi Code 优先官方 installer（`code.kimi.com`，单二进制装入 `~/.kimi-code`），失败回退 `npm i -g @moonshot-ai/kimi-code`。ZCode 是单包 npm 适配器（`zcode-acp-server`，桥接 ZCode 桌面应用的 `zcode app-server`），host 与 ACP 入口同二进制。
   - `update`：优先 `tool update` / 官方链，失败再 npm；Codex 固定 npm（避免假成功）；OpenClaw 使用 `openclaw update --yes` 后 fallback npm；Pi 使用 `pi update --self` 后 fallback npm；Windows 上 OpenCode 不用交互式 `upgrade`。Kimi 的 `kimi upgrade` 是交互式，静默 update 直接重跑官方 installer（幂等）。
   - `uninstall`：镜像安装矩阵做 best-effort 清理（先 `resolve_command("npm")` 预检，缺失即报错而非假成功）——npm 全局包逐个 `npm uninstall -g`（unix 上适配器带 `--prefix "$HOME/.local"`，与安装一致）；dsh 删除受管目录 `~/.agentero/dsh-acp`，kimi-code 在 npm 卸载后删除 `~/.kimi-code`（Windows 为 `%USERPROFILE%\.kimi-code`）；**不改 shell rc**（官方 installer 写入的 PATH 行保留）、不处理官方脚本/brew 安装的 CLI（无法可靠定位）。Hermes 无 npm 包/受管目录 → 仅移除注册项（不跑命令）。成功后同命令联动删除该模板的 catalog 注册项（`catalog-{templateId}`，或 command+args 匹配），避免二进制已删而注册项残留；phase 用 `agent-lifecycle-uninstall` 推送进度。
   - 本机 lifecycle 全局串行执行，避免多个 npm 全局安装/升级任务并发抢锁或互相覆盖临时脚本；设置页在对应 Agent 卡片内展示安装 / 扫描 / 探测阶段进度（#250）。
@@ -1672,7 +1694,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
   - `updateAvailable`：仅当目标版本**严格新于**本地时为 `true`；无法判定时省略/`null`（UI 不显示升级）
 - **行为**
   - 同步 PATH scan 后，在 `spawn_blocking` 中跑 `--version` / `npm view`（尊重代理设置）。
-  - npm 包映射：`opencode-ai` / `openclaw` / `@anthropic-ai/claude-code` / `@openai/codex` / `@earendil-works/pi-coding-agent` / `@xai-official/grok` / `@moonshot-ai/kimi-code`；dsh 对比 pin；**hermes 本轮不探测**（无稳定 npm 源）。
+  - npm 包映射：`opencode-ai` / `openclaw` / `@anthropic-ai/claude-code` / `@openai/codex` / `@earendil-works/pi-coding-agent` / `@xai-official/grok` / `@moonshot-ai/kimi-code` / `zcode-acp-server`；dsh 对比 pin；**hermes 本轮不探测**（无稳定 npm 源）。
   - 不写入 registry；设置页打开/刷新与 lifecycle 成功后调用。
 - **实现**：`registry/version_check.rs` · `commands::agent_check_catalog_updates`
 
@@ -2204,7 +2226,7 @@ Windows：未设 `XDG_CONFIG_HOME` 时回退 `%APPDATA%/agentero/`。旧版 macO
 
 - **参数**：无
 - **返回** `ApiResult<BuiltinProviderStatus>`：`{ available, baseUrl, translateModel, embeddingModel, ocrModel }`
-- **`available`**：本次构建是否编译进了 `AGENTERO_BUILTIN_API_KEY`。`false` 时前端隐藏或禁用内置选项，默认回落到 `tencenttransmart` / `local`，embedding 穿透到已存值。
+- **`available`**：本次构建是否编译进了 `AGENTERO_BUILTIN_API_KEY`。`false` 时前端隐藏或禁用内置选项，默认回落到 `tencenttransmart` / `local`，空的 embedding 配置回落到自定义未配置状态。
 - **不含任何 key 派生物**：无前缀、无长度、无 `*` 掩码、无 hash。内置 key 也不写 `AppSettings`，因此既不出现在 `settings_get` 里也不出现在 `settings.json` 里。
 - **同步命令**：纯读编译期常量，无 IO；AGENTS.md 对同步命令的警告只针对在其中 build `WebviewWindow`。
 - 前端只消费 `available`；`baseUrl` 与三个 model id 供 Host 内部解析凭证，不显示到 UI。
@@ -2333,7 +2355,7 @@ UI 入口见 `settings_window_open`：Settings 现为独立原生单例窗口，
 - **参数**（`args`）：`{ vault? }`
 - **返回**：删除的事件条数。
 
-CLI 对照：`agentero usage which|timeline|summary|clear`（见 [cli.md](cli.md)）。前端入口：`src/lib/activity/`。
+CLI 不再暴露 usage 命令；查询与清理通过桌面端设置 / Host API 操作。前端入口：`src/lib/activity/`。
 
 ### 3.10.4 广场订阅（XDG `feeds.sqlite`）
 
@@ -2361,7 +2383,7 @@ CLI 对照：`agentero usage which|timeline|summary|clear`（见 [cli.md](cli.md
 
 - **陈旧短路**：非 `force` 且 `computed_at` 为当天、分类集合一致时，直接返回存量，不发任何网络请求。所以 `vault:opened` 的预热调用通常是零成本的。
 - **缓存**：`embed_cache(text_hash, model, dim, vector)` 按 sha256(title+abstract)+model 存小端 f32 向量，语料只 embed 一次；主键含 model，所以换 embedding 模型不会读到旧向量。`arxiv_rec_state` 单行存上次运行，**不按 model 建键**：切换 embedding 来源后的当天首次运行仍会复用存量结果，除非 `force`（既存行为）。均在 catalog schema v6。
-- **凭据**：读设置 `embedding`。`source`（`"builtin"` | `"custom"`）决定用哪一套：非 `custom` 且本次构建注入了内置 provider key 时用构建期网关三元组，否则用已存的 Base URL / API Key / Model。请求都是 `POST {baseUrl}/embeddings`（OpenAI 兼容）。见 [builtin-provider.md](builtin-provider.md) §Embedding。
+- **凭据**：读设置 `embedding`。`source`（`"builtin"` | `"custom"`）决定用哪一套：非 `custom` 且本次构建注入了内置 provider key 时用构建期网关三元组，否则用已存的 Base URL / API Key / Model；空配置会返回 `recommend.no_embedding`。请求都是 `POST {baseUrl}/embeddings`（OpenAI 兼容）。见 [builtin-provider.md](builtin-provider.md) §Embedding。
 - **结构化错误**（前端转空态）：`recommend.no_embedding` 端点未配置（自定义来源缺字段，或构建无内置 key 且未填 BYOK）、`recommend.empty_corpus` 库里没摘要、`recommend.no_candidates` 分类下无新论文。
 
 前端入口：`src/lib/recommend/`。
@@ -2409,21 +2431,18 @@ CLI 对照：`agentero usage which|timeline|summary|clear`（见 [cli.md](cli.md
 |---|---|
 | `open` / `<PATH>` | 深链唤起桌面 App（`agentero://open?path=…`） |
 | `vault create` | `services::vault::create_vault` / `vault_create`（幂等脚手架；缺失根目录仅 `create` 会新建，`vault_ensure` 对缺失路径报错） |
-| `vault which\|info\|check\|use` | CLI 自管解析 + catalog `ensure_catalog` / `schema_version` |
+| `vault list` | CLI 自管解析 + catalog `ensure_catalog` / `schema_version` |
 | `tree` | 磁盘扫描（非 Library 虚拟节点） |
 | `paper list\|get\|paths\|delete\|set-read\|tag list\|set\|add\|rm` | `catalog::papers::*`（含 `set_tags` / `list_all_tags`）/ `paper_*` |
 | `paper list --tag` / `--query` 含 tags | CLI 侧过滤（读 `list_all`）；Host `paper_list` 仍全量 |
 | `paper move` | 文件夹 + Catalog 路径同步 |
 | `paper download\|parse` | `lookup::download_paper_assets` / `pdf_parse::parse_paper_body` |
-| `trash list\|restore\|purge` | `path_list_trash` / `path_restore_item` / `path_purge_*` |
 | `import id\|bib` | `lookup::import_by_identifier` / `import_catalog` |
 | `export bib` | `lookup::export_catalog`（`-o`/`--out` 写文件；全局格式用 `--json`） |
-| `wiki check` | 只读双链语义检查（`WikiIndex`） |
 | `doctor` / `doctor fix` | 聚合诊断与 aliases / visual-marks 修复 |
+| `doctor wiki` | 只读双链语义检查（`WikiIndex`） |
 | `layout list\|get` | `{paper}/source/layout-index.json` |
 | `mark list\|get\|add\|delete` | `{paper}/marks/`（区域锚点优先） |
-| `usage which\|timeline\|summary\|clear` | XDG `usage.sqlite`（`activity_record_events` / `usage_*`） |
-| `config show\|set` | `~/.config/agentero/config.toml`（与 GUI 隔离） |
 
 构建：`cargo build -p agentero-cli` → bin `agentero`。
 

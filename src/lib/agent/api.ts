@@ -29,6 +29,7 @@ export type AgentTemplate =
 	| "pi"
 	| "dsh"
 	| "kimi-code"
+	| "zcode"
 	| "custom";
 
 export type AgentDescriptor = {
@@ -151,6 +152,16 @@ export type AgentResultPayload = {
 	providerSessionId?: string | null;
 };
 
+export type CitationTarget = {
+	paperPath: string;
+	path: string;
+	fragment: string;
+	pageIndex: number;
+	bbox: { x: number; y: number; w: number; h: number };
+	title?: string | null;
+	regionId: string;
+};
+
 export type AgentStreamKind = "message" | "thought";
 
 export type AgentStreamEvent = {
@@ -262,6 +273,22 @@ export type AgentCollaborationEvent = {
 export type AgentFailedEvent = {
 	sessionId: string;
 	error: string;
+};
+
+/** Loading phase of a turn: before spawn, waiting for first model output, or upstream reconnect. */
+export type AgentTurnPhase = "starting" | "waiting-model" | "reconnecting";
+
+export type AgentStatusEvent = {
+	sessionId: string;
+	phase: AgentTurnPhase;
+	/** e.g. "2/5" attempt counter for reconnecting. */
+	detail?: string | null;
+};
+
+/** Runtime-tracked phase state for a session's current turn. */
+export type AgentPhaseState = {
+	phase: AgentTurnPhase;
+	detail?: string;
 };
 
 export type PermissionOption = {
@@ -444,6 +471,16 @@ export async function probeCatalogAgent(
 	)) as ProbeResult;
 }
 
+/** Open a trusted template-owned CLI login command in a confirm-to-run terminal. */
+export async function openAgentLoginTerminal(
+	templateId: string,
+): Promise<void> {
+	await callApi(
+		() => commands.doctorOpenAgentLoginTerminal(templateId),
+		AGENT_CALL_OPTS,
+	);
+}
+
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
 
 /**
@@ -526,8 +563,6 @@ export async function runOnce(request: {
 	fastMode?: boolean;
 	/** Local SKILL.md identifiers selected through the composer. */
 	skillIds?: string[];
-	/** Select the agent's first ACP permission option for this run. */
-	autoApprove?: boolean;
 	/** ACP permission handling: "restricted" | "ask" | "auto" (from settings). */
 	permissionMode?: string;
 	/**
@@ -581,7 +616,6 @@ export async function runOnce(request: {
 					request.preferHighestReasoningEffort ?? false,
 				fastMode: request.fastMode,
 				skillIds: request.skillIds ?? [],
-				autoApprove: request.autoApprove ?? false,
 				permissionMode: request.permissionMode,
 				responseLanguage,
 				personalPrompt,
@@ -703,6 +737,17 @@ export async function warmAgent(request: {
 	);
 }
 
+/** Resolve an inline citation link to PDF page/bbox coordinates. */
+export async function resolvePdfCitation(
+	vaultPath: string,
+	source: string,
+): Promise<CitationTarget> {
+	return (await callApiResult(
+		() => commands.agentResolveCitation(vaultPath, source),
+		AGENT_CALL_OPTS,
+	)) as CitationTarget;
+}
+
 export function listenAgentStream(
 	handler: (e: AgentStreamEvent) => void,
 ): Promise<UnlistenFn> {
@@ -725,6 +770,14 @@ export function listenAgentFailed(
 	return events
 		.agentFailed(getCurrentWebviewWindow())
 		.listen((message) => handler(message.payload));
+}
+
+export function listenAgentStatus(
+	handler: (e: AgentStatusEvent) => void,
+): Promise<UnlistenFn> {
+	return events
+		.agentStatus(getCurrentWebviewWindow())
+		.listen((message) => handler(message.payload as AgentStatusEvent));
 }
 
 export function listenAgentTool(

@@ -5,19 +5,21 @@ BYOA：连接本机（或远程）ACP Agent。Host 协议见 [../backend/agent.m
 ## UI 分层
 
 ```text
-AI Elements (Conversation / Message / PromptInput / Sources / Reasoning)
+AI Elements (Conversation / Message / PromptInput / InlineCitation / Reasoning)
   → AgentPanel 状态机
   → invoke agent_* + 订阅 agent:* 事件
 ```
 
 流式：`agent:stream`（message | thought）→ 完成 / 失败事件。写 NOTES 后统一 Diff（Keep / Revert）。
 
+**行内 citation pill / 统一跳转**：Agent 按格式输出 `[label](papers/…/<id>.pdf#section|figure|page=…)` 或 `[[papers/…/NOTES]]`。`prepareAgentMessageMarkdown` 会给 vault 相对 href 加 `./` 前缀——Streamdown 内置 rehype-harden 只把 `/` `./` `../` 当相对路径，裸 `papers/…` 会被标成 Blocked；点击时再剥掉 `./`。`MessageResponse` / `ReasoningContent` 把 `<a>` 渲成同一 citation pill：`http(s)` 开系统浏览器，vault 路径走 `openCitation`。裸 `papers/…#page|section|figure=…` 也会补成链接。`.tex` href 回退到同论文 `{id}.pdf`。残留 status tag / `blocked` 标签有显示兜底。约定不加外层 `([…])`，不用文末 `## Sources`。Host 解析：`#figure=N` 在 caption 任意位置匹配 `Fig./Figure N`（避免 OCR 把标签挤到标题中间）；`#section=N` 同时认阿拉伯与 IEEE 罗马章节号（如 `3` ↔ `III.`），并抬高短数字的相似度门槛以免误命中页眉噪声。解析失败 Toast 按 fragment 类型短提示（如「找不到 Figure：…#figure=7」）并带上 source。跳转成功后用黄色半透明高亮块闪一下目标区域（约 1.6s 淡出消失），目的是引起注意；细条 section 标题会扩成标题下一段预览块，并按 bbox 滚进视口。Figures 侧栏选中仍用 kind 色描边（常驻）。
+
 ## 面板行为
 
 - 空态建议 chips → workflow：`summary` / `qa` / `related_work`。
 - **Agent 切换器列表**：App 启动即 `scanCatalog` + soft-probe（`prefetchAgentCatalog`，不依赖侧栏挂载）；面板挂载与 vault 变化时再 `listAgents + scanCatalog` 刷新。Settings 探测 / 安装 / 卸载 / 改默认会改 registry，Host 广播 `agent:registry-changed`（已纳入 lifecycle typed bus，见 [lifecycle-events](../development/lifecycle-events.md)），面板经 `lifecycle.on` 防抖刷新——面板常驻不卸载，否则探测成功后切换器仍是旧列表。catalog 项仅 `acpStatus === "ready"`（ACP 握手成功）才显示，不可用项直接隐藏而非置灰。
 - **当前论文默认 context**（可 X 移除）；`@` 提及或文件树拖入 → 在输入正文光标处插入行内 mention chip（见下）。
-- **选区上下文**（Cursor 式）：Markdown / PDF 中选中文字 → composer 出现瞬时选区 chip（虚线，实时跟随最新选区；取消选区即消失）；`⌘L` 固定选区（实底，最多 4 个）并打开 Agent 面板；PDF 仅在 **Agent 侧栏已打开**（或 Agent 弹出窗）时于选区右下角显示「加入对话」pill，点击同样固定选区。无选区时 `⌘L` 仍是开关侧栏。`⇧⌘A` 同样固定选区并打开面板，区别是它还把焦点移进输入框（无选区时只打开 + 聚焦，不折叠面板）；聚焦走 `src/lib/agent/composer-focus.ts` —— React `autoFocus` 只在挂载时生效，而 rail composer 常驻挂载，需要命令式聚焦。发送时选区以 `Selected text from {path} (page N):` + `> 引用` 追加进 prompt，随该轮消费清空；不落 localStorage，超长截断 4000 字符。Store：`src/lib/agent/selection-store.ts`。
+- **选区上下文**：划词本身**不会**进入对话。划词工具栏顺序为 **翻译 → 快速对话（`⌘K`）→ 加入对话（`⌘L`）**。**加入对话** / 有选区时的全局 `⌘L` / `⇧⌘A`（额外聚焦输入框）固定选区并打开 Agent；**快速对话** / `⌘K` 打开页内 Ask 浮层，不写入 composer。无选区时 `⌘L` 仍开关侧栏。聚焦走 `src/lib/agent/composer-focus.ts`。发送时选区以 `Selected text from {path} (page N):`（PDF）或 `Selected text from {path} (lines A-B):`（CodeMirror 划词，chip 标签 `文件名 A-B行`）+ `> 引用` 追加进 prompt，随该轮消费清空；不落 localStorage，超长截断 4000 字符。Store：`src/lib/agent/selection-store.ts`（`active` 仅作 ⌘L / ⇧⌘A 暂存，不展示、不发送）。
 - **PDF 选区 → 对话卡片**：来自 PDF 且带页内几何（`rects` + `paperAbsPath`）的选区，在 **Agent 发送该轮** 时写入 `kind: ask` 对话线程（`anchor.quote` = 选中原文，`messages[]` = 用户问题 + Agent 回复）。页边针与浮层为**提问对话卡**（MessageSquare），**不是**视觉批注 `agent-trace`。Markdown 选区或缺少几何时仍只作 chip、不落盘。
 - **图片附件**：Composer 支持粘贴 / 点选 / 从 Finder、预览或其它 App 窗口拖入图片（`image/*` 与 macOS image UTI，最多 8 张、单张 ≤ 10 MiB）。拖入图片且指针在 Agent 面板/输入框上时显示虚线 overlay；能判定为非图片（`.md` / PDF）或**文件树内部拖拽**则不显示、不抢落点。窗口 `dragDropEnabled: false`，走 HTML5（Windows 上 Tauri 原生拖放会吞掉 HTML5）；`FileList` 有数据时直接附加，否则按路径读盘。不抢成 `@` 路径 chip。提交时转为 ACP `ContentBlock::Image`（与 PDF 视觉批注同一 `runOnce.images` 通路）；会话气泡以缩略 chip 展示，纯图消息无文字气泡。图片仅会话本地保留，不随 `session/load` 历史回放。工具：`src/lib/agent/prompt-image.ts`。
 - `@`：空时优先最近路径与浅层目录；› 进入子目录；论文标签与 `paperTreeLabelMode` 一致。`@`、`$` 与 `/` 候选菜单由 viewport 碰撞处理定位，空间不足时翻转并在可用高度内滚动。
@@ -26,10 +28,10 @@ AI Elements (Conversation / Message / PromptInput / Sources / Reasoning)
 - ACP 结构化提问工具会解析为 AI Elements `Tool` 内的可选回答；完成选择后以正常的下一用户轮提交，并继续同一 ACP 会话。支持多 harness 的 rawInput 形状（见下表）。
 - 运行中可继续输入 → Queue waitlist（「等待发送」）；标题保持简洁，条目等宽并可单独移除；Esc / 停止中止。队列排在输入壳**上方**的正常文档流里（不绝对定位遮挡输入框）；可调高度只作用在输入壳本身，队列另占一行高度。紧凑模式下队列自身也会收紧 padding。
 - **会话配置条**（Header 下方）：模型选择、协作模式（有上报时）、Fast（有上报时）；推理强度收在模型选择弹层顶部，与当前模型名称同行。从 Composer 工具栏上移，压低输入区时也不再被隐藏；窄侧栏中保持单行，过长的模型 / 模式名称以省略号截断。
-- 引用上下文：`@` 提及、`$skill`、`/command` 选中后都在输入正文里**行内插入**小 pill（contenteditable；行高贴近正文、`max-w` 较短；点击或 Backspace 整颗删除）。Skill pill **只显示图标 + 名称**（去掉 `$` / `skill :` 前缀）；`@` 仍带 `@`，`/` 仍带 `/`。草稿 marker：`{{m:path}}` / `{{s:skillId}}` / `{{c:name}}`；发送时剥离 m/s（路径与 skillIds 走原通路），c 展开为 `/name` 进 ACP 正文。当前文件、选区、视觉批注仍为输入框上方的块级 chip：默认图标；hover / 聚焦时**宽度动画展开**短标签与 ×（不用 tooltip 浮层）。图片附件仍在边框内。紧凑一行模式**按内容撑开**（不写死壳高，避免输入行下留白）；触发条件：composer 高度 ≤ 160px（拖拽分隔条可随时进出）。应用窗口高度 < 600px 时**默认压到紧凑高度**（打开侧栏或窗口由高变矮时），但不锁死，用户仍可拖高退出紧凑。块级 chip 与图片收成图标圆片；隐藏底部工具栏，圆形向上箭头发送按钮与输入框同一行并垂直居中（无内容时置灰）；单行用 `px-3 py-2.5`，与非紧凑 footer 的 `px-3 pb-2.5` 对齐，切换紧凑时发送按钮底边 inset 不跳。外层左右 padding（`px-3`）与底边距（`pb-3`）与非紧凑一致，避免输入框宽度或与下边框距离跳动。右侧栏 composer 顶部有竖向拖拽分隔条，可压低输入区高度。
+- 引用上下文：`@` 提及、`$skill`、`/command` 与**加入对话的选区**选中后都在输入正文里**行内插入**小 pill（contenteditable；行高贴近正文、`max-w` 较短；点击或 Backspace 整颗删除）。Skill pill **只显示图标 + 名称**（去掉 `$` / `skill :` 前缀）；`@` 仍带 `@`，`/` 仍带 `/`，选区 pill 带高亮图标。草稿 marker：`{{m:path}}` / `{{s:skillId}}` / `{{c:name}}` / `{{sel:…}}`；发送时剥离 m/s/sel（路径、skillIds、选区走原通路），c 展开为 `/name` 进 ACP 正文。当前文件、视觉批注仍为输入框上方的块级 chip：默认图标；hover / 聚焦时**宽度动画展开**短标签与 ×（不用 tooltip 浮层）。图片附件仍在边框内。紧凑一行模式**按内容撑开**（不写死壳高，避免输入行下留白）；触发条件：composer 高度 ≤ 160px（拖拽分隔条可随时进出）。应用窗口高度 < 600px 时**默认压到紧凑高度**（打开侧栏或窗口由高变矮时），但不锁死，用户仍可拖高退出紧凑。块级 chip 与图片收成图标圆片；隐藏底部工具栏，圆形向上箭头发送按钮与输入框同一行并垂直居中（无内容时置灰）；单行用 `px-3 py-2.5`，与非紧凑 footer 的 `px-3 pb-2.5` 对齐，切换紧凑时发送按钮底边 inset 不跳。外层左右 padding（`px-3`）与底边距（`pb-3`）与非紧凑一致，避免输入框宽度或与下边框距离跳动。右侧栏 composer 顶部有竖向拖拽分隔条，可压低输入区高度。
 - 会话空闲时 hover 用户消息可 **Edit** 后重发。
 - **长会话虚拟化**：transcript 行数 ≥ 80（`use-transcript-virtualizer` 的 `VIRTUALIZE_MIN_LINES`）时切换 `@tanstack/react-virtual` 窗口化渲染，复用 use-stick-to-bottom 的 scrollRef（贴底与滚动按钮行为不变）；Reasoning / Tool / Plan 折叠态提升到 `ChatTranscript` 统一管理，行卸载不丢。
-- **新建对话 / 历史恢复**：新建草稿不会清空刚离开的本地 transcript；历史项同时存在 Agentero runtime id 与 ACP provider id 时，`session/load` / 后续续聊只使用 `providerSessionId`；连续续聊产生的新 runtime 行会按 provider id 合并回同一个历史项；加载结果通过一次原子 store 更新写入并激活，避免列表刷新后出现空白会话。详见 [Codex 历史恢复误用 runtime id](../bug_fix/codex-history-runtime-session-id.md)。会话标题优先用 ACP `session/list` / `session/load` 返回的 title，缺失时回退首条用户消息（本地已有 transcript 时立即从首条 user turn 推导；外部会话无 title 时先留空并由后台 `session/load` **预加载**补全——切 Agent / 打开历史弹层时对无标题项并发 hydrate，结果写入 `localStorage` 标题缓存，下次列表可秒开；**不再**用 session id 前缀占位以免挡住回退，见 #484）。历史列表元信息只显示 `Agent · 状态`，**不**再常驻 `ses_…` id；id 仅在标题完全缺失时作为最后兜底。运行中 Agent 经 `session_info_update` 推送的新标题由 `agent:session-info` 事件实时写回历史项（按 runtime id 或 providerSessionId 匹配；视觉批注会话标题不被覆盖）。
+- **新建对话 / 历史恢复**：新建草稿不会清空刚离开的本地 transcript；历史项同时存在 Agentero runtime id 与 ACP provider id 时，`session/load` / 后续续聊只使用 `providerSessionId`；连续续聊产生的新 runtime 行会按 provider id 合并回同一个历史项；远端历史项会先激活空 transcript 并显示 Shimmer/骨架占位，加载结果再通过一次原子 store 更新替换为真实内容，避免列表刷新后出现空白会话。详见 [Codex 历史恢复误用 runtime id](../bug_fix/codex-history-runtime-session-id.md) 与 [Agent 历史会话恢复加载反馈](../bug_fix/agent-history-session-shimmer.md)。会话标题优先用 ACP `session/list` / `session/load` 返回的 title，缺失时回退首条用户消息（本地已有 transcript 时立即从首条 user turn 推导；外部会话无 title 时先留空并由后台 `session/load` **预加载**补全——切 Agent / 打开历史弹层时对无标题项并发 hydrate，结果写入 `localStorage` 标题缓存，下次列表可秒开；**不再**用 session id 前缀占位以免挡住回退，见 #484）。历史列表元信息只显示 `Agent · 状态`，**不**再常驻 `ses_…` id；id 仅在标题完全缺失时作为最后兜底。运行中 Agent 经 `session_info_update` 推送的新标题由 `agent:session-info` 事件实时写回历史项（按 runtime id 或 providerSessionId 匹配；视觉批注会话标题不被覆盖）。
 - Slash 命令完全来自当前 ACP session 的 `available_commands_update`；Agentero 不再注册本地 action/template。映射时剥离名称前导 `/` 与 `$`（部分 Agent 把 skill 以 `$name` 形式广播），再以 `/name` 填入 Composer，并在当前 provider session 中原样发送。
 - **模型选择（含第三方）**：列表来自 ACP `agent:models`；若 Agent 当前模型或用户偏好不在固定目录中（如 Codex + 中转 / cc-switch DeepSeek），仍会并入可选列表，并支持在搜索框输入任意 model id 作为自定义模型（`warm` / `run_once` 会尝试 `SetSessionConfigOption`，即使 id 未出现在上报目录中）。偏好按 agent 持久化。弹层顶部固定「当前选择」，模型名称与推理强度下拉按基线保持一行；搜索与模型目录在下方独立滚动。点击当前模型名称即清空搜索并滚动到完整目录中的当前模型、短暂高亮（不跳到收藏副本），无常驻定位按钮；打开时聚焦搜索。选择模型后弹层保持打开，可继续调整强度，点击外部或 Esc 关闭；协商期间暂停再次选择模型。
 - **会话模式（capability-driven）**：Codex `collaboration_mode`（Default / Plan 等）。Plan 下才开放 `request_user_input`。事件 `agent:collaboration`；`warm` / `run_once` 携带 `collaborationModeId`。Header 下配置条有上报时显示「模式」下拉（仅模式名，不展示 description）；偏好按 agent 持久化。不暴露 ACP `category: mode` 沙箱档（Read-only / Agent 等）。
@@ -73,7 +75,7 @@ Tool 提升的作答：`formatAskUserAnswers` 后作为下一用户轮。若当�
 
 成功写 `NOTES.md`，`is_read = true`；进度在后台任务条。批量导入不连跑。  
 Skill 语法由 Host 按 provider 分流（Claude `/id`，其它注入 `SKILL.md`）。  
-用户提示会按当前 App 语言（设置里的 `en` / `zh-CN` / 跟随系统解析后）注入一句输出语言说明：正文跟 App 语言，skill 固定的英文 `##` 结构标题保持不变。
+用户提示会按当前 App 语言（设置里的 `en` / `zh-CN` / 跟随系统解析后）注入一句输出语言说明：正文跟 App 语言，skill 固定的中文 `##` 结构标题保持不变。
 
 `NOTES.md` 须带 YAML frontmatter：
 
@@ -81,6 +83,7 @@ Skill 语法由 Host 按 provider 分流（Claude `/id`，其它注入 `SKILL.md
 - `created: YYYY-MM-DD`（语言中性键；ISO 日期，Properties 按值识别为日期；已有创建日期则不覆盖）
 
 保留用户已有 frontmatter 键与自定义 alias，不重命名 `NOTES.md` 文件名。约定见 vault 内 `paper-reader` skill。
+作者联系方式、外链、OpenReview 与详细人物档案等联网检索规则拆到 `paper-reader/author-lookup.md`，主 `SKILL.md` 只负责精读入口与路由。
 
 ## 个人偏好
 

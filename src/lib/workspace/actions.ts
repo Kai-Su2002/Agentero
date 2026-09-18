@@ -7,6 +7,14 @@
 
 import i18n from "@/i18n";
 import { notePaperFocus, track } from "@/lib/activity";
+import type { CitationTarget } from "@/lib/agent/api";
+import { resolvePdfCitation } from "@/lib/agent/api";
+import {
+	citationHrefFromWikiParts,
+	cleanCitationHref,
+	isAgentCitationHref,
+	rewriteCitationHrefToPdf,
+} from "@/lib/agent/citation-href";
 import { errorText } from "@/lib/core/error";
 import { notifyError, notifyUndo, notifyWarning } from "@/lib/core/notify";
 import { closeTopOverlay } from "@/lib/core/overlay-stack";
@@ -17,6 +25,7 @@ import {
 	isPaperDirectory,
 	isRemoteArxivPath,
 	isUnderPaperAttachments,
+	localFileToArrayBuffer,
 	paperDirFromPath,
 	type RemotePaperItem,
 	remoteArxivPath,
@@ -38,10 +47,15 @@ import { removeTabAnnotations } from "@/lib/pdf/annotations-store";
 import {
 	buildLayoutDocumentResult,
 	getLayoutDocumentResult,
+	layoutKindFromCitationFragment,
 	mergeCaptionsIntoHosts,
 	setLayoutDocumentResult,
 } from "@/lib/pdf/layout";
 import { readLayoutSidecar } from "@/lib/pdf/layout/io";
+import {
+	clearPendingPdfPage,
+	setPendingPdfPage,
+} from "@/lib/pdf/pending-pdf-page";
 import { registerScrollSyncPair } from "@/lib/pdf/scroll-sync";
 import {
 	isPlazaVirtualPath,
@@ -51,6 +65,7 @@ import {
 import { loadSettings } from "@/lib/settings";
 import { setLayoutMode } from "@/lib/shell/ui-store";
 import {
+	ensureLocalFsScope,
 	type FileNode,
 	isMarkdownPath,
 	joinVaultPath,
@@ -78,13 +93,17 @@ import {
 	getActiveTabId,
 	getTabs,
 	pushClosedTabs,
+	refreshTabExcalidraw,
 	refreshTabMarkdown,
 	refreshTabNotes,
+	refreshTabPdf,
+	refreshTabText,
 	setActiveTabId,
 	setTabs,
 	takeClosedTab,
 	updateTab,
 } from "@/lib/workspace/store";
+import { flushTextEditorFor } from "@/lib/workspace/text-editor-flush";
 import {
 	type PdfViewerHandle,
 	pdfHandleFor,
@@ -103,11 +122,15 @@ import {
 	normalizeTabPath,
 	type OpenPlacement,
 	paperReadingPlacements,
+	patchFromTabResources,
 	patchTab,
 	readingPairCloseIds,
 	removeTab,
 	removeTabsUnderPath,
+	reseedExcalidrawTab,
+	reseedTextTab,
 	revokeTabMediaSources,
+	SPLIT_PANE_ID_MARKER,
 	splitPaneIdForPath,
 	syncTabSeedsForPath,
 	tabHasNotesSplit,
@@ -116,7 +139,17 @@ import {
 	tabNotesEligible,
 	translationSplitPlacement,
 } from "./tabs";
-import { type CenterViewMode, preferredModeForPath } from "./viewer";
+import {
+	compileTexFile,
+	ensureTexEngines,
+	texCompileStore,
+} from "./tex-compile";
+import {
+	type CenterViewMode,
+	isTexPath,
+	preferredModeForPath,
+	texPdfPath,
+} from "./viewer";
 
 /**
  * When the strip would be empty with a Vault open, insert full Library.
@@ -295,21 +328,10 @@ export function openTab(
 					: res.error,
 			);
 		}
-		const patch: Partial<DocTab> = {
-			kind: res.kind,
-			title: res.title,
-			mode: res.mode,
-			paperMeta: res.paperMeta,
-			pdfUrl: res.pdfUrl,
-			pdfBytes: res.pdfBytes ?? null,
-			htmlUrl: res.htmlUrl,
-			imageUrl: res.imageUrl,
-			notesPath: res.notesPath,
-			notesSeed: res.notesSeed,
-			markdownSeed: res.markdownSeed,
-			seedKey: 1,
-			loaded: true,
-		};
+		// Guard against a transient PDF-probe miss with the placeholder's
+		// preferMode (⇧⌘T reopen of a closed PDF tab), not `existing` — an
+		// existing tab returned early above and is never patched here.
+		const patch = patchFromTabResources(res, placeholder);
 		updateTab(id, patch);
 
 		// Paper default: NOTES in the notes column (or first-time right split).
@@ -318,7 +340,7 @@ export function openTab(
 			!opts?.placement &&
 			res.kind === "paper" &&
 			Boolean(res.notesPath) &&
-			(res.mode === "pdf" || res.mode === "html") &&
+			(patch.mode === "pdf" || patch.mode === "html") &&
 			(opts?.forceNotes || loadSettings().autoOpenPaperNotes);
 		if (wantDefaultNotes && res.notesPath) {
 			openNotesForPaper(id, patch, path);
@@ -517,6 +539,201 @@ function cloneTabForSplit(tab: DocTab, tabs: DocTab[]): DocTab {
 	};
 }
 
+/**
+ * Open (or refresh) the compiled PDF of a .tex file as a right split of its
+ * editor pane — the TeX analogue of the paper→NOTES right split. When the
+ * PDF is missing on disk (or `forceCompile`, the compile-button path), the
+ * pane opens immediately with a shimmer placeholder while the compile runs,
+ * then fills in. Existing PDF tabs are refreshed in place (new bytes
+ * identity reloads EmbedPDF) and activated.
+ */
+export async function openTexPdf(
+	texPath: string,
+	opts?: { referencePanelId?: string | null; forceCompile?: boolean },
+): Promise<void> {
+	if (!isTexPath(texPath)) return;
+	// One in-flight compile at a time (mirrors compileTexFile's guard).
+	if (texCompileStore.getState().compilingPath) return;
+
+	// Locate the reference editor panel (handles ::pane-N clones); open the
+	// editor first when it is not on screen so the PDF lands beside it.
+	const canonicalTexId = tabIdForPath(texPath);
+	const refId =
+		opts?.referencePanelId ??
+		getTabs().find(
+			(t) =>
+				t.id === canonicalTexId ||
+				t.id.startsWith(`${canonicalTexId}${SPLIT_PANE_ID_MARKER}`),
+		)?.id ??
+		null;
+	if (!refId) {
+		// openTab creates the dockview panel synchronously, so the id below
+		// resolves immediately.
+		openTab(texPath, { preferMode: "text" });
+	}
+	const referencePanelId = refId ?? canonicalTexId;
+
+	const pdfPath = texPdfPath(texPath);
+	const pdfId = tabIdForPath(pdfPath);
+	await ensureLocalFsScope(vaultStore.getState().vaultPath);
+
+	if (!opts?.forceCompile) {
+		// Fast path: the PDF is already on disk → open/refresh, no shimmer.
+		const bytes = await localFileToArrayBuffer(pdfPath);
+		if (bytes) {
+			if (getTabs().some((t) => t.id === pdfId)) {
+				updateTab(pdfId, {
+					pdfBytes: bytes,
+					loaded: true,
+					texCompiling: false,
+					title: basenameOf(pdfPath),
+				});
+				setActiveTabId(pdfId);
+				dockHandle()?.activatePanel(pdfId);
+			} else {
+				openTab(pdfPath, {
+					preferMode: "pdf",
+					placement: { direction: "right", referencePanelId },
+				});
+			}
+			return;
+		}
+	}
+
+	// Compile-first flow: flush the editor's debounced autosave first so
+	// latexmk reads the just-typed bytes, not the pre-autosave disk snapshot
+	// (saves no longer auto-compile, nothing else would close that gap).
+	await flushTextEditorFor(texPath);
+
+	// Show the PDF pane immediately as a shimmer placeholder, then fill it
+	// once the compile lands.
+	const paneAlreadyOpen = getTabs().some((t) => t.id === pdfId);
+	if (paneAlreadyOpen) {
+		updateTab(pdfId, { texCompiling: true });
+		setActiveTabId(pdfId);
+		dockHandle()?.activatePanel(pdfId);
+	} else {
+		// Hand-rolled openTab prefix (placeholder + dock placement) without
+		// the async resource load — the PDF does not exist yet, so
+		// loadTabResources would only surface a cannotPreview error.
+		const beforeTabs = getTabs();
+		const { tabs: nextTabs, id: insertedId } = insertPlaceholderTab(
+			beforeTabs,
+			pdfPath,
+			"pdf",
+		);
+		const placeholder =
+			nextTabs.find((t) => t.id === insertedId) ??
+			createPlaceholderTab(pdfPath, "pdf");
+		setTabs(nextTabs);
+		setActiveTabId(insertedId);
+		dockHandle()?.openPanel(placeholder, {
+			direction: "right",
+			referencePanelId,
+		});
+		updateTab(insertedId, { texCompiling: true });
+	}
+
+	const compiled = await compileTexFile(texPath);
+	const bytes = compiled ? await localFileToArrayBuffer(compiled) : null;
+	if (!compiled || !bytes) {
+		// Failure already notified. Drop a pane we just created (it would sit
+		// on a shimmer forever); just un-flag a pre-existing one so it shows
+		// its previous content again.
+		if (paneAlreadyOpen) updateTab(pdfId, { texCompiling: false });
+		else closeTab(pdfId, { remember: false });
+		if (compiled) {
+			// The compile itself succeeded but its output could not be read
+			// back (fs scope / file vanished). Say so — a silent revert behind
+			// the success toast reads as "the PDF did not update".
+			notifyError(
+				i18n.t("app:errors.pdfReadFailed", { name: basenameOf(pdfPath) }),
+			);
+		}
+		return;
+	}
+	updateTab(pdfId, {
+		pdfBytes: bytes,
+		loaded: true,
+		texCompiling: false,
+		title: basenameOf(pdfPath),
+	});
+}
+
+/** Latest .tex save that landed while a compile was already running; one
+ * trailing recompile keeps the PDF fresh without per-save compile storms. */
+let pendingSaveCompilePath: string | null = null;
+
+/**
+ * Quiet TeX compile + in-place refresh of the open PDF pane: the compile-button
+ * flow without the focus steal, pane auto-open and success toast. Called after
+ * a manual ⌘S save lands (`compileTexOnManualSave`). The pane's shimmer
+ * (`texCompiling`) stays up while latexmk runs so partial watcher writes never
+ * flash through; triggers landing mid-compile queue a single trailing run with
+ * the latest path.
+ */
+export async function compileTexOnSave(texPath: string): Promise<void> {
+	// Right after a window reload the detection scan may still be in flight:
+	// wait for it instead of silently dropping this trigger.
+	await ensureTexEngines();
+	const { engines, selectedEngine, compilingPath } = texCompileStore.getState();
+	// No engine available: explicit triggers surface this via
+	// `compileTexOnManualSave`; programmatic callers stay silent.
+	if (!selectedEngine && engines.length === 0) return;
+	if (compilingPath) {
+		pendingSaveCompilePath = texPath;
+		return;
+	}
+	const pdfPath = texPdfPath(texPath);
+	const pdfId = tabIdForPath(pdfPath);
+	const paneOpen = getTabs().some((t) => t.id === pdfId);
+	if (paneOpen) updateTab(pdfId, { texCompiling: true });
+	try {
+		const compiled = await compileTexFile(texPath, { quietSuccess: true });
+		const bytes = compiled ? await localFileToArrayBuffer(compiled) : null;
+		if (!compiled || !bytes) {
+			// Drop the shimmer on the previous content; the failure itself was
+			// notified by compileTexFile.
+			if (paneOpen) updateTab(pdfId, { texCompiling: false });
+			if (compiled) {
+				notifyError(
+					i18n.t("app:errors.pdfReadFailed", { name: basenameOf(pdfPath) }),
+				);
+			}
+			return;
+		}
+		updateTab(pdfId, {
+			pdfBytes: bytes,
+			loaded: true,
+			texCompiling: false,
+			title: basenameOf(pdfPath),
+		});
+	} finally {
+		if (pendingSaveCompilePath) {
+			const next = pendingSaveCompilePath;
+			pendingSaveCompilePath = null;
+			void compileTexOnSave(next);
+		}
+	}
+}
+
+/**
+ * ⌘S manual-save trigger for text tabs: compile the .tex once its save landed
+ * (the editor flushes before calling this). Unlike the quiet path this
+ * surfaces a missing engine — the user explicitly asked to build. Non-TeX
+ * paths are a no-op (⌘S on them just saved).
+ */
+export async function compileTexOnManualSave(path: string): Promise<void> {
+	if (!isTexPath(path)) return;
+	await ensureTexEngines();
+	const { engines, selectedEngine } = texCompileStore.getState();
+	if (!selectedEngine && engines.length === 0) {
+		notifyError(i18n.t("sidebar:fileTree.selectEngineFirst"));
+		return;
+	}
+	await compileTexOnSave(path);
+}
+
 /** Obsidian-style Split pane: add a right pane and keep columns evenly sized. */
 export function splitActivePane(): void {
 	const id = getActiveTabId();
@@ -524,6 +741,12 @@ export function splitActivePane(): void {
 	const tabs = getTabs();
 	const active = tabs.find((t) => t.id === id);
 	if (!active) return;
+
+	// TeX editor ⌘\ → open/refresh its compiled PDF as the right split.
+	if (isTexPath(active.path)) {
+		void openTexPdf(active.path, { referencePanelId: active.id });
+		return;
+	}
 
 	const notesId = active.notesPath ? tabIdForPath(active.notesPath) : null;
 	const shouldOpenDefaultNotes =
@@ -567,6 +790,9 @@ export function openTranslationTab(
 		(t) => t.id === `${tabIdForPath(paperAbsPath)}::translation`,
 	);
 	if (existing) {
+		// Restored/reused translation tabs do not pass through the creation path;
+		// re-bind the two PDF documents every time the source opens translation.
+		registerScrollSyncPair(paperTabId, existing.id);
 		dockHandle()?.activatePanel(existing.id);
 		return;
 	}
@@ -600,10 +826,21 @@ export function openTranslationTab(
 		})();
 	}
 	setTabs((prev) => [...prev, translationPane]);
-	dockHandle()?.splitPanelRight(
-		translationPane,
-		translationSplitPlacement(paperTabId, tabs).referencePanelId,
-	);
+	const notesPath = paperTab.notesPath;
+	const notesPane = notesPath
+		? tabs.find((tab) => tab.id === tabIdForPath(notesPath))
+		: null;
+	if (notesPane) {
+		dockHandle()?.openPanel(translationPane, {
+			direction: "within",
+			referencePanelId: notesPane.id,
+		});
+	} else {
+		dockHandle()?.splitPanelRight(
+			translationPane,
+			translationSplitPlacement(paperTabId, tabs).referencePanelId,
+		);
+	}
 }
 
 export function closeWindow(): void {
@@ -749,6 +986,12 @@ export function openPaperNotes(paperDir: string): void {
 export function openPaper(paperDir: string): void {
 	const abs = paperDir.replace(/\\/g, "/").replace(/\/+$/, "");
 	setTreeSelectedPath(abs);
+	if (loadSettings().replaceCurrentTabOnOpenPaper) {
+		const activeId = getActiveTabId();
+		if (activeId && !getTabs().some((t) => t.id === tabIdForPath(abs))) {
+			closeTab(activeId, { remember: false });
+		}
+	}
 	openTab(abs, { preferMode: "pdf" });
 }
 
@@ -765,8 +1008,24 @@ export function openPath(absoluteOrDemoPath: string): void {
 	});
 }
 
+/**
+ * If `href` carries a PDF citation fragment (`#page=` / `#section=` / …),
+ * open via the shared citation jumper. Returns true when handled.
+ */
+export function tryOpenCitationHref(href: string): boolean {
+	const trimmed = cleanCitationHref(href);
+	if (!trimmed) return false;
+	const rewritten = rewriteCitationHrefToPdf(trimmed);
+	if (!isAgentCitationHref(trimmed) && !isAgentCitationHref(rewritten)) {
+		return false;
+	}
+	openCitation(trimmed);
+	return true;
+}
+
 /** Open a vault-relative path from backlinks (e.g. `notes/idea.md`). */
 export function openVaultRel(rel: string): void {
+	if (tryOpenCitationHref(rel)) return;
 	const vaultPath = getVaultPath();
 	if (!vaultPath) {
 		notifyError(i18n.t("app:errors.openVaultForLinks"));
@@ -778,6 +1037,7 @@ export function openVaultRel(rel: string): void {
 
 /** Graph: paper NOTES / paper folder → open paper (PDF + Notes). */
 export function openGraphPath(rel: string): void {
+	if (tryOpenCitationHref(rel)) return;
 	const vaultPath = getVaultPath();
 	if (!vaultPath) {
 		notifyError(i18n.t("app:errors.openVaultForGraph"));
@@ -802,6 +1062,174 @@ export function openGraphPath(rel: string): void {
 		}
 		openVaultRel(clean);
 	})();
+}
+
+/** Paper-key aliases so pending-page intent matches `usePdfNavigation`'s paperKey. */
+function citationPaperKeys(paperAbs: string): string[] {
+	const keys = [paperAbs];
+	const vaultPath = getVaultPath();
+	if (vaultPath) {
+		const rel = toVaultRelative(vaultPath, paperAbs);
+		if (rel && rel !== paperAbs) keys.push(rel);
+	}
+	return keys;
+}
+
+/**
+ * Wait for the PDF handle after openPaper, then jump to a layout region.
+ *
+ * First-open races with reading-position restore and EmbedPDF layout: a single
+ * early scroll often lands briefly then snaps back to page 1. Stash a pending
+ * page for restore to prefer, and re-apply the jump a few times while the
+ * viewport settles.
+ */
+function scheduleCitationJump(paperAbs: string, target: CitationTarget): void {
+	const tabId = tabIdForPath(paperAbs);
+	const keys = citationPaperKeys(paperAbs);
+	const page = target.pageIndex + 1;
+	setPendingPdfPage(keys, page);
+
+	let unsubscribe: (() => void) | null = null;
+	const retryTimeoutIds: number[] = [];
+	let stopped = false;
+
+	const stop = () => {
+		if (stopped) return;
+		stopped = true;
+		unsubscribe?.();
+		for (const id of retryTimeoutIds) window.clearTimeout(id);
+	};
+
+	const kind = layoutKindFromCitationFragment(target.fragment);
+	const tryJump = () => {
+		if (stopped) return;
+		const handle = pdfHandleFor(tabId);
+		if (!handle) return;
+		handle.scrollToLayoutRegion({
+			id: target.regionId,
+			pageIndex: target.pageIndex,
+			bbox: target.bbox,
+			kind,
+		});
+	};
+
+	tryJump();
+	unsubscribe = subscribePdfHandles(tryJump);
+	// Re-apply after layout/restore can wipe an early scroll (not a busy loop).
+	for (const delayMs of [300, 800]) {
+		retryTimeoutIds.push(window.setTimeout(tryJump, delayMs));
+	}
+	retryTimeoutIds.push(
+		window.setTimeout(() => {
+			stop();
+			// Restore may still be about to run; keep the intent briefly.
+			window.setTimeout(() => clearPendingPdfPage(keys), 2000);
+		}, 2000),
+	);
+}
+
+/** Short category toast for a failed citation resolve (e.g. figure / section). */
+function citationResolveFailedMessage(source: string): string {
+	const hash = source.indexOf("#");
+	const frag = hash >= 0 ? source.slice(hash + 1) : "";
+	const key = (frag.split("=")[0] ?? "").toLowerCase();
+	switch (key) {
+		case "figure":
+			return i18n.t("agent:citation.figureNotFound", { source });
+		case "section":
+			return i18n.t("agent:citation.sectionNotFound", { source });
+		case "table":
+			return i18n.t("agent:citation.tableNotFound", { source });
+		case "algorithm":
+			return i18n.t("agent:citation.algorithmNotFound", { source });
+		case "formula":
+			return i18n.t("agent:citation.formulaNotFound", { source });
+		case "page":
+			return i18n.t("agent:citation.pageNotFound", { source });
+		case "region":
+			return i18n.t("agent:citation.regionNotFound", { source });
+		default:
+			return i18n.t("agent:citation.resolveFailed", { source });
+	}
+}
+
+/**
+ * Open a citation link from agent output.
+ *
+ * Plain vault paths open as documents. Links that point at a paper file and
+ * carry a `#section=`, `#figure=`, `#page=`, or `#region=` fragment resolve
+ * the fragment on the Host and jump the PDF viewer to the cited location.
+ */
+export function openCitation(source: string): void {
+	const trimmed = rewriteCitationHrefToPdf(cleanCitationHref(source));
+	if (!trimmed) return;
+	if (/^https?:\/\//i.test(trimmed)) {
+		void import("@tauri-apps/plugin-opener")
+			.then(({ openUrl }) => openUrl(trimmed))
+			.catch(() => {
+				window.open(trimmed, "_blank", "noopener,noreferrer");
+			});
+		return;
+	}
+
+	const fragmentIndex = trimmed.indexOf("#");
+	const path = fragmentIndex >= 0 ? trimmed.slice(0, fragmentIndex) : trimmed;
+	const fragment = fragmentIndex >= 0 ? trimmed.slice(fragmentIndex + 1) : "";
+	if (!fragment) {
+		// Prefer opening the paper unit for PDF paths; plain notes still use graph open.
+		if (/\.pdf$/i.test(path)) {
+			const vaultPath = getVaultPath();
+			if (vaultPath) {
+				const clean = normalizeVaultRel(path);
+				const full = joinVaultPath(vaultPath, clean);
+				const paperAbs =
+					paperDirFromPath(full, vaultStore.getState().paperFolders) ?? null;
+				if (paperAbs) {
+					openPaper(paperAbs);
+					return;
+				}
+			}
+		}
+		openGraphPath(path);
+		return;
+	}
+
+	const vaultPath = getVaultPath();
+	if (!vaultPath) {
+		notifyError(i18n.t("app:errors.openVaultForGraph"));
+		return;
+	}
+
+	const clean = normalizeVaultRel(path);
+	const full = joinVaultPath(vaultPath, clean);
+	const paperAbs =
+		paperDirFromPath(full, vaultStore.getState().paperFolders) ?? null;
+
+	if (!paperAbs) {
+		// Best-effort: if the path itself is a paper folder, open it.
+		void (async () => {
+			if (await detectPaperDirectory(full)) {
+				openPaper(full);
+				void resolvePdfCitation(vaultPath, trimmed)
+					.then((target) => scheduleCitationJump(full, target))
+					.catch((e) => {
+						notifyError(citationResolveFailedMessage(trimmed));
+						console.warn("resolve citation failed", e);
+					});
+				return;
+			}
+			openGraphPath(path);
+		})();
+		return;
+	}
+
+	openPaper(paperAbs);
+	void resolvePdfCitation(vaultPath, trimmed)
+		.then((target) => scheduleCitationJump(paperAbs, target))
+		.catch((e) => {
+			notifyError(citationResolveFailedMessage(trimmed));
+			console.warn("resolve citation failed", e);
+		});
 }
 
 let wikiNavigationIntentId = 0;
@@ -859,6 +1287,15 @@ export async function navigateWiki(nav: WikiNavTarget): Promise<void> {
 	if (destination) {
 		if (!vaultPath) {
 			notifyError(i18n.t("app:errors.openVaultForLinks"));
+			return;
+		}
+		// PDF / layout citation fragments (page=/section=/figure=/…) share the
+		// agent citation jumper so editor wikilinks and markdown links behave alike.
+		const citationHref = citationHrefFromWikiParts(
+			destination.path,
+			destination.fragment,
+		);
+		if (citationHref && tryOpenCitationHref(citationHref)) {
 			return;
 		}
 		const full = joinVaultPath(vaultPath, normalizeVaultRel(destination.path));
@@ -978,6 +1415,33 @@ const reseedGuard = new Set<string>();
 /** Serialize Markdown saves per absolute path so overlapping editor lifecycles
  * cannot race their disk snapshot checks and writes. */
 const markdownPersistQueues = new Map<string, Promise<boolean>>();
+/** Serialize Excalidraw saves per absolute path. */
+const excalidrawPersistQueues = new Map<string, Promise<boolean>>();
+
+/** Serialize plain-text editor saves per absolute path. */
+const textPersistQueues = new Map<string, Promise<boolean>>();
+
+/**
+ * Where disk-change reseeds land. The main window uses the workspace tab
+ * store; doc popout windows pass a single-tab sink over local React state.
+ */
+export type DiskChangeSink = {
+	getTabs: () => DocTab[];
+	refreshNotes: (paperDir: string, content: string) => void;
+	refreshMarkdown: (absPath: string, content: string) => void;
+	refreshExcalidraw: (absPath: string, content: string) => void;
+	refreshText: (absPath: string, content: string) => void;
+	refreshPdf: (absPath: string, bytes: ArrayBuffer) => void;
+};
+
+const defaultDiskChangeSink: DiskChangeSink = {
+	getTabs,
+	refreshNotes: refreshTabNotes,
+	refreshMarkdown: refreshTabMarkdown,
+	refreshExcalidraw: refreshTabExcalidraw,
+	refreshText: refreshTabText,
+	refreshPdf: refreshTabPdf,
+};
 
 /**
  * Reload an open editor when its file changed on disk (external editor /
@@ -986,16 +1450,52 @@ const markdownPersistQueues = new Map<string, Promise<boolean>>();
  * new seed in place (no remount); the path is guarded briefly so a racing
  * autosave cannot overwrite the fresh disk text.
  */
-export async function applyDiskChange(absPath: string): Promise<void> {
+export async function applyDiskChange(
+	absPath: string,
+	sink: DiskChangeSink = defaultDiskChangeSink,
+): Promise<void> {
 	const norm = normalizeTabPath(absPath);
-	const openTabs = getTabs();
+	const openTabs = sink.getTabs();
 	const notesOwners = openTabs.filter(
 		(t) => t.notesPath && normalizeTabPath(t.notesPath) === norm,
 	);
 	const mdOwners = openTabs.filter(
 		(t) => normalizeTabPath(t.path) === norm && isMarkdownPath(t.path),
 	);
-	if (!notesOwners.length && !mdOwners.length) return;
+	const excalidrawOwners = openTabs.filter(
+		(t) => normalizeTabPath(t.path) === norm && t.mode === "excalidraw",
+	);
+	const textOwners = openTabs.filter(
+		(t) => normalizeTabPath(t.path) === norm && t.mode === "text",
+	);
+	const pdfOwners = openTabs.filter(
+		(t) =>
+			normalizeTabPath(t.path) === norm &&
+			(t.mode === "pdf" || t.mode === "translation"),
+	);
+	if (
+		!notesOwners.length &&
+		!mdOwners.length &&
+		!excalidrawOwners.length &&
+		!textOwners.length &&
+		!pdfOwners.length
+	)
+		return;
+	// PDF panes reload from bytes: one read feeds every matching pane (source
+	// tab + translation split); the fresh ArrayBuffer identity is the mounted
+	// viewer's reload signal. Panes still on the compile shimmer are skipped
+	// inside refreshPdfTab — the compile flow fills them when the run lands.
+	if (pdfOwners.length) {
+		const bytes = await localFileToArrayBuffer(absPath);
+		if (bytes) sink.refreshPdf(absPath, bytes);
+	}
+	if (
+		!notesOwners.length &&
+		!mdOwners.length &&
+		!excalidrawOwners.length &&
+		!textOwners.length
+	)
+		return;
 	let content: string;
 	try {
 		content = await readVaultFile(absPath);
@@ -1019,7 +1519,7 @@ export async function applyDiskChange(absPath: string): Promise<void> {
 		const paperDir = absPath.replace(/[\\/]NOTES\.md$/i, "");
 		const reload = () => {
 			guard();
-			refreshTabNotes(paperDir, content);
+			sink.refreshNotes(paperDir, content);
 		};
 		if (notesTab.notesDirty) promptReload(reload);
 		else reload();
@@ -1028,9 +1528,27 @@ export async function applyDiskChange(absPath: string): Promise<void> {
 		if (content === mdTab.markdownSeed) continue;
 		const reload = () => {
 			guard();
-			refreshTabMarkdown(absPath, content);
+			sink.refreshMarkdown(absPath, content);
 		};
 		if (mdTab.markdownDirty) promptReload(reload);
+		else reload();
+	}
+	for (const excalidrawTab of excalidrawOwners) {
+		if (content === excalidrawTab.excalidrawSeed) continue;
+		const reload = () => {
+			guard();
+			sink.refreshExcalidraw(absPath, content);
+		};
+		if (excalidrawTab.excalidrawDirty) promptReload(reload);
+		else reload();
+	}
+	for (const textTab of textOwners) {
+		if (content === textTab.textSeed) continue;
+		const reload = () => {
+			guard();
+			sink.refreshText(absPath, content);
+		};
+		if (textTab.textDirty) promptReload(reload);
 		else reload();
 	}
 }
@@ -1096,6 +1614,114 @@ export function persistFile(
 	return attempt;
 }
 
+/**
+ * Persist a specific `.excalidraw` file to disk. The ExcalidrawViewer calls
+ * this with its own fixed path (debounced autosave and unmount flush).
+ */
+export function persistExcalidrawFile(
+	path: string,
+	json: string,
+	lastSaved: string,
+): Promise<boolean> {
+	if (!isTauri() || !getVaultPath() || !path) return Promise.resolve(false);
+	const normalizedPath = normalizeTabPath(path);
+	const previous =
+		excalidrawPersistQueues.get(normalizedPath) ?? Promise.resolve(false);
+	const attempt = previous
+		.catch(() => false)
+		.then(async () => {
+			if (reseedGuard.has(normalizedPath)) return false;
+			try {
+				const disk = await readVaultFile(path);
+				if (disk !== lastSaved) {
+					const name = path.split(/[\\/]/).pop() ?? path;
+					notifyWarning(i18n.t("app:diskConflict.saveBlocked", { name }));
+					return false;
+				}
+			} catch {
+				// Missing/unreadable file → no conflict to guard against.
+			}
+			try {
+				await writeVaultFile(path, json);
+				trackSelfWrittenPath(path);
+				setTabs((prev) => reseedExcalidrawTab(prev, path, json));
+				return true;
+			} catch (e) {
+				notifyError(errorText(e));
+				return false;
+			}
+		});
+	excalidrawPersistQueues.set(normalizedPath, attempt);
+	void attempt.then(
+		() => {
+			if (excalidrawPersistQueues.get(normalizedPath) === attempt) {
+				excalidrawPersistQueues.delete(normalizedPath);
+			}
+		},
+		() => {
+			if (excalidrawPersistQueues.get(normalizedPath) === attempt) {
+				excalidrawPersistQueues.delete(normalizedPath);
+			}
+		},
+	);
+	return attempt;
+}
+
+/**
+ * Persist a plain-text editor file to disk. The CodeMirror TextEditor calls
+ * this with its own fixed path (debounced autosave and unmount flush).
+ */
+export function persistTextFile(
+	path: string,
+	content: string,
+	lastSaved: string,
+): Promise<boolean> {
+	if (!isTauri() || !getVaultPath() || !path) return Promise.resolve(false);
+	const normalizedPath = normalizeTabPath(path);
+	const previous =
+		textPersistQueues.get(normalizedPath) ?? Promise.resolve(false);
+	const attempt = previous
+		.catch(() => false)
+		.then(async () => {
+			if (reseedGuard.has(normalizedPath)) return false;
+			try {
+				const disk = await readVaultFile(path);
+				if (disk !== lastSaved) {
+					const name = path.split(/[\\/]/).pop() ?? path;
+					notifyWarning(i18n.t("app:diskConflict.saveBlocked", { name }));
+					return false;
+				}
+			} catch {
+				// Missing/unreadable file → no conflict to guard against.
+			}
+			try {
+				await writeVaultFile(path, content);
+				trackSelfWrittenPath(path);
+				setTabs((prev) => reseedTextTab(prev, path, content));
+				// NOTE: autosave only writes — .tex compiles are manual now
+				// (⌘S / compile button); see compileTexOnManualSave.
+				return true;
+			} catch (e) {
+				notifyError(errorText(e));
+				return false;
+			}
+		});
+	textPersistQueues.set(normalizedPath, attempt);
+	void attempt.then(
+		() => {
+			if (textPersistQueues.get(normalizedPath) === attempt) {
+				textPersistQueues.delete(normalizedPath);
+			}
+		},
+		() => {
+			if (textPersistQueues.get(normalizedPath) === attempt) {
+				textPersistQueues.delete(normalizedPath);
+			}
+		},
+	);
+	return attempt;
+}
+
 /** Ensure the strip shows the full Library when it would otherwise be empty. */
 export function ensureLibraryTabPresent(): void {
 	if (getTabs().length > 0) return;
@@ -1115,7 +1741,12 @@ export function hydratePlaceholderTabs(tabIds: readonly string[]): void {
 	}
 	for (const id of new Set(tabIds)) {
 		const tab = getTabs().find((candidate) => candidate.id === id);
-		if (!tab || tab.loaded || placeholderLoads.has(id)) continue;
+		// texCompiling panes are owned by the compile flow (openTexPdf fills
+		// them itself); hydrating here would race the compile and swap the
+		// shimmer for a cannotPreview error within milliseconds.
+		if (!tab || tab.loaded || tab.texCompiling || placeholderLoads.has(id)) {
+			continue;
+		}
 		placeholderLoads.add(id);
 		void (async () => {
 			const vaultState = vaultStore.getState();
@@ -1143,31 +1774,18 @@ export function hydratePlaceholderTabs(tabIds: readonly string[]): void {
 							: res.error,
 					);
 				}
-				updateTab(id, {
-					kind: res.kind,
-					title: res.title,
-					mode: res.mode,
-					paperMeta: res.paperMeta,
-					pdfUrl: res.pdfUrl,
-					pdfBytes: res.pdfBytes ?? null,
-					htmlUrl: res.htmlUrl,
-					imageUrl: res.imageUrl,
-					notesPath: res.notesPath,
-					notesSeed: res.notesSeed,
-					markdownSeed: res.markdownSeed,
-					seedKey: 1,
-					loaded: true,
-				});
+				const patch = patchFromTabResources(res, current);
+				updateTab(id, patch);
 				// A restored paper body hydrates after its NOTES panel was
 				// pruned from the layout — open the companion now, otherwise
 				// the first click shows the PDF without notes beside it.
 				if (
 					res.kind === "paper" &&
-					(res.mode === "pdf" || res.mode === "html") &&
+					(patch.mode === "pdf" || patch.mode === "html") &&
 					res.notesPath &&
 					loadSettings().autoOpenPaperNotes
 				) {
-					openNotesForPaper(id);
+					openNotesForPaper(id, patch, tab.path);
 				}
 			} finally {
 				placeholderLoads.delete(id);

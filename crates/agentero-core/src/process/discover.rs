@@ -29,6 +29,9 @@ fn extra_path_dirs() -> Vec<PathBuf> {
         if let Some(home) = dirs::home_dir() {
             dirs.push(home.join("scoop").join("shims")); // scoop
         }
+        for d in install_dirs::WIN_ABS_BIN_DIRS {
+            dirs.push(PathBuf::from(*d)); // chocolatey
+        }
     }
     #[cfg(not(windows))]
     {
@@ -107,8 +110,25 @@ fn is_executable(path: &Path) -> bool {
     }
     #[cfg(not(unix))]
     {
+        #[cfg(windows)]
+        if path
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("exe"))
+        {
+            return has_pe_magic(path);
+        }
         true
     }
+}
+
+#[cfg(windows)]
+fn has_pe_magic(path: &Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0_u8; 2];
+    file.read_exact(&mut magic).is_ok() && magic == *b"MZ"
 }
 
 /// Resolve `command` against an explicit ordered list of directories.
@@ -153,7 +173,12 @@ pub fn resolve_command(command: &str) -> Option<PathBuf> {
 
     // Prefer `which` with current PATH first.
     if let Ok(found) = which::which(command) {
-        return Some(found);
+        // `which` only checks that a directory entry exists. Re-apply our
+        // platform executable validation so a text file renamed to `.exe`
+        // cannot trigger Windows' misleading 16-bit application dialog.
+        if is_executable(&found) {
+            return Some(found);
+        }
     }
 
     resolve_command_in_paths(command, &path_entries())

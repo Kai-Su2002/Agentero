@@ -12,6 +12,18 @@ use tokio::process::Command;
 
 const HOST_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// Package-manager installs (winget / brew) download and unpack, so they need a
+/// far longer budget than the `--version` probes.
+const INSTALL_TIMEOUT: Duration = Duration::from_secs(300);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "kebab-case")]
+pub enum NodeInstallOutcome {
+    Installed,
+    Failed,
+    NoPackageManager,
+}
+
 /// Doctor spawns `<tool> --version` probes for every host runtime and registered
 /// Agent. The app ships as a GUI subsystem binary, so a console child without
 /// this flag makes Windows allocate a visible console window — one black window
@@ -65,6 +77,20 @@ pub struct HostDoctorReport {
     pub npm: HostToolDiagnostic,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub npm_prefix: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NodeInstallResult {
+    pub outcome: NodeInstallOutcome,
+    /// Package manager used (winget / brew), when one was available.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub installer: Option<String>,
+    /// Failure detail when the outcome is `failed`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    /// Host probe re-run after the install attempt.
+    pub report: HostDoctorReport,
 }
 
 struct CommandOutput {
@@ -152,11 +178,20 @@ async fn run_command(
     args: &[&str],
     environment: &HashMap<String, String>,
 ) -> Result<CommandOutput, String> {
+    run_command_with_timeout(path, args, environment, HOST_PROBE_TIMEOUT).await
+}
+
+async fn run_command_with_timeout(
+    path: &Path,
+    args: &[&str],
+    environment: &HashMap<String, String>,
+    timeout: Duration,
+) -> Result<CommandOutput, String> {
     let mut command = diagnostic_command(path, args);
     command.env_clear().envs(environment).kill_on_drop(true);
-    let output = tokio::time::timeout(HOST_PROBE_TIMEOUT, command.output())
+    let output = tokio::time::timeout(timeout, command.output())
         .await
-        .map_err(|_| format!("timed out after {}s", HOST_PROBE_TIMEOUT.as_secs()))?
+        .map_err(|_| format!("timed out after {}s", timeout.as_secs()))?
         .map_err(|error| format!("failed to start: {error}"))?;
     Ok(CommandOutput {
         success: output.status.success(),
@@ -300,6 +335,54 @@ pub(crate) async fn diagnose_codex_auth(desc: &AgentDescriptor) -> CodexAuthDiag
     diagnose_codex_auth_in_env(desc, &environment).await
 }
 
+/// Claude Code auth state via `claude auth status` (JSON with a `loggedIn` flag).
+pub(crate) async fn diagnose_claude_auth(desc: &AgentDescriptor) -> CodexAuthDiagnostic {
+    let environment = effective_local_agent_env(desc);
+    let Some(claude) = resolve_command_in_agent_env("claude", &environment) else {
+        return CodexAuthDiagnostic {
+            status: CodexAuthStatus::NotApplicable,
+            method: None,
+            detail: Some("claude is not installed".to_string()),
+        };
+    };
+    match run_command(claude.as_path(), &["auth", "status"], &environment).await {
+        Ok(output) => parse_claude_auth_output(&output),
+        Err(detail) => CodexAuthDiagnostic {
+            status: CodexAuthStatus::Unknown,
+            method: None,
+            detail: Some(detail),
+        },
+    }
+}
+
+/// `claude auth status` prints JSON like `{"loggedIn": true, "authMethod": "oauth_token"}`
+/// regardless of the exit code; fall back to the text heuristics when the shape differs.
+fn parse_claude_auth_output(output: &CommandOutput) -> CodexAuthDiagnostic {
+    if let Ok(value) = serde_json::from_str::<serde_json::Value>(&output.stdout) {
+        match value.get("loggedIn").and_then(serde_json::Value::as_bool) {
+            Some(true) => {
+                return CodexAuthDiagnostic {
+                    status: CodexAuthStatus::Authenticated,
+                    method: value
+                        .get("authMethod")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_string),
+                    detail: None,
+                };
+            }
+            Some(false) => {
+                return CodexAuthDiagnostic {
+                    status: CodexAuthStatus::Unauthenticated,
+                    method: None,
+                    detail: None,
+                };
+            }
+            None => {}
+        }
+    }
+    parse_auth_output(output)
+}
+
 async fn npm_prefix(
     npm: &HostToolDiagnostic,
     environment: &HashMap<String, String>,
@@ -348,6 +431,136 @@ pub async fn diagnose_host(registry: &AgentRegistry) -> Result<HostDoctorReport,
         node,
         npm,
         npm_prefix,
+    })
+}
+
+async fn diagnose_host_in_env(environment: &HashMap<String, String>) -> HostDoctorReport {
+    let npm = diagnose_tool("npm", environment).await;
+    let npm_prefix = npm_prefix(&npm, environment).await;
+    let node = diagnose_tool("node", environment).await;
+    HostDoctorReport {
+        node,
+        npm,
+        npm_prefix,
+    }
+}
+
+/// winget package id for the official Node.js LTS installer.
+#[cfg(windows)]
+const NODE_WINGET_PACKAGE: &str = "OpenJS.NodeJS.LTS";
+
+/// The system package manager that can install Node.js on this host.
+fn node_installer() -> Option<(&'static str, Vec<String>)> {
+    #[cfg(windows)]
+    {
+        if which::which("winget").is_ok() {
+            return Some((
+                "winget",
+                vec![
+                    "install".to_string(),
+                    NODE_WINGET_PACKAGE.to_string(),
+                    "--silent".to_string(),
+                    "--accept-package-agreements".to_string(),
+                    "--accept-source-agreements".to_string(),
+                ],
+            ));
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        if which::which("brew").is_ok() {
+            return Some(("brew", vec!["install".to_string(), "node".to_string()]));
+        }
+    }
+    None
+}
+
+/// A GUI app inherits PATH from its launcher, so a fresh winget install is
+/// invisible to this process. Merge the machine + user PATH from the registry
+/// so the re-probe can find the new node.
+#[cfg(windows)]
+fn refresh_path_from_registry(environment: &mut HashMap<String, String>) {
+    let Ok(powershell) = which::which("powershell").or_else(|_| which::which("pwsh")) else {
+        return;
+    };
+    let script = "$m=[Environment]::GetEnvironmentVariable('Path','Machine');$u=[Environment]::GetEnvironmentVariable('Path','User');@($m,$u) -join ';'";
+    let Ok(output) = std::process::Command::new(powershell)
+        .args(["-NoProfile", "-Command", script])
+        .output()
+    else {
+        return;
+    };
+    let merged = String::from_utf8_lossy(&output.stdout);
+    let mut paths = environment
+        .get("PATH")
+        .map(|value| std::env::split_paths(value).collect::<Vec<_>>())
+        .unwrap_or_default();
+    for entry in std::env::split_paths(merged.as_ref()) {
+        if !entry.as_os_str().is_empty() && !paths.contains(&entry) {
+            paths.push(entry);
+        }
+    }
+    if let Ok(value) = std::env::join_paths(paths) {
+        environment.insert("PATH".to_string(), value.to_string_lossy().into_owned());
+    }
+}
+
+#[cfg(not(windows))]
+fn refresh_path_from_registry(_environment: &mut HashMap<String, String>) {}
+
+/// One-click install of Node.js through the host's package manager, followed by
+/// a fresh host probe. Linux is intentionally excluded: it has no single
+/// package manager and installs need sudo, so the UI falls back to manual
+/// guidance there.
+pub async fn install_node(registry: &AgentRegistry) -> Result<NodeInstallResult, AppError> {
+    let descriptor = codex_descriptor(registry)?;
+    let mut environment = effective_local_agent_env(&descriptor);
+
+    let Some((installer, args)) = node_installer() else {
+        let report = diagnose_host_in_env(&environment).await;
+        return Ok(NodeInstallResult {
+            outcome: NodeInstallOutcome::NoPackageManager,
+            installer: None,
+            error: None,
+            report,
+        });
+    };
+
+    let path = which::which(installer).map_err(|error| {
+        AppError::message(format!(
+            "resolved {installer} but failed to start it: {error}"
+        ))
+    })?;
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let install_error =
+        match run_command_with_timeout(&path, &arg_refs, &environment, INSTALL_TIMEOUT).await {
+            Ok(output) if output.success => None,
+            Ok(output) => Some(format!(
+                "{} install failed: {}",
+                installer,
+                first_output_line(&output).unwrap_or_else(|| "no output".to_string())
+            )),
+            Err(detail) => Some(format!("{installer} install failed: {detail}")),
+        };
+    let outcome = match install_error {
+        Some(_) => NodeInstallOutcome::Failed,
+        None => NodeInstallOutcome::Installed,
+    };
+
+    refresh_path_from_registry(&mut environment);
+
+    let report = diagnose_host_in_env(&environment).await;
+    let report_ok = report.node.status == HostToolStatus::Available;
+    let error = match install_error {
+        Some(detail) => Some(detail),
+        None if !report_ok => Some("node still unavailable after install".to_string()),
+        None => None,
+    };
+    Ok(NodeInstallResult {
+        outcome,
+        installer: Some(installer.to_string()),
+        error,
+        report,
     })
 }
 
@@ -408,5 +621,37 @@ mod tests {
             result.detail.as_deref(),
             Some("status command exited with 7")
         );
+    }
+
+    #[test]
+    fn parses_claude_logged_in_json() {
+        let result = parse_claude_auth_output(&output(
+            true,
+            0,
+            "{\"loggedIn\": true, \"authMethod\": \"oauth_token\"}\n",
+            "",
+        ));
+        assert_eq!(result.status, CodexAuthStatus::Authenticated);
+        assert_eq!(result.method.as_deref(), Some("oauth_token"));
+        assert!(result.detail.is_none());
+    }
+
+    #[test]
+    fn parses_claude_logged_out_json_even_on_failure_exit() {
+        let result = parse_claude_auth_output(&output(false, 1, "{\"loggedIn\": false}\n", ""));
+        assert_eq!(result.status, CodexAuthStatus::Unauthenticated);
+        assert!(result.method.is_none());
+        assert!(result.detail.is_none());
+    }
+
+    #[test]
+    fn falls_back_to_text_auth_parsing_for_unexpected_claude_output() {
+        let result = parse_claude_auth_output(&output(
+            false,
+            1,
+            "",
+            "Not logged in: private@example.com\n",
+        ));
+        assert_eq!(result.status, CodexAuthStatus::Unauthenticated);
     }
 }

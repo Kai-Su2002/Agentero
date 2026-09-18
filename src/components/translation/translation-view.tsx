@@ -1,12 +1,17 @@
 import { useTheme } from "next-themes";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { fontSizeForLayoutTranslateBox } from "@/components/viewer/pdf/layers/layout-translate-overlay";
+import {
+	expandLayoutTranslateBbox,
+	fontSizeForLayoutTranslateBox,
+	LayoutTranslateParagraph,
+} from "@/components/viewer/pdf/layers/layout-translate-overlay";
 import { cn } from "@/lib/core/utils";
 import {
 	currentLayoutTranslateCacheKey,
 	type LayoutTranslateItem,
 	type LayoutTranslateSidecar,
+	type PdfLayoutRegion,
 	type PdfLayoutSidecar,
 	readLayoutSidecar,
 	readLayoutTranslateSidecar,
@@ -17,10 +22,13 @@ import {
 	PDF_PAPER_BLOCK_CLASS,
 	type PdfPaperTone,
 } from "@/lib/pdf/page-theme";
+import { registerScrollSyncPeer } from "@/lib/pdf/scroll-sync";
 
 type TranslationViewProps = {
 	/** Absolute path to the paper folder (papers/<id>/). */
 	paperAbsPath: string | null;
+	/** Stable workspace document id used by the source/translation sync pair. */
+	docId: string;
 	/** Whether this tab is the active dockview panel. */
 	active?: boolean;
 };
@@ -31,6 +39,7 @@ type PageRenderSpec = {
 	pageIndex: number;
 	pageSize: PageSize;
 	items: readonly LayoutTranslateItem[];
+	regions: readonly PdfLayoutRegion[];
 };
 
 const POINTS_PER_PX = 72 / 96;
@@ -98,7 +107,8 @@ function buildPageSpecs(
 		const pageSize = pageSizes.get(pageIndex);
 		if (!pageSize) continue;
 		const items = itemsByPage.get(pageIndex) ?? [];
-		specs.push({ pageIndex, pageSize, items });
+		const regions = layout.regions.filter((r) => r.pageIndex === pageIndex);
+		specs.push({ pageIndex, pageSize, items, regions });
 	}
 	return specs;
 }
@@ -108,16 +118,19 @@ function TranslatedBlock({
 	pageWidthPx,
 	pageHeightPx,
 	tone,
+	layoutRegions,
 }: {
 	item: LayoutTranslateItem;
 	pageWidthPx: number;
 	pageHeightPx: number;
 	tone: PdfPaperTone;
+	layoutRegions: readonly PdfLayoutRegion[];
 }) {
 	const text = item.translated ?? "";
 	const isHeading = isLayoutTranslateHeadingKind(item.kind);
+	const bbox = expandLayoutTranslateBbox(item, layoutRegions);
 	const fontSize = fontSizeForLayoutTranslateBox(
-		item.bbox,
+		bbox,
 		pageWidthPx,
 		pageHeightPx,
 		item.source,
@@ -132,10 +145,10 @@ function TranslatedBlock({
 				tone === "dark" && PDF_PAGE_RASTER_DARK_CLASS,
 			)}
 			style={{
-				left: `${item.bbox.x * 100}%`,
-				top: `${item.bbox.y * 100}%`,
-				width: `${item.bbox.w * 100}%`,
-				height: `${item.bbox.h * 100}%`,
+				left: `${bbox.x * 100}%`,
+				top: `${bbox.y * 100}%`,
+				width: `${bbox.w * 100}%`,
+				height: `${bbox.h * 100}%`,
 				padding: "1px 2px",
 				fontSize,
 				lineHeight: 1.25,
@@ -145,14 +158,13 @@ function TranslatedBlock({
 				textAlign: isHeading ? "left" : "justify",
 			}}
 		>
-			<p
-				className={cn(
-					"m-0 h-full w-full overflow-hidden break-words whitespace-pre-wrap",
-					isHeading && "font-bold",
-				)}
-			>
-				{text}
-			</p>
+			<LayoutTranslateParagraph
+				text={text}
+				initialFontSize={fontSize}
+				boxWidthPx={pageWidthPx * bbox.w}
+				boxHeightPx={pageHeightPx * bbox.h}
+				isHeading={isHeading}
+			/>
 		</div>
 	);
 }
@@ -160,34 +172,17 @@ function TranslatedBlock({
 function TranslatedPage({
 	spec,
 	tone,
+	zoom,
 }: {
 	spec: PageRenderSpec;
 	tone: PdfPaperTone;
+	zoom: number;
 }) {
 	const containerRef = useRef<HTMLDivElement>(null);
-	const [renderSize, setRenderSize] = useState<{
-		width: number;
-		height: number;
-	}>({ width: 0, height: 0 });
-
-	useEffect(() => {
-		const update = () => {
-			const containerWidth = containerRef.current?.clientWidth ?? 0;
-			const naturalWidth = spec.pageSize.width / POINTS_PER_PX;
-			const naturalHeight = spec.pageSize.height / POINTS_PER_PX;
-			const maxWidth = Math.max(320, containerWidth - 32);
-			const scale =
-				containerWidth > 0 ? Math.min(1, maxWidth / naturalWidth) : 1;
-			setRenderSize({
-				width: naturalWidth * scale,
-				height: naturalHeight * scale,
-			});
-		};
-		update();
-		const ro = new ResizeObserver(update);
-		if (containerRef.current) ro.observe(containerRef.current);
-		return () => ro.disconnect();
-	}, [spec.pageSize.width, spec.pageSize.height]);
+	const renderSize = {
+		width: (spec.pageSize.width / POINTS_PER_PX) * zoom,
+		height: (spec.pageSize.height / POINTS_PER_PX) * zoom,
+	};
 
 	const doneItems = spec.items.filter(
 		(it) => it.status === "done" && it.translated?.trim(),
@@ -216,6 +211,7 @@ function TranslatedPage({
 						pageWidthPx={renderSize.width}
 						pageHeightPx={renderSize.height}
 						tone={tone}
+						layoutRegions={spec.regions}
 					/>
 				))}
 			</div>
@@ -225,6 +221,7 @@ function TranslatedPage({
 
 export function TranslationView({
 	paperAbsPath,
+	docId,
 	active = true,
 }: TranslationViewProps) {
 	const { t } = useTranslation("viewer");
@@ -235,6 +232,11 @@ export function TranslationView({
 	const [translateSidecar, setTranslateSidecar] =
 		useState<LayoutTranslateSidecar | null>(null);
 	const [refreshKey, setRefreshKey] = useState(0);
+	const [zoom, setZoom] = useState(1);
+	const zoomRef = useRef(zoom);
+	zoomRef.current = zoom;
+	const zoomListenersRef = useRef(new Set<(next: number) => void>());
+	const scrollRef = useRef<HTMLDivElement>(null);
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is an intentional reload trigger.
 	useEffect(() => {
@@ -274,6 +276,43 @@ export function TranslationView({
 		[layoutSidecar, translateSidecar],
 	);
 
+	// The scroll container does not exist while sidecars are loading; re-bind
+	// when the page list first becomes renderable.
+	// biome-ignore lint/correctness/useExhaustiveDependencies: pages.length tracks the DOM container lifecycle.
+	useEffect(() => {
+		const element = scrollRef.current;
+		if (!element) return;
+		return registerScrollSyncPeer(docId, {
+			getMetrics: () => ({
+				scrollTop: element.scrollTop,
+				scrollLeft: element.scrollLeft,
+				scrollHeight: element.scrollHeight,
+				scrollWidth: element.scrollWidth,
+				clientHeight: element.clientHeight,
+				clientWidth: element.clientWidth,
+			}),
+			scrollTo: ({ x, y }) => {
+				element.scrollLeft = x;
+				element.scrollTop = y;
+			},
+			onScrollChange: (listener) => {
+				element.addEventListener("scroll", listener, { passive: true });
+				return () => element.removeEventListener("scroll", listener);
+			},
+			getZoom: () => zoomRef.current,
+			setZoom: (nextZoom) => {
+				const clamped = Math.max(0.2, nextZoom);
+				setZoom(clamped);
+				zoomRef.current = clamped;
+				for (const listener of zoomListenersRef.current) listener(clamped);
+			},
+			onZoomChange: (listener) => {
+				zoomListenersRef.current.add(listener);
+				return () => zoomListenersRef.current.delete(listener);
+			},
+		});
+	}, [docId, pages.length]);
+
 	const tone: PdfPaperTone = resolvedTheme === "dark" ? "dark" : "white";
 
 	if (!paperAbsPath) {
@@ -293,9 +332,17 @@ export function TranslationView({
 	}
 
 	return (
-		<div className="agentero-scroll flex h-full flex-col overflow-auto bg-muted/20">
+		<div
+			ref={scrollRef}
+			className="agentero-scroll flex h-full flex-col items-center overflow-auto bg-muted/20"
+		>
 			{pages.map((spec) => (
-				<TranslatedPage key={spec.pageIndex} spec={spec} tone={tone} />
+				<TranslatedPage
+					key={spec.pageIndex}
+					spec={spec}
+					tone={tone}
+					zoom={zoom}
+				/>
 			))}
 		</div>
 	);

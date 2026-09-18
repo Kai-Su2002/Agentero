@@ -6,7 +6,7 @@
 
 | 入口 | 元数据来源 | Host / 流程 |
 |---|---|---|
-| 魔棒 | Translator HTTP + arXiv Atom fallback | `lookup_import_batch` |
+| 魔棒 | Translator HTTP + 直连兜底链（arXiv→S2→alphaXiv、DOI→Crossref→S2→OpenAlex、PMID→PubMed） | `lookup_import_batch` |
 | 本地 PDF | 用户确认 / 文件名启发式 | `paper_import_local_pdf` |
 | Connector | 浏览器扩展 items JSON | `features/connector` → commit |
 | Zotero 迁移 | `zotero.sqlite` + storage | `zotero_scan` / `zotero_migrate` |
@@ -39,7 +39,7 @@ Skill 不写入 catalog、不创建 `papers/` 条目、不执行 `scripts/`。�
 
 ```text
 粘贴 arXiv ID / DOI / URL
-  → arXiv 输入先规范为 `https://arxiv.org/abs/<id>`，再交给 Translator（或 arXiv Atom fallback）
+  → arXiv 输入先规范为 `https://arxiv.org/abs/<id>`，再交给 Translator；失败按标识符类型走直连兜底链（错峰投机并发：arXiv→S2→alphaXiv、DOI→Crossref→S2→OpenAlex）
   → PaperRecord → catalog upsert
   → papers/<id>/ + 带 aliases frontmatter 的 NOTES.md 壳（不覆盖已有 NOTES）
   → PDF → {paper}/{id}.pdf
@@ -136,7 +136,7 @@ liteparse 在**运行时 `dlopen`** PDFium，而 `liteparse-pdfium-sys` 的 buil
 ## 本地 PDF
 
 - 魔棒多选或拖到 `papers/` 组织夹 → **即时导入**：复制 PDF + catalog + NOTES shell 立刻完成（秒级），论文马上出现在树/论文库；元数据识别在后台进行（见下），识别完成后自动改名/补全。
-- 窗口其它区域拖入不入库（防 WebView 导航）。
+- PDF 拖入窗口其它区域也入库到当前 Papers 目标，避免 WebView 导航；识别与版面分析在后台继续。
 - 标识符去重与合并（#406）：导入前按对话框给出的 `id` / DOI / arXiv / PMID / ISBN 查 catalog；命中已有条目时不新建文件夹——原条目缺主 PDF `{id}.pdf` 时，本 PDF 直接成为主 PDF（常见于 PMID 入库后手动补全文）；否则放入 `{paper}/attachments/`（同名自动 `-2` 后缀），并回填 catalog 缺失的标识符列；前端返回 `status: "deduped"` 并 Toast 提示。
 
 ### PDF 元数据识别（recognize 链路）
@@ -146,8 +146,8 @@ liteparse 在**运行时 `dlopen`** PDFium，而 `liteparse-pdfium-sys` 的 buil
 ```
 本地 liteparse probe（隔离 worker，前 5 页投影行 + 词级字号/坐标，~秒级）
   → Zotero recognizer 服务（POST 词级布局 JSON，非 PDF 文件本身，~50-250ms）
-  → 命中 DOI → Translator /search 解析；失败回退 Crossref works/{doi} 直连
-  → 命中 arXiv → export.arxiv.org Atom 直连
+  → 命中 DOI → Translator /search 解析；失败走 DOI 兜底链（Crossref→S2→OpenAlex，错峰投机并发）
+  → 命中 arXiv → arXiv 兜底链（export.arxiv.org Atom→S2→alphaXiv，错峰投机并发）
   → 仅命中 title/authors（无标识符）→ 直接采用识别结果（Zotero 同款兜底）
   → 任何一步失败静默降级为文件名元数据，绝不影响已完成的导入
 ```
@@ -156,8 +156,9 @@ liteparse 在**运行时 `dlopen`** PDFium，而 `liteparse-pdfium-sys` 的 buil
 
 - **命中标识符（`ok`）** → 目录经 wiki rename 事务改名为规范 id（`papers/<文件名slug>` → `papers/1706.03762`，含 `{id}.pdf` 改名、catalog path/id 重写、`[[...]]` 链接重写、失败回滚），`meta_source=recognize`，emit `paper:renamed`。
 - **规范 id 已在库中** → 占位条目并入已有条目（PDF 成为对方主 PDF 或进 `attachments/`），删除占位目录/行，emit `paper:renamed`（`outcome=merged`）。
-- **仅命中标题（`title`）** → 只 upsert catalog 元数据，不改目录名。
+- **仅命中标题（`title`）** → 只 upsert catalog 元数据，不改目录名。标题开头的 UTF-8 BOM（包括被错误显示为 `ï»¿` 的形式）会在此边界移除。
 - **未命中（`no-match`/`error`）** → `meta_source=local-unresolved`，用户可在 Edit Metadata 手填 DOI/arXiv 并刷新（`paper_resolve_identifier`）。
+- **arXiv 链整体限流（HTTP 429）**：Zotero Recognizer 常只返回 arXiv id、不带 title；随后 arXiv 兜底链（Atom→S2→alphaXiv）**整条**被限流时（链内已自动 2s 冷却重试一趟）才保留文件名占位标题，并在 `recognizeMetadata` job 的 `params.warning=arxiv_rate_limited` 上让前端 Toast——链内单源 429 会被下一优先级源静默承接，不再触发警告。
 - **用户抢先编辑**：识别完成时若 `meta_source` 已非 `local`（如 `manual`），识别结果整体放弃。
 
 时序约定：`paper_commit` 以 `defer_parse_jobs: true` 跳过 commit 期的 ParseBody/ParseRefs spawn，由 RecognizeMetadata runner 在目录名尘埃落定后统一编排 PAPER.md / refs / layout（`LookupImportResult.recognize_pending=true` 时前端也跳过自己的 layout enqueue）。

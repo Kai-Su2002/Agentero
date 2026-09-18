@@ -1,7 +1,8 @@
 use crate::core::error::AppError;
 pub(crate) use crate::core::process::windows_shell_path as simplified_agent_cwd;
-use crate::features::agent::models::{AgentDescriptor, AgentResultPayload};
-use crate::features::agent::prompt::envelope::extract_sources;
+use crate::features::agent::acp::terminal::AcpTerminalManager;
+use crate::features::agent::models::{AgentDescriptor, AgentResultPayload, AgentTemplate};
+
 use crate::features::agent::registry::discovery::{login_shell_env, path_entries};
 use agent_client_protocol::schema::v1::{
     ClientCapabilities, ElicitationCapabilities, ElicitationFormCapabilities, EnvVariable,
@@ -13,6 +14,30 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
+
+/// Shared ACP client builder: name + terminal handler. Call sites attach their own
+/// notification / request handlers.
+macro_rules! agentero_acp_builder {
+    ($terminals:expr) => {
+        ::agent_client_protocol::Client
+            .builder()
+            .name("agentero")
+            .with_handler(
+                $crate::features::agent::acp::terminal::AcpTerminalHandler::new($terminals),
+            )
+    };
+}
+pub(crate) use agentero_acp_builder;
+
+/// Terminal manager for one ACP connection (`Some(cwd)` → Vault cwd default).
+pub(crate) fn acp_terminals(
+    cwd: Option<std::path::PathBuf>,
+) -> Arc<tokio::sync::Mutex<AcpTerminalManager>> {
+    Arc::new(tokio::sync::Mutex::new(match cwd {
+        Some(cwd) => AcpTerminalManager::with_cwd(cwd),
+        None => AcpTerminalManager::new(),
+    }))
+}
 
 /// Advertise form elicitation so codex-acp bridges `request_user_input` to the client,
 /// and terminal execution so agents like Kimi Code can run shell commands.
@@ -227,6 +252,15 @@ pub(crate) fn to_acp_agent_local(
     cwd: Option<&Path>,
 ) -> Result<AcpAgent, AppError> {
     let mut child_env = effective_local_agent_env(desc);
+    // ZCode's adapter needs the desktop app's runtime provider table and a
+    // backend CLI that still supports the provider-registry push. Skip keys
+    // already present (descriptor env and any user shell export), so explicit
+    // user settings always win over auto-discovery.
+    if desc.template == AgentTemplate::Zcode {
+        for (key, value) in crate::features::agent::registry::templates::zcode_runtime_env() {
+            child_env.entry(key).or_insert(value);
+        }
+    }
     let command = resolve_command_in_agent_env(&desc.command, &child_env)
         .unwrap_or_else(|| PathBuf::from(&desc.command));
 
@@ -341,7 +375,7 @@ pub(crate) fn cancelled_payload(
     AgentResultPayload {
         session_id,
         message_id,
-        sources: extract_sources(&content),
+        sources: Vec::new(),
         content,
         reasoning: (!reasoning.is_empty()).then_some(reasoning),
         stop_reason: Some("cancelled".to_string()),

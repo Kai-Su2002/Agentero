@@ -16,6 +16,9 @@ import {
 	registerTaskExecutor,
 	type TaskExecutorContext,
 } from "@/lib/core/tasks";
+import { libraryStore } from "@/lib/paper/library-store";
+// Side-effect: register catalog title lookup used by JobCenter subjects.
+import "@/lib/paper/task-label";
 
 const globalWithWindow = globalThis as typeof globalThis & {
 	window?: { setTimeout: typeof setTimeout };
@@ -224,6 +227,7 @@ describe("job task projection", () => {
 			binding.unlistens.length = 0;
 		}
 		backgroundTasksStore.setState({ tasks: [], expanded: false });
+		libraryStore.setState({ paperMetaByRelPath: new Map() });
 	});
 
 	it("mirrors a running layout job into the background-task panel", () => {
@@ -333,19 +337,16 @@ describe("job task projection", () => {
 		expect(task("job-import-1")?.kind).toBe("import");
 		expect(task("job-import-1")?.icon).toBe("search");
 		expect(task("job-import-1")?.title).toBe("Add paper");
-		expect(task("job-import-1")?.detail).toBe(
-			"https://arxiv.org/abs/1706.03762",
-		);
+		// Lookup rows no longer surface the raw identifier / URL as detail.
+		expect(task("job-import-1")?.detail).toBeUndefined();
 		expect(task("job-import-1")?.status).toBe("queued");
 		// No numeric progress yet → the ring stays indeterminate.
 		expect(task("job-import-1")?.progress).toBeNull();
 
 		projectJobToBackgroundTask(
-			importJob({ phase: "Fetching metadata & assets… · 1706.03762" }),
+			importJob({ phase: "Fetching metadata & assets…" }),
 		);
-		expect(task("job-import-1")?.detail).toBe(
-			"Fetching metadata & assets… · 1706.03762",
-		);
+		expect(task("job-import-1")?.detail).toBe("Fetching metadata & assets…");
 
 		// Host byte progress owns the bar; a job:changed without progress must
 		// not reset it.
@@ -365,27 +366,36 @@ describe("job task projection", () => {
 	});
 
 	it("maps every import mode onto the panel identity its legacy row had", () => {
-		const cases: Array<[Record<string, unknown>, BackgroundTaskIcon, string]> =
+		const cases: Array<
+			[Record<string, unknown>, BackgroundTaskIcon, string, string | undefined]
+		> = [
 			[
-				[{ mode: "lookup", text: "10.1234/xyz" }, "search", "Add paper"],
-				[
-					{ mode: "plaza", id: "abc", title: "A Paper" },
-					"search",
-					"Import into library",
-				],
-				[
-					{ mode: "coolNotes", title: "A Paper" },
-					"layout",
-					"Fetch Cool Papers notes",
-				],
-				[
-					{ mode: "localPdf", entries: [{ filePath: "/tmp/a.pdf" }] },
-					"fileUp",
-					"Import PDF",
-				],
-				[{ mode: "skill" }, "fileUp", "Install Skills"],
-			];
-		for (const [params, icon, title] of cases) {
+				{ mode: "lookup", text: "10.1234/xyz" },
+				"search",
+				"Add paper",
+				undefined,
+			],
+			[
+				{ mode: "plaza", id: "abc", title: "A Paper" },
+				"search",
+				"Import into library",
+				"A Paper",
+			],
+			[
+				{ mode: "coolNotes", title: "A Paper" },
+				"layout",
+				"Fetch Cool Papers notes",
+				"A Paper",
+			],
+			[
+				{ mode: "localPdf", entries: [{ filePath: "/tmp/a.pdf" }] },
+				"fileUp",
+				"Import PDF",
+				"a.pdf",
+			],
+			[{ mode: "skill" }, "fileUp", "Install Skills", undefined],
+		];
+		for (const [params, icon, title, detail] of cases) {
 			backgroundTasksStore.setState({ tasks: [], expanded: false });
 			projectJobToBackgroundTask(
 				importJob({ id: `job-${icon}-${title}`, params }),
@@ -394,7 +404,30 @@ describe("job task projection", () => {
 			expect(row?.kind).toBe("import");
 			expect(row?.icon).toBe(icon);
 			expect(row?.title).toBe(title);
+			expect(row?.detail).toBe(detail);
 		}
+	});
+
+	it("shows catalog paper titles instead of papers/<id> on paper-scoped jobs", () => {
+		libraryStore.setState({
+			paperMetaByRelPath: new Map([
+				[
+					"papers/a",
+					{
+						id: "a",
+						path: "papers/a",
+						title: "Attention Is All You Need",
+					} as never,
+				],
+			]),
+		});
+		projectJobToBackgroundTask(layoutJob({ phase: "queued" }));
+		expect(task("job-layout-1")?.detail).toBe("Attention Is All You Need");
+
+		projectJobToBackgroundTask(layoutJob({ phase: "analyzing" }));
+		expect(task("job-layout-1")?.detail).toBe(
+			"Attention Is All You Need · analyzing",
+		);
 	});
 
 	it("shows the extra local PDFs as a count on the import row", () => {

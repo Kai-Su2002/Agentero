@@ -113,6 +113,18 @@ export type UsePdfCitationsOptions = {
 	 * sibling ephemeral overlays (crossref preview).
 	 */
 	onPreviewShow?: () => void;
+	/**
+	 * Jump-back pairing (#505): read the viewport right before an internal
+	 * link navigates, then commit only when it actually did. URI links never
+	 * commit, so external opens do not pollute the origin stack.
+	 */
+	onBeforeInternalJump?: () => void;
+	/** Fired with the destination anchor when a link actually navigated. */
+	onInternalJump?: (target: {
+		pageIndex: number;
+		pdfX: number | null;
+		pdfY: number;
+	}) => void;
 };
 
 export type PdfCitations = {
@@ -251,9 +263,15 @@ export function usePdfCitations({
 	isRemotePaper = false,
 	importIdentifier,
 	onPreviewShow,
+	onBeforeInternalJump,
+	onInternalJump,
 }: UsePdfCitationsOptions): PdfCitations {
 	const onPreviewShowRef = useRef(onPreviewShow);
 	onPreviewShowRef.current = onPreviewShow;
+	const onBeforeInternalJumpRef = useRef(onBeforeInternalJump);
+	onBeforeInternalJumpRef.current = onBeforeInternalJump;
+	const onInternalJumpRef = useRef(onInternalJump);
+	onInternalJumpRef.current = onInternalJump;
 	const [citationPreview, setCitationPreview] =
 		useState<CitationPreviewState | null>(null);
 	const citationHideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
@@ -417,15 +435,30 @@ export function usePdfCitations({
 		(link: PdfLinkAnnoObject) => {
 			const target = link.target;
 			if (!target || !annotationCap) return;
+			// Capture the pre-jump position before the scroll starts.
+			onBeforeInternalJumpRef.current?.();
+			const destination = getLinkDestination(target);
 			annotationCap
 				.navigateTarget(target, docId)
 				.toPromise()
 				.then((result) => {
-					if (result.outcome === "uri") openExternalUrl(result.uri);
+					if (result.outcome === "uri") {
+						openExternalUrl(result.uri);
+						return;
+					}
+					if (result.outcome === "navigated") {
+						// The page scrolled the link out from under the stationary
+						// pointer, so no pointerleave will ever fire — drop the card
+						// here or it lingers over the destination (#528).
+						clearCitationPreview();
+						if (destination) {
+							onInternalJumpRef.current?.(destination);
+						}
+					}
 				})
 				.catch(() => {});
 		},
-		[annotationCap, docId],
+		[annotationCap, docId, clearCitationPreview],
 	);
 
 	const handleCitationLinkHover = useCallback(

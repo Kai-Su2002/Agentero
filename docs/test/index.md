@@ -104,7 +104,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 |---|---|
 | 打开 demo vault | catalog 5 篇、Library 可见、tags 可筛 |
 | 点 `assets/sample.pdf` / `notes/attachments/*.pdf` | 中间栏 PDF 预览（非 papers 路径） |
-| PDF 工具栏：页码 / 适应宽度 / 适应整页 / 大纲 / `⌘F` | 跳页、缩放、书签跳转、命中高亮 |
+| PDF 工具栏：页码 / 底部缩放滑动条 / 大纲 / `⌘F` | 跳页、缩放、书签跳转、命中高亮 |
 | PDF 划词 | 平滑蓝色选区 + 操作菜单（高亮/笔记/提问/翻译） |
 | 点 `assets/figures/*` 图片 | 中间栏图片预览 |
 | Notes / `.md` 中粘贴图片 | 生成 `{mdDir}/assets/*`，正文 `![](./assets/…)`；文件树可见新文件 |

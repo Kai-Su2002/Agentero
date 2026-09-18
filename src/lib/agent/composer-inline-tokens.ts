@@ -1,13 +1,17 @@
 /**
- * Inline @mention / $skill / /command tokens embedded in composer draft text.
- * Contenteditable renders markers as chips; send path strips mention/skill
- * markers and expands command markers to `/name` for ACP.
+ * Inline @mention / $skill / /command / selection tokens embedded in composer
+ * draft text. Contenteditable renders markers as chips; send path strips
+ * mention/skill/selection markers and expands command markers to `/name` for
+ * ACP.
  */
+
+import type { SelectionContext } from "@/lib/agent/selection-store";
 
 const MENTION_RE = /\{\{m:([^}]+)\}\}/g;
 const SKILL_RE = /\{\{s:([^}]+)\}\}/g;
 const COMMAND_RE = /\{\{c:([^}]+)\}\}/g;
-const ANY_TOKEN_RE = /\{\{(?:m|s|c):[^}]+\}\}/g;
+const SELECTION_RE = /\{\{sel:([^}]+)\}\}/g;
+const ANY_TOKEN_RE = /\{\{(?:m|s|c|sel):[^}]+\}\}/g;
 
 export function encodeMentionToken(path: string): string {
 	return `{{m:${encodeURIComponent(path)}}}`;
@@ -41,6 +45,66 @@ export function decodeCommandTokenPayload(payload: string): string {
 	return decodePayload(payload);
 }
 
+function base64UrlEncode(input: string): string {
+	const bytes = new TextEncoder().encode(input);
+	const binString = Array.from(bytes, (b) => String.fromCharCode(b)).join("");
+	return btoa(binString)
+		.replace(/\+/g, "-")
+		.replace(/\//g, "_")
+		.replace(/=+$/, "");
+}
+
+function base64UrlDecode(input: string): string {
+	const padded =
+		input.replace(/-/g, "+").replace(/_/g, "/") +
+		"===".slice((input.length + 3) % 4);
+	try {
+		const binString = atob(padded);
+		const bytes = Uint8Array.from(binString, (c) => c.charCodeAt(0));
+		return new TextDecoder().decode(bytes);
+	} catch {
+		return "";
+	}
+}
+
+export function encodeSelectionToken(selection: SelectionContext): string {
+	const json = JSON.stringify(selection);
+	return `{{sel:${base64UrlEncode(json)}}}`;
+}
+
+export function decodeSelectionTokenPayload(
+	payload: string,
+): SelectionContext | null {
+	const json = base64UrlDecode(payload);
+	if (!json) return null;
+	try {
+		const parsed = JSON.parse(json) as unknown;
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+			return null;
+		const candidate = parsed as Partial<SelectionContext>;
+		if (
+			typeof candidate.id !== "string" ||
+			typeof candidate.text !== "string" ||
+			typeof candidate.sourcePath !== "string" ||
+			(candidate.origin !== "pdf" && candidate.origin !== "markdown")
+		) {
+			return null;
+		}
+		return {
+			id: candidate.id,
+			text: candidate.text,
+			sourcePath: candidate.sourcePath,
+			origin: candidate.origin,
+			page: candidate.page,
+			rects: candidate.rects,
+			paperAbsPath: candidate.paperAbsPath,
+			pinned: candidate.pinned === true,
+		};
+	} catch {
+		return null;
+	}
+}
+
 /** Paths in document order (duplicates kept once, first wins). */
 export function extractMentionPaths(text: string): string[] {
 	const seen = new Set<string>();
@@ -67,9 +131,19 @@ export function extractSkillIds(text: string): string[] {
 	return out;
 }
 
+/** Selection contexts in document order. */
+export function extractSelectionTokens(text: string): SelectionContext[] {
+	const out: SelectionContext[] = [];
+	for (const match of text.matchAll(SELECTION_RE)) {
+		const sel = decodeSelectionTokenPayload(match[1] ?? "");
+		if (sel) out.push(sel);
+	}
+	return out;
+}
+
 /**
  * Draft → send/display body:
- * - mention / skill markers removed (paths & skillIds travel separately)
+ * - mention / skill / selection markers removed (paths, skillIds, selections travel separately)
  * - command markers become `/name` (ACP slash text)
  */
 export function stripInlineTokens(text: string): string {
@@ -78,7 +152,8 @@ export function stripInlineTokens(text: string): string {
 			const name = decodeCommandTokenPayload(payload).trim();
 			return name ? `/${name}` : "";
 		})
-		.replace(/\{\{(?:m|s):[^}]+\}\}/g, "")
+		.replace(/\{\{(?:m|s|sel):[^}]+\}\}/g, "")
+		.replace(/\u200B/g, "")
 		.replace(/[ \t]+\n/g, "\n")
 		.replace(/\n[ \t]+/g, "\n")
 		.replace(/[ \t]{2,}/g, " ")
@@ -141,12 +216,13 @@ export type InlineTokenPart =
 	| { type: "text"; value: string }
 	| { type: "mention"; path: string }
 	| { type: "skill"; skillId: string }
-	| { type: "command"; name: string };
+	| { type: "command"; name: string }
+	| { type: "selection"; selection: SelectionContext };
 
 /** Split draft text into renderable parts (text + chips). */
 export function parseInlineTokenParts(text: string): InlineTokenPart[] {
 	const parts: InlineTokenPart[] = [];
-	const re = /\{\{(m|s|c):([^}]+)\}\}/g;
+	const re = /\{\{(m|s|c|sel):([^}]+)\}\}/g;
 	let last = 0;
 	for (const match of text.matchAll(re)) {
 		const index = match.index ?? 0;
@@ -170,6 +246,11 @@ export function parseInlineTokenParts(text: string): InlineTokenPart[] {
 				type: "command",
 				name: decodeCommandTokenPayload(payload),
 			});
+		} else if (kind === "sel") {
+			const selection = decodeSelectionTokenPayload(payload);
+			if (selection) {
+				parts.push({ type: "selection", selection });
+			}
 		}
 		last = index + match[0].length;
 	}

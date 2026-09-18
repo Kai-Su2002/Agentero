@@ -9,8 +9,9 @@
 ```text
 用户选择目录（dialog）
   → vault_create / 打开已有
-  → papers/ notes/ .agents/skills/ AGENTS.md
+  → papers/ notes/ data/ thesis/ .agents/skills/ AGENTS.md
   → notes/ 下三篇本地化新手教程（缺失时才写入）
+  → thesis/ 缺失时写入 LaTeX 起手稿 thesis/main.tex
   → .agentero/catalog.sqlite
   → 前端加载树（Create 后自动打开 notes/01 ...）
 ```
@@ -62,8 +63,9 @@
 ## 文件监听
 
 - Host `notify` → `vault:file-changed`。
-- 前端：打开 md 自动重载（有未存则提示）；结构变化局部刷树。
-- 代码：`features/vault/watcher/`、`src/lib/vault/fs-watch.ts`。
+- Host 空闲时阻塞等待 FS 事件（无定期空转）；有变更时再做约 300ms trailing debounce。停止 watcher 时 drop 原生监听以唤醒阻塞线程。
+- 前端：打开 md 自动重载（有未存则提示）；结构变化局部刷树。窗口隐藏/失焦时缓冲 `vault:file-changed`，回到前台再按序 flush；树 / wiki / Library 的去抖在后台会拉长。
+- 代码：`features/vault/watcher/`、`src/lib/vault/fs-watch.ts`、`src/lib/vault/file-change-gate.ts`、`src/lib/vault/shell-activity.ts`。
 
 ## Capabilities（摘要）
 

@@ -25,16 +25,19 @@
 		"quickOpen": "Quick open (papers / contents)",
 		"commandPalette": "Command palette",
 		"toggleSidebar": "Show / hide sidebar",
-		"toggleChat": "Show / hide chat",
-		"addSelectionToChat": "Add selection to chat",
+		"toggleChat": "Add selection to chat / toggle chat",
+		"quickChat": "Quick chat from selection",
+		"addSelectionToChat": "Add selection to chat and focus",
 		"focusSidebar": "Focus sidebar",
 		"focusEditor": "Focus editor",
 		"focusNotes": "Focus notes",
 		"closeTab": "Close dialog, tab, or window",
 		"reopenTab": "Reopen closed tab",
-		"splitPane": "Split pane right",
+		"splitPane": "Split pane right (TeX: open compiled PDF)",
 		"nextTab": "Next tab",
 		"prevTab": "Previous tab",
-		"visualAnnotation": "Add visual annotation (PDF)"
+		"visualAnnotation": "Add visual annotation (PDF)",
+		"layoutTranslate": "Full-text translation (PDF)",
+		"toggleFullscreen": "Toggle borderless fullscreen"
 	}
 }

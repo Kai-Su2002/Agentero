@@ -6,18 +6,28 @@ import { useStore } from "zustand";
 import type { AgentStepHandle } from "@/components/onboarding/steps/agent-step";
 import { AgentStep } from "@/components/onboarding/steps/agent-step";
 import { LayoutStep } from "@/components/onboarding/steps/layout-step";
+import { ProxyStep } from "@/components/onboarding/steps/proxy-step";
 import { ThemeStep } from "@/components/onboarding/steps/theme-step";
 import { TranslateStep } from "@/components/onboarding/steps/translate-step";
 import { VaultChoiceStep } from "@/components/onboarding/steps/vault-choice-step";
 import { WelcomeStep } from "@/components/onboarding/steps/welcome-step";
 import { ThemeModeSwitch } from "@/components/onboarding/theme-mode-switch";
 import { Button } from "@/components/ui/button";
+import {
+	Dialog,
+	DialogContent,
+	DialogDescription,
+	DialogFooter,
+	DialogHeader,
+	DialogTitle,
+} from "@/components/ui/dialog";
 import { useSettings, useVaultStore } from "@/hooks/use-app-stores";
 import { isMobileApp, isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
 import { listenOnboardingRequest } from "@/lib/onboarding/api";
 import { patchSettings } from "@/lib/settings/react-store";
-import { createNewVault, migrateZoteroFromWelcome } from "@/lib/vault/actions";
+import { setZoteroOpen } from "@/lib/shell/ui-store";
+import { createNewVault } from "@/lib/vault/actions";
 import { vaultStore } from "@/lib/vault/store";
 import type { OnboardingStepId } from "./flow";
 import { onboardingFlow } from "./flow";
@@ -59,6 +69,7 @@ export function OnboardingRoot() {
 	const recentVaults = useVaultStore((s) => s.recentVaults);
 	const open = useStore(onboardingStore, (s) => s.open);
 	const forceOpen = useStore(onboardingStore, (s) => s.forceOpen);
+	const [zoteroOfferOpen, setZoteroOfferOpen] = useState(false);
 
 	// Settings → main event: force the wizard open on demand.
 	useEffect(() => {
@@ -100,12 +111,31 @@ export function OnboardingRoot() {
 		if (vaultPath) closeOnboarding();
 	}, [vaultPath]);
 
-	if (!open) return null;
+	if (!open && !zoteroOfferOpen) return null;
 
-	return <OnboardingDialog />;
+	return (
+		<>
+			{open ? (
+				<OnboardingDialog onVaultCreated={() => setZoteroOfferOpen(true)} />
+			) : null}
+			<ZoteroImportOfferDialog
+				open={zoteroOfferOpen}
+				onOpenChange={setZoteroOfferOpen}
+				onImport={() => {
+					setZoteroOfferOpen(false);
+					closeOnboarding();
+					setZoteroOpen(true);
+				}}
+				onLater={() => {
+					setZoteroOfferOpen(false);
+					patchSettings({ onboardingDone: true });
+				}}
+			/>
+		</>
+	);
 }
 
-function OnboardingDialog() {
+function OnboardingDialog({ onVaultCreated }: { onVaultCreated: () => void }) {
 	const { t } = useTranslation("onboarding");
 	const stepper = useOnboardingStepper();
 	const settings = useSettings((s) => s);
@@ -154,16 +184,8 @@ function OnboardingDialog() {
 	const onCreateVault = () => {
 		void (async () => {
 			await createNewVault();
-			// Only finish once the vault is actually active; cancelling the
-			// picker leaves the wizard open.
-			if (vaultStore.getState().vaultPath) finish();
-		})();
-	};
-
-	const onImportZotero = () => {
-		void (async () => {
-			await migrateZoteroFromWelcome();
-			if (vaultStore.getState().vaultPath) finish();
+			// The vault must exist before the user can choose a Zotero source.
+			if (vaultStore.getState().vaultPath) onVaultCreated();
 		})();
 	};
 
@@ -173,6 +195,8 @@ function OnboardingDialog() {
 				return <WelcomeStep />;
 			case "theme":
 				return <ThemeStep settings={settings} patch={patch} />;
+			case "proxy":
+				return <ProxyStep settings={settings} patch={patch} />;
 			case "agent":
 				return <AgentStep ref={agentStepRef} />;
 			case "translate":
@@ -194,12 +218,7 @@ function OnboardingDialog() {
 					/>
 				);
 			case "vault":
-				return (
-					<VaultChoiceStep
-						onCreate={onCreateVault}
-						onImportZotero={onImportZotero}
-					/>
-				);
+				return <VaultChoiceStep onCreate={onCreateVault} />;
 		}
 	};
 
@@ -207,12 +226,14 @@ function OnboardingDialog() {
 		switch (stepper.current.id) {
 			case "theme":
 				return { title: t("theme.title"), desc: t("theme.desc") };
+			case "proxy":
+				return { title: t("proxy.title"), desc: t("proxy.desc") };
 			case "agent":
 				return { title: t("agent.title"), desc: t("agent.desc") };
 			case "translate":
 				return { title: t("translate.title"), desc: t("translate.desc") };
 			case "layout":
-				return { title: t("layout.title"), desc: t("layout.desc") };
+				return { title: t("layout.title"), desc: undefined };
 			case "vault":
 				return { title: t("vault.title"), desc: t("vault.desc") };
 			default:
@@ -311,5 +332,37 @@ function OnboardingDialog() {
 				</div>
 			</div>
 		</div>
+	);
+}
+
+function ZoteroImportOfferDialog({
+	open,
+	onOpenChange,
+	onImport,
+	onLater,
+}: {
+	open: boolean;
+	onOpenChange: (open: boolean) => void;
+	onImport: () => void;
+	onLater: () => void;
+}) {
+	const { t } = useTranslation("onboarding");
+	return (
+		<Dialog open={open} onOpenChange={onOpenChange}>
+			<DialogContent>
+				<DialogHeader>
+					<DialogTitle>{t("vault.zoteroOfferTitle")}</DialogTitle>
+					<DialogDescription>{t("vault.zoteroOfferDesc")}</DialogDescription>
+				</DialogHeader>
+				<DialogFooter>
+					<Button type="button" variant="ghost" onClick={onLater}>
+						{t("vault.zoteroNo")}
+					</Button>
+					<Button type="button" onClick={onImport}>
+						{t("vault.zotero")}
+					</Button>
+				</DialogFooter>
+			</DialogContent>
+		</Dialog>
 	);
 }

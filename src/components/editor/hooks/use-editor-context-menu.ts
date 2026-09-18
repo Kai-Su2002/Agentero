@@ -1,6 +1,5 @@
 "use client";
 
-import { MarkdownPlugin } from "@platejs/markdown";
 import { BlockSelectionPlugin } from "@platejs/selection/react";
 import { RangeApi, type RangeRef } from "platejs";
 import type { PlateEditor } from "platejs/react";
@@ -16,23 +15,15 @@ import {
 	copyTextToClipboard,
 	readTextFromClipboard,
 } from "@/lib/core/clipboard";
-import { errorMessage, notifyError, notifyWarning } from "@/lib/core/notify";
 import {
 	hasSelectedBlocks,
 	isEditorClipboardTarget,
 	serializeSelectedBlocksAsMarkdown,
 } from "@/lib/markdown/block-selection";
-import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
 import {
 	type EditorLinkTemplateKind,
 	insertEditorLinkTemplate,
 } from "@/lib/markdown/editor-context-menu";
-import {
-	captureMarkdownSelectionBookmark,
-	prepareMarkdownFormat,
-	replaceMarkdownEditorValue,
-} from "@/lib/markdown/editor-format";
-import { formatMarkdownSource } from "@/lib/markdown/format";
 import type { WikiRenameHeadingRequest } from "@/lib/wiki";
 import {
 	canRenameWikiHeading,
@@ -45,8 +36,6 @@ type UseEditorContextMenuOptions = {
 	editor: PlateEditor;
 	editorContainerRef: RefObject<HTMLDivElement | null>;
 	readOnly?: boolean;
-	/** Current document as Markdown; used for the stale guard when formatting. */
-	serialize: () => string;
 	savedRef: RefObject<string>;
 	dirtyRef: RefObject<boolean>;
 	filePathRef: RefObject<string | null>;
@@ -67,8 +56,6 @@ export type EditorContextMenu = {
 	cut: () => Promise<void>;
 	paste: () => Promise<void>;
 	insertLink: (kind: EditorLinkTemplateKind) => void;
-	formatMarkdown: () => Promise<void>;
-	formatting: boolean;
 	/** Non-null only when the caret sits on a heading that may be renamed. */
 	headingContext: WikiHeadingAnchor | null;
 	renameOpen: boolean;
@@ -88,7 +75,6 @@ export function useEditorContextMenu({
 	editor,
 	editorContainerRef,
 	readOnly,
-	serialize,
 	savedRef,
 	dirtyRef,
 	filePathRef,
@@ -102,7 +88,6 @@ export function useEditorContextMenu({
 		useState<WikiHeadingAnchor | null>(null);
 	const [renameOpen, setRenameOpen] = useState(false);
 	const [renameBusy, setRenameBusy] = useState(false);
-	const [formatting, setFormatting] = useState(false);
 
 	useEffect(
 		() => () => {
@@ -209,14 +194,6 @@ export function useEditorContextMenu({
 		return pinned?.unref() ?? editor.selection;
 	}, [editor]);
 
-	const focusEditorAt = useCallback(
-		(selection: NonNullable<typeof editor.selection>) => {
-			if (!editorContainerRef.current?.isConnected) return;
-			editor.tf.focus({ at: selection });
-		},
-		[editor, editorContainerRef],
-	);
-
 	const copy = useCallback(async () => {
 		if (hasSelectedBlocks(editor)) {
 			const markdown = serializeSelectedBlocksAsMarkdown(editor);
@@ -300,64 +277,6 @@ export function useEditorContextMenu({
 		],
 	);
 
-	const formatMarkdown = useCallback(async () => {
-		if (readOnly || formatting) return;
-		const selection = takeSelection();
-		const bookmark = captureMarkdownSelectionBookmark(
-			editor.children,
-			selection ?? editor.selection,
-		);
-		const snapshot = serialize();
-		setFormatting(true);
-		try {
-			const prepared = await prepareMarkdownFormat({
-				currentSource: serialize,
-				deserialize: (body) =>
-					editor
-						.getApi(MarkdownPlugin)
-						.markdown.deserialize(prepareMarkdownForDeserialize(body)),
-				formatSource: formatMarkdownSource,
-				snapshot,
-			});
-			if (prepared.status === "stale") {
-				notifyWarning(i18n.t("editor:contextMenu.formatStale"));
-				return;
-			}
-			if (prepared.status === "unchanged") {
-				if (selection) focusEditorAt(selection);
-				else editor.tf.focus();
-				return;
-			}
-			const nextSelection = replaceMarkdownEditorValue(
-				editor,
-				prepared.value,
-				bookmark,
-			);
-			window.requestAnimationFrame(() => {
-				if (!editorContainerRef.current?.isConnected) return;
-				if (nextSelection) editor.tf.focus({ at: nextSelection });
-				else editor.tf.focus({ edge: "end" });
-			});
-		} catch (error) {
-			notifyError(i18n.t("editor:contextMenu.formatFailed"), {
-				description: errorMessage(error),
-			});
-			if (selection && editorContainerRef.current?.isConnected) {
-				focusEditorAt(selection);
-			}
-		} finally {
-			setFormatting(false);
-		}
-	}, [
-		editor,
-		editorContainerRef,
-		focusEditorAt,
-		formatting,
-		readOnly,
-		serialize,
-		takeSelection,
-	]);
-
 	const confirmRename = useCallback(
 		async (newText: string) => {
 			const path = filePathRef.current;
@@ -406,8 +325,6 @@ export function useEditorContextMenu({
 		cut,
 		paste,
 		insertLink,
-		formatMarkdown,
-		formatting,
 		headingContext,
 		renameOpen,
 		setRenameOpen,

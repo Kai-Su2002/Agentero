@@ -2,7 +2,7 @@
 
 use crate::error::CliError;
 use crate::output::to_value;
-use crate::resolve::{paper_dir, resolve_paper, resolve_vault, GlobalOpts};
+use crate::resolve::{looks_like_vault, paper_dir, resolve_paper, resolve_vault, GlobalOpts};
 use crate::style::{format_table, truncate_chars};
 use agentero_core::features::catalog;
 use agentero_core::features::catalog::papers::{self, PaperRecord, PaperTag};
@@ -12,6 +12,7 @@ use clap::{Subcommand, ValueHint};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Subcommand)]
 pub enum PaperCmd {
@@ -91,11 +92,16 @@ pub enum PaperCmd {
         force: bool,
     },
     /// Move a paper or papers organization directory under another papers/ directory.
+    ///
+    /// Paths are normally vault-relative (e.g. `papers/topic/foo`). If a path
+    /// starts with or resolves to a Vault root, that Vault is used explicitly,
+    /// enabling cross-vault migration (e.g.
+    /// `/path/to/src-vault/papers/topic/foo /path/to/dst-vault/papers/`).
     Move {
-        /// Vault-relative source path under papers/.
+        /// Source path: vault-relative or vault-prefixed.
         #[arg(value_hint = ValueHint::DirPath)]
         from: String,
-        /// Vault-relative destination parent under papers/.
+        /// Destination parent: vault-relative or vault-prefixed.
         #[arg(value_hint = ValueHint::DirPath)]
         dest_parent: String,
     },
@@ -684,14 +690,91 @@ fn set_tags(
     Ok(v)
 }
 
-fn move_paper(globals: &GlobalOpts, from: &str, dest_parent: &str) -> Result<Value, CliError> {
+#[derive(Debug)]
+struct MoveTarget {
+    vault: PathBuf,
+    rel: String,
+}
+
+fn resolve_move_target(arg: &str, globals: &GlobalOpts) -> Result<MoveTarget, CliError> {
+    let normalized = arg.replace('\\', "/");
+
+    // Vault-relative paper path: use current vault.
+    if normalized.starts_with("papers/") || normalized == "papers" {
+        let vault = resolve_vault(globals)?;
+        return Ok(MoveTarget {
+            vault,
+            rel: normalized,
+        });
+    }
+
+    // Otherwise try to find a Vault root in the path.
+    let path = Path::new(arg);
+    let abs = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let abs = abs.canonicalize().unwrap_or(abs);
+
+    let mut cur = abs.clone();
+    loop {
+        if looks_like_vault(&cur) {
+            let rel = abs
+                .strip_prefix(&cur)
+                .map_err(|_| CliError::message("path not under vault"))?
+                .to_string_lossy()
+                .to_string()
+                .replace('\\', "/")
+                .trim_start_matches('/')
+                .to_string();
+            if rel.is_empty() {
+                return Err(CliError::usage("cannot move vault root"));
+            }
+            return Ok(MoveTarget { vault: cur, rel });
+        }
+        if !cur.pop() {
+            break;
+        }
+    }
+
+    // Fallback: treat as relative to current vault.
     let vault = resolve_vault(globals)?;
-    let new_rel = catalog::move_paper_under(&vault, from, dest_parent)?;
-    Ok(json!({
-        "from": from,
-        "newRel": new_rel,
-        "lines": [format!("moved {} → {}", globals.style.path(from), globals.style.path(&new_rel))],
-    }))
+    Ok(MoveTarget {
+        vault,
+        rel: normalized,
+    })
+}
+
+fn move_paper(globals: &GlobalOpts, from: &str, dest_parent: &str) -> Result<Value, CliError> {
+    let from = resolve_move_target(from, globals)?;
+    let to = resolve_move_target(dest_parent, globals)?;
+
+    if from.vault == to.vault {
+        let new_rel = catalog::move_paper_under(&from.vault, &from.rel, &to.rel)?;
+        Ok(json!({
+            "from": from.rel,
+            "newRel": new_rel,
+            "vault": from.vault.to_string_lossy().to_string(),
+            "lines": [format!("moved {} → {}", globals.style.path(&from.rel), globals.style.path(&new_rel))],
+        }))
+    } else {
+        let new_rel =
+            catalog::migrate_paper_between_vaults(&from.vault, &from.rel, &to.vault, &to.rel)?;
+        Ok(json!({
+            "from": from.rel,
+            "fromVault": from.vault.to_string_lossy().to_string(),
+            "newRel": new_rel,
+            "toVault": to.vault.to_string_lossy().to_string(),
+            "lines": [format!(
+                "migrated {} → {} ({} → {})",
+                globals.style.path(&from.rel),
+                globals.style.path(&new_rel),
+                globals.style.path(&from.vault.to_string_lossy()),
+                globals.style.path(&to.vault.to_string_lossy())
+            )],
+        }))
+    }
 }
 
 const TAG_COLORS: &[&str] = &[

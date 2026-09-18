@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { layoutCommentCards } from "@/components/viewer/pdf/layers/comment-cards-layer";
+import {
+	COMMENT_CARD_GAP_PX,
+	commentConnectorPath,
+	layoutCommentCards,
+} from "@/components/viewer/pdf/layers/comment-cards-layer";
 import type { PageAnnotationComment } from "@/components/viewer/pdf/types";
 
 function comment(
@@ -13,6 +17,7 @@ function comment(
 		id,
 		pageIndex: 0,
 		anchorY,
+		rects: [{ x: 0.1, y: anchorY, w: 0.4, h: 0.02 }],
 		quote: kind === "visual" ? "" : "quoted text",
 		comment: text,
 		color: "yellow",
@@ -142,5 +147,67 @@ describe("layoutCommentCards", () => {
 		expect(withMessages[0]?.heightPx).toBeGreaterThan(
 			withoutMessages[0]?.heightPx ?? 0,
 		);
+	});
+});
+
+describe("commentConnectorPath", () => {
+	const pageW = 600;
+	const pageH = 800;
+
+	it("returns null for empty rects", () => {
+		expect(
+			commentConnectorPath(
+				[],
+				{ id: "a", topPx: 100, heightPx: 40 },
+				pageW,
+				pageH,
+			),
+		).toBeNull();
+	});
+
+	it("folds at the page edge toward the card left midpoint", () => {
+		const rects = [{ x: 0.2, y: 0.1, w: 0.3, h: 0.04 }];
+		// Card below the segment → attach at the segment bottom (clamped).
+		const placement = { id: "a", topPx: 200, heightPx: 40 };
+		const d = commentConnectorPath(rects, placement, pageW, pageH);
+		expect(d).toBe(
+			`M 300 112 L 600 112 L 600 220 L ${pageW + COMMENT_CARD_GAP_PX} 220`,
+		);
+	});
+
+	it("anchors to the segment nearest the card, not the envelope mid", () => {
+		const rects = [
+			{ x: 0.1, y: 0.2, w: 0.2, h: 0.02 },
+			{ x: 0.15, y: 0.24, w: 0.4, h: 0.02 },
+		];
+		// Card sits above both lines → nearest is the first segment (y=0.2).
+		const placement = { id: "a", topPx: 100, heightPx: 50 };
+		const d = commentConnectorPath(rects, placement, pageW, pageH);
+		// attach at top of first rect (clamped): y=0.2 → 160; right=0.3 → 180
+		expect(d).toBe(
+			`M 180 160 L 600 160 L 600 125 L ${pageW + COMMENT_CARD_GAP_PX} 125`,
+		);
+	});
+
+	it("picks the lower segment when the card is nudged downward", () => {
+		const rects = [
+			{ x: 0.1, y: 0.2, w: 0.5, h: 0.02 },
+			{ x: 0.1, y: 0.35, w: 0.4, h: 0.02 },
+		];
+		// Card mid at 300px → yNorm 0.375, closest to second segment.
+		const placement = { id: "a", topPx: 280, heightPx: 40 };
+		const d = commentConnectorPath(rects, placement, pageW, pageH);
+		expect(d).toBe(
+			`M 300 296 L 600 296 L 600 300 L ${pageW + COMMENT_CARD_GAP_PX} 300`,
+		);
+	});
+
+	it("follows the laid-out card when avoidance nudges it", () => {
+		const item = comment("a", 0.25);
+		const laid = layoutCommentCards([item], pageH);
+		const d = commentConnectorPath(item.rects, laid[0], pageW, pageH);
+		expect(d).not.toBeNull();
+		const y2 = Math.round((laid[0].topPx + laid[0].heightPx / 2) * 100) / 100;
+		expect(d).toContain(`L ${pageW + COMMENT_CARD_GAP_PX} ${y2}`);
 	});
 });

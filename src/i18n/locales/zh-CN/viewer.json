@@ -9,14 +9,10 @@
 		"empty": "暂无论文。",
 		"loading": "正在加载 PDF…",
 		"loadError": "加载 PDF 失败",
-		"zoomIn": "放大",
-		"zoomOut": "缩小",
 		"zoomPercentage": "缩放百分比",
-		"zoomFit": "适应宽度",
 		"prevPage": "上一页",
 		"nextPage": "下一页",
 		"goToPage": "跳转到页",
-		"zoomFitPage": "适应整页",
 		"outline": "目录",
 		"linkAria": "PDF 链接",
 		"paperTone": "页面背景",
@@ -27,6 +23,7 @@
 			"dark": "暗色"
 		},
 		"remoteMode": "远程模式",
+		"jumpBack": "返回跳转前",
 		"importToLibrary": "导入本地库",
 		"findPlaceholder": "在文档中查找",
 		"findPrev": "上一个",
@@ -65,7 +62,12 @@
 			"pageRunning": "正在翻译本页…",
 			"needLayout": "请先运行版面分析（Figures 面板）。",
 			"noText": "没有可提取文字的版面区域可翻译。",
-			"failed": "全文翻译失败"
+			"failed": "全文翻译失败",
+			"waiting": "等待版面解析后翻译…",
+			"cancelQueue": "取消排队",
+			"queuedToast": "全文翻译已排队，等待版面解析完成",
+			"startedAfterLayout": "版面解析完成，已开始全文翻译",
+			"parseFailedWhileWaiting": "版面解析失败，翻译已取消"
 		},
 		"translation": {
 			"title": "翻译",
@@ -187,6 +189,7 @@
 		"analyze": "检测插图、表格与公式",
 		"reanalyze": "重新运行版面分析",
 		"analyzing": "正在分析版面…",
+		"queued": "版面分析排队中…",
 		"progressPages": "{{page}} / {{total}} 页",
 		"progressPct": "{{pct}}%",
 		"clickAnnotateAria": "批注此{{kind}}",
@@ -223,6 +226,7 @@
 	},
 	"selection": {
 		"menuLabel": "选区操作",
+		"colorGroupLabel": "高亮颜色",
 		"color": {
 			"yellow": "黄色",
 			"green": "绿色",
@@ -234,6 +238,7 @@
 		"copied": "已复制",
 		"note": "批注",
 		"ask": "提问",
+		"quickChat": "快速对话",
 		"explainVisual": "解释公式或选区",
 		"addToChat": "加入对话",
 		"translate": "翻译",
@@ -250,10 +255,19 @@
 	},
 	"html": {
 		"empty": "暂无论文。",
-		"sandboxTitle": "HTML 论文沙箱"
+		"sandboxTitle": "HTML 论文沙箱",
+		"denied": "该网页的域名无法通过内置代理加载。"
 	},
 	"image": {
 		"empty": "暂无图片。",
 		"altFallback": "图片预览"
+	},
+	"excalidraw": {
+		"empty": "暂无可用绘图。"
+	},
+	"textEditor": {
+		"errorCount": "{{count}} 个错误",
+		"warningCount": "{{count}} 个警告",
+		"infoCount": "{{count}} 个提示"
 	}
 }

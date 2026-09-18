@@ -82,6 +82,9 @@ pub fn run() {
                 crate::features::paper::discovery::proxy::modelscope::handle(request, responder);
             },
         )
+        .register_asynchronous_uri_scheme_protocol("agentero-web", |_ctx, request, responder| {
+            crate::features::web::proxy::handle(request, responder);
+        })
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_store::Builder::new().build())
@@ -108,6 +111,9 @@ pub fn run() {
         .manage(settings_store)
         .manage(AgentRegistry::load())
         .manage(AgentRunController::new())
+        .manage(std::sync::Arc::new(
+            crate::features::agent::session::pool::AgentWarmPool::new(),
+        ))
         .manage(crate::features::agent::AgentWarmGate::new())
         .manage(crate::features::agent::PermissionGate::new())
         .manage(crate::features::agent::ElicitationGate::new())
@@ -181,6 +187,7 @@ pub fn run() {
             crate::features::paper::analyze::refs::register_job_runners(&center);
             crate::features::paper::import::job_runners::register_job_runners(&center);
             crate::features::paper::analyze::layout::model_assets::register_job_runners(&center);
+            crate::features::compile::register_job_runners(&center);
             let handle = app.handle().clone();
             center.set_layout_backend_source(move || {
                 handle.state::<AppSettingsStore>().layout_backend()

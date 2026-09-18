@@ -4,15 +4,18 @@
 //! originating window via its label.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use notify_debouncer_full::new_debouncer;
 use notify_debouncer_full::notify::event::{ModifyKind, RenameMode};
-use notify_debouncer_full::notify::{EventKind, RecursiveMode, Watcher};
+use notify_debouncer_full::notify::{
+    Config as NotifyConfig, Event, EventKind, RecommendedWatcher, RecursiveMode, Watcher,
+};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
+
+/// Trailing quiet window before a batch of FS events is emitted to the UI.
+const DEBOUNCE: Duration = Duration::from_millis(300);
 
 /// Payload for the `vault:file-changed` event (consumed by the renderer).
 #[derive(specta::Type, Clone, Serialize)]
@@ -37,7 +40,8 @@ pub struct FileRename {
 }
 
 struct WatchHandle {
-    stop: Arc<AtomicBool>,
+    /// Dropping the watcher disconnects its event channel and wakes a blocked `recv`.
+    watcher: Arc<Mutex<Option<RecommendedWatcher>>>,
 }
 
 /// Per-window filesystem watchers. Mirrors the `Mutex<HashMap<..>>` pattern used
@@ -69,54 +73,91 @@ impl FsWatchController {
     ) -> Result<(), String> {
         self.stop(&window_label);
 
-        let stop = Arc::new(AtomicBool::new(false));
-        let stop_thread = stop.clone();
         let watch_root = vault_path.clone();
         let label = window_label.clone();
+        let watcher_slot: Arc<Mutex<Option<RecommendedWatcher>>> = Arc::new(Mutex::new(None));
+        let watcher_slot_thread = watcher_slot.clone();
 
         std::thread::Builder::new()
             .name(format!("vault-watch:{window_label}"))
             .spawn(move || {
                 let (tx, rx) = std::sync::mpsc::channel();
-                let mut debouncer = match new_debouncer(Duration::from_millis(300), None, tx) {
-                    Ok(d) => d,
+                let mut watcher = match RecommendedWatcher::new(
+                    move |res| {
+                        let _ = tx.send(res);
+                    },
+                    NotifyConfig::default(),
+                ) {
+                    Ok(w) => w,
                     Err(e) => {
                         log::error!(target: "agentero::watcher", "vault watcher init failed: {e}");
                         return;
                     }
                 };
-                if let Err(e) = debouncer
-                    .watcher()
-                    .watch(std::path::Path::new(&watch_root), RecursiveMode::Recursive)
+                if let Err(e) =
+                    watcher.watch(std::path::Path::new(&watch_root), RecursiveMode::Recursive)
                 {
                     log::error!(target: "agentero::watcher", "vault watcher watch failed: {e}");
                     return;
                 }
-                debouncer
-                    .cache()
-                    .add_root(std::path::Path::new(&watch_root), RecursiveMode::Recursive);
-                // Keep the debouncer alive for the lifetime of this loop.
+                if let Ok(mut slot) = watcher_slot_thread.lock() {
+                    *slot = Some(watcher);
+                } else {
+                    return;
+                }
+
+                // Idle: block on `recv` (no periodic wakeups).
+                // Active burst: trailing debounce via `recv_timeout` only while
+                // events are pending — timeouts never run when the queue is empty.
+                let mut pending: Vec<Event> = Vec::new();
+                let mut deadline: Option<Instant> = None;
                 loop {
-                    if stop_thread.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    match rx.recv_timeout(Duration::from_millis(500)) {
-                        Ok(Ok(events)) => {
-                            for payload in payloads_from_events(events) {
-                                invalidate_caps_for_paths(&app, &watch_root, &payload.paths);
-                                let _ = app.emit_to(
-                                    EventTarget::webview_window(label.clone()),
-                                    "vault:file-changed",
-                                    payload,
-                                );
+                    let recv = match deadline {
+                        None => match rx.recv() {
+                            Ok(msg) => Ok(Some(msg)),
+                            Err(_) => Err(()),
+                        },
+                        Some(until) => {
+                            let wait = until.saturating_duration_since(Instant::now());
+                            if wait.is_zero() {
+                                Ok(None)
+                            } else {
+                                match rx.recv_timeout(wait) {
+                                    Ok(msg) => Ok(Some(msg)),
+                                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Ok(None),
+                                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(()),
+                                }
                             }
                         }
-                        Ok(Err(_errs)) => {}
-                        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => continue,
-                        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => break,
+                    };
+
+                    match recv {
+                        Err(()) => break,
+                        Ok(None) => {
+                            if !pending.is_empty() {
+                                let batch = std::mem::take(&mut pending);
+                                for payload in payloads_from_events(batch) {
+                                    invalidate_caps_for_paths(&app, &watch_root, &payload.paths);
+                                    let _ = app.emit_to(
+                                        EventTarget::webview_window(label.clone()),
+                                        "vault:file-changed",
+                                        payload,
+                                    );
+                                }
+                            }
+                            deadline = None;
+                        }
+                        Ok(Some(Ok(event))) => {
+                            pending.push(event);
+                            deadline = Some(Instant::now() + DEBOUNCE);
+                        }
+                        Ok(Some(Err(_err))) => {}
                     }
                 }
-                drop(debouncer);
+
+                if let Ok(mut slot) = watcher_slot_thread.lock() {
+                    *slot = None;
+                }
             })
             .map_err(|e| e.to_string())?;
 
@@ -124,7 +165,12 @@ impl FsWatchController {
             .inner
             .lock()
             .map_err(|_| "fs watch controller lock poisoned".to_string())?;
-        guard.insert(window_label, WatchHandle { stop });
+        guard.insert(
+            window_label,
+            WatchHandle {
+                watcher: watcher_slot,
+            },
+        );
         Ok(())
     }
 
@@ -132,7 +178,10 @@ impl FsWatchController {
     pub fn stop(&self, window_label: &str) {
         if let Ok(mut guard) = self.inner.lock() {
             if let Some(handle) = guard.remove(window_label) {
-                handle.stop.store(true, Ordering::Relaxed);
+                if let Ok(mut slot) = handle.watcher.lock() {
+                    // Dropping RecommendedWatcher closes its channel and wakes `recv`.
+                    *slot = None;
+                }
             }
         }
     }
@@ -235,10 +284,8 @@ fn verified_rename_pair(kind: &EventKind, paths: &[String]) -> Option<FileRename
     })
 }
 
-/// Convert a debounced batch into one payload per event kind, dropping ignored paths.
-fn payloads_from_events(
-    events: Vec<notify_debouncer_full::DebouncedEvent>,
-) -> Vec<FileChangedPayload> {
+/// Convert a raw notify batch into one payload per event kind, dropping ignored paths.
+fn payloads_from_events(events: Vec<Event>) -> Vec<FileChangedPayload> {
     let mut out: Vec<FileChangedPayload> = Vec::new();
     for event in events {
         let raw_paths: Vec<String> = event

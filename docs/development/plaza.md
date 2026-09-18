@@ -52,7 +52,7 @@ Agentero 已是 **local-first 论文工作台**（Library + 文件树 + PDF\|NOT
 
 1. **Cool Papers**（[papers.cool](https://papers.cool/)）— P0：内嵌站点浏览。  
 2. **ModelScope 论文**（[modelscope.cn/papers](https://modelscope.cn/papers)）— 内嵌站点浏览；魔搭每日读论文带中文摘要与评分。  
-3. **Skill 推荐** — 原生面板：按论文阅读 / 写作 / 绘图 / 复现 / 投稿精选 GitHub Skill 仓库；点卡片走魔棒 Skill 导入。  
+3. **Skill 推荐** — 原生面板：按论文阅读 / 写作 / 绘图 / PPT 制作 / 复现 / 投稿精选 GitHub Skill 仓库；点卡片走魔棒 Skill 导入。  
 4. **订阅** — 用户自己的 RSS / Atom / JSON Feed；论文条目入库。见 [`plaza-feeds.md`](plaza-feeds.md)。  
 5. **播客** — 占位，后续。  
 6. **论文推荐** — P0 v0：基于本地库的轻量推荐列表（无云端上传）。
@@ -185,7 +185,7 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 
 ### 3.2.2 Skill 推荐（已实现）
 
-原生面板（不 iframe）。五类：论文阅读 / 论文写作 / 绘图 / 复现 / 投稿。目录写在 `skill-catalog.ts`（静态 star 快照）。点卡片 → `importPlazaSkillRepo` → 魔棒 `lookupSubmit` → 现有 Skill 多选安装框。角上外链单独打开 GitHub。不含 Zotero / 文献库类仓库。
+原生面板（不 iframe）。六类：论文阅读 / 论文写作 / 绘图 / PPT 制作 / 复现 / 投稿。目录写在 `skill-catalog.ts`（静态 star 快照）。点卡片 → `importPlazaSkillRepo` → 魔棒 `lookupSubmit` → 现有 Skill 多选安装框。角上外链单独打开 GitHub。不含 Zotero / 文献库类仓库。
 
 ### 3.3 播客（占位）
 
@@ -251,12 +251,14 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 
 **隐藏站点 header**（`header.antd5-layout-header`）。面板是论文流，不是浏览器：全局导航只提供「走出去」的入口，还带登录按钮。隐去之后页面自带的搜索框、`本周热门 / 最新推荐 / 全部论文` 排序 tab 与卡片栅格都还在，面板反而更干净。
 
+**桌面宽度 + 横滑**：论文页把布局钉在 1280px（`.ms-page-*` 的 `min-width`、页面适配器的固定宽），所以面板按「窄桌面窗口」浏览站点：iframe 保持站点自己的 1280 布局，**frame 自己的文档就是横向滚动口**——若把页面压到面板宽，就没有任何可滚动余量了。frame 的滚轮/触控板增量不会可靠地传到外层，桥接因此自己处理 `wheel`：首帧记下位置，若这一帧文档自己没横向移动（引擎不认横滚），就把累计的 `deltaX`（以及 Shift+滚轮）补到 `scrollLeft` 上；**不取消事件**，所以斜向手势的纵向滚动照常，页内自己的横向滚动器也优先。站点加载时会对页面上的操作项调 `scrollIntoView({ block: "center", inline: "center" })`，在窄 frame 里这会把整个文档拽到右侧、左边缘被推出视口（#550）；桥接包一层 `scrollIntoView`，把被它移动过的祖先的 `scrollLeft` 复原（只挡横向、纵向照常）。站点自己的 `.ms-page-container` 也是可脚本滚动的容器，会被浏览器停在右移 10px 处、吃掉卡片左边距，桥接禁掉它的平滑滚动并把它钉回 0。
+
 **入库**：`/papers/<arxivId>` 本身就是全部所需身份，所以列表卡片和详情页注入的「入库」都只发 `{ id, branch: "arxiv", url: "https://arxiv.org/abs/<id>" }`，直接落到 §3.2.1 的 arXiv 路线（能多拿 `arxiv_id` 与 LaTeX 源码）。**没有新增任何 Rust 入库命令，前端 `import.ts` 零改动。**
 
 两处都是带 Agentero 标的按钮，一眼能认出是我们的动作而不是站点自己的：
 
-- **列表**：绝对定位在卡片右下角，与统计行同高；自带边框/圆角/中性灰底，浅色深色主题都成立。
-- **列表**：只装饰真正排布出盒子的卡片（`offsetWidth`/`offsetHeight` 阈值）。零宽的 `/papers/` 锚点会让绝对定位的按钮甩到容器边缘，露在卡片外面。
+- **列表**：按钮与标题同处一层 flex 行（`.agentero-import-titlerow`）。标题自带宽度钳制与省略号，按钮不能塞进标题里，所以把两者并排，并把按钮高度设成标题的 `line-height`，让它居中在文字上。自带边框/圆角/中性灰底，浅色深色主题都成立。
+- **列表**：只装饰标题能解析出文本叶子的卡片（`titleOf` 取卡内第一个纯文本子 `div`），并跳过指向当前页的锚点（详情页 tab 条）。这两条一起让装饰不会落到站点自己的导航锚点上。
 - **详情页**：插在站点那排 `arXiv 原文 / PDF / Git` 的最左侧，并**在运行时借用 `arXiv 原文` 的 className**，所以尺寸与外观完全一致。定位靠那颗 arXiv favicon（`img[src*="arxiv.org"]`）——那排的类名是哈希的、文案是本地化的，图标 src 两者都不是。
 - **图标**：品牌标缩到只剩那副铜色眼镜。完整的插画式 logo 在 14px（站点图标尺寸）下糊成一团。
 - **必须在链接拦截器之前注册点击处理并整体吞掉事件**——卡片按钮就长在卡片自己的 `<a>` 里面，否则入库的同时会被路由带走。

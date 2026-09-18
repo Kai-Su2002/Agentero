@@ -10,6 +10,7 @@ export {
 	handleActivePanelChange,
 	hydratePlaceholderTabs,
 	navigateWiki,
+	openCitation,
 	openGraphPath,
 	openPaper,
 	openPaperNotes,
@@ -17,6 +18,7 @@ export {
 	openPlazaSource,
 	openTab,
 	openTabNotes,
+	openTexPdf,
 	openVaultRel,
 	persistFile,
 	reopenClosedTab,
@@ -25,6 +27,7 @@ export {
 	selectTrash,
 	splitActivePane,
 	toggleNotesSplit,
+	tryOpenCitationHref,
 } from "@/lib/workspace/actions";
 export { dockHandle, registerDockHandle } from "@/lib/workspace/dock-registry";
 export {

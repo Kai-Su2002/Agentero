@@ -13,7 +13,6 @@ export type EditorContextMenuCapabilities = {
 	copy: boolean;
 	cut: boolean;
 	exportNote: boolean;
-	formatMarkdown: boolean;
 	insertLink: boolean;
 	paste: boolean;
 	renameHeading: boolean;
@@ -39,7 +38,6 @@ export function editorContextMenuCapabilities({
 		copy: canCopy,
 		cut: !readOnly && canCopy,
 		exportNote: exportAvailable,
-		formatMarkdown: !readOnly,
 		insertLink: !readOnly,
 		paste: !readOnly,
 		renameHeading: headingRenameAvailable,

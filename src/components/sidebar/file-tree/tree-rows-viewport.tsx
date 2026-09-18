@@ -17,6 +17,7 @@ import {
 import { PLAZA_VIRTUAL_PATH } from "@/lib/plaza";
 import type { FileNode } from "@/lib/vault";
 import type { PaperRowActions } from "./hooks/use-paper-row-actions";
+import type { TexCompileActions } from "./hooks/use-tex-compile";
 import { pathKey } from "./tree-helpers";
 import { TreeRenameInput } from "./tree-inputs";
 import {
@@ -35,6 +36,8 @@ type RowContext = {
 	paperMetaByRelPath?: ReadonlyMap<string, PaperMetadata>;
 	paperTreeLabelMode: PaperTreeLabelMode;
 	paperActions: PaperRowActions;
+	texCompile?: TexCompileActions;
+	vaultPath?: string | null;
 	renameDraft?: TreeRenameDraft | null;
 	onConfirmRename?: (path: string, newName: string) => void | Promise<void>;
 	onCancelRename?: () => void;
@@ -43,7 +46,6 @@ type RowContext = {
 export type TreeRowsViewportProps = RowContext & {
 	flatRows: FlatRow[];
 	rowVirtualizer: Virtualizer<HTMLDivElement, Element>;
-	libraryRow: ReactNode;
 	trashRow: ReactNode;
 	createRow: ReactNode;
 };
@@ -116,7 +118,6 @@ function RenameRow({
 }
 
 function renderRow(row: FlatRow, props: TreeRowsViewportProps): ReactNode {
-	if (row.kind === "library") return props.libraryRow;
 	if (row.kind === "trash") return props.trashRow;
 	if (row.kind === "plaza")
 		return <PlazaRow expanded={props.expanded.has(PLAZA_VIRTUAL_PATH)} />;
@@ -136,6 +137,8 @@ function renderRow(row: FlatRow, props: TreeRowsViewportProps): ReactNode {
 				props.loadingDirs.has(row.node.path)
 			}
 			expanded={props.expanded.has(row.node.path)}
+			texCompile={props.texCompile}
+			vaultPath={props.vaultPath}
 		/>
 	);
 }
@@ -151,7 +154,7 @@ export function TreeRowsViewport(props: TreeRowsViewportProps) {
 				const row = flatRows[vi.index];
 				if (!row) return null;
 				const depth =
-					row.kind === "library" || row.kind === "trash" || row.kind === "plaza"
+					row.kind === "trash" || row.kind === "plaza"
 						? 0
 						: row.kind === "plazaSource"
 							? 1

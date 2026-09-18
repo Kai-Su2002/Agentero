@@ -1,9 +1,9 @@
 use crate::features::agent::acp::client::{
-    acp_err, client_initialize_request, to_acp_agent, ACP_INITIALIZE_TIMEOUT,
+    acp_err, acp_terminals, agentero_acp_builder, client_initialize_request, to_acp_agent,
+    ACP_INITIALIZE_TIMEOUT,
 };
 use crate::features::agent::acp::interaction::permission_response;
-use crate::features::agent::acp::terminal::{AcpTerminalHandler, AcpTerminalManager};
-use crate::features::agent::doctor::{diagnose_codex_auth, CodexAuthStatus};
+use crate::features::agent::doctor::{diagnose_claude_auth, diagnose_codex_auth, CodexAuthStatus};
 use crate::features::agent::models::{
     AcpSessionCapabilities, AgentDescriptor, AgentTemplate, ProbeResult,
 };
@@ -35,12 +35,9 @@ pub async fn probe_agent(
     let captured: Arc<Mutex<Option<(String, String, AcpSessionCapabilities)>>> =
         Arc::new(Mutex::new(None));
     let captured_clone = captured.clone();
-    let terminals = Arc::new(tokio::sync::Mutex::new(AcpTerminalManager::new()));
+    let terminals = acp_terminals(None);
 
-    let connect = agent_client_protocol::Client
-        .builder()
-        .name("agentero")
-        .with_handler(AcpTerminalHandler::new(terminals))
+    let connect = agentero_acp_builder!(terminals)
         .on_receive_request(
             async move |request: RequestPermissionRequest, responder, _cx| {
                 let _ = responder.respond(permission_response(&request, false));
@@ -101,15 +98,31 @@ pub async fn probe_agent(
             let info = captured.lock().ok().and_then(|g| g.clone());
             match info {
                 Some((name, version, session_caps)) => {
-                    if remote.is_none() && desc.template == AgentTemplate::CodexAcp {
-                        let auth = diagnose_codex_auth(desc).await;
-                        if auth.status == CodexAuthStatus::Unauthenticated {
+                    // ACP adapters initialize fine without host-CLI auth, so OAuth-gated
+                    // templates get an explicit login-status probe of their own.
+                    if remote.is_none() {
+                        let unauthenticated = match desc.template {
+                            AgentTemplate::CodexAcp => {
+                                diagnose_codex_auth(desc).await.status
+                                    == CodexAuthStatus::Unauthenticated
+                            }
+                            AgentTemplate::ClaudeAcp => {
+                                diagnose_claude_auth(desc).await.status
+                                    == CodexAuthStatus::Unauthenticated
+                            }
+                            _ => false,
+                        };
+                        if unauthenticated {
+                            let host = match desc.template {
+                                AgentTemplate::ClaudeAcp => "Claude",
+                                _ => "Codex",
+                            };
                             return ProbeResult {
                                 agent_id,
                                 available: false,
                                 agent_name: Some(name),
                                 protocol_version: Some(version),
-                                error: Some("Codex is not logged in".to_string()),
+                                error: Some(format!("{host} is not logged in")),
                                 session_capabilities: Some(session_caps),
                             };
                         }

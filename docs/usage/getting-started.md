@@ -95,7 +95,7 @@ ResearchVault/
 2. Library 能显示论文或空状态。
 3. 能新建一个 Markdown 文件并保存。
 4. 若有 PDF，打开后可翻页和 `⌘F` 搜索。
-5. `⌘P` / `⌘K` 能打开快速打开面板。
+5. `⌘P` 能打开快速打开面板；划词后 `⌘K` 快速对话、`⌘L` 加入 Agent 对话。
 
 ## 数据位置和备份
 
@@ -110,6 +110,14 @@ ResearchVault/
 | `~/.local/share/agentero/usage.sqlite` | 本机使用记录（不在 Vault 内；设置 → 通用 → 隐私可关或清除） |
 
 建议定期备份整个 Vault。若使用 Git，优先提交 Markdown、JSON、TeX 和其它源文件；`catalog.sqlite` 也应随 Vault 一起备份，以保留 Library 元数据。
+
+## 自动更新失败
+
+设置中点击更新时若弹出 **「无法安装更新，请重试」**（英文 **Couldn't install the update. Try again**），通常是下载安装包时网络不通或代理不稳导致：
+
+1. **换一个代理节点**后重试；确认当前网络能访问 GitHub Releases。
+2. 检查 **Settings → General → Network proxy** 的代理配置是否正确。
+3. 若仍失败，可直接到 [发布页](https://github.com/poco-ai/agentero/releases) 手动下载最新安装包。
 
 ## 下一步
 

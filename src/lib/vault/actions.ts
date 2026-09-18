@@ -25,6 +25,7 @@ import {
 	purgeAllTrash,
 	trashPaths,
 } from "@/lib/paper/api";
+import { isZoteroDataDir } from "@/lib/paper/import/zotero-migrate";
 import {
 	bumpTrashReloadSignal,
 	refreshLibrary,
@@ -95,6 +96,7 @@ import {
 	setTabs,
 } from "@/lib/workspace/store";
 import { basenameOf } from "@/lib/workspace/tabs";
+import { isExcalidrawPath } from "@/lib/workspace/viewer";
 
 export async function activateVault(path: string): Promise<void> {
 	bumpTreeGeneration();
@@ -475,6 +477,10 @@ export async function movePathsTo(
 			}
 			const destinationParent = normalizeVaultRel(destParentRel) || "papers";
 			const expectedToRel = `${destinationParent}/${basenameOf(rel)}`;
+			// Already at the requested destination; nothing to do.
+			if (normalizeVaultRel(expectedToRel) === normalizeVaultRel(rel)) {
+				continue;
+			}
 			const pendingEventPaths = [path, joinVaultPath(vaultPath, expectedToRel)];
 			trackInternalRenamePaths(pendingEventPaths, Number.POSITIVE_INFINITY);
 			try {
@@ -688,6 +694,10 @@ async function movePathsToDestination(
 		const base = basenameOf(srcRel);
 		const toRel = destRel ? `${destRel}/${base}` : base;
 		const toAbs = joinVaultPath(vaultPath, toRel);
+		// Already at the resolved destination; nothing to do.
+		if (pathKey(toAbs) === srcKey) {
+			continue;
+		}
 		const pendingEventPaths = [normSrc, toAbs];
 		trackInternalRenamePaths(pendingEventPaths, Number.POSITIVE_INFINITY);
 
@@ -952,7 +962,16 @@ export async function confirmCreate(name: string): Promise<void> {
 			return;
 		}
 		if (kind === "file") {
-			await writeVaultFile(full, "");
+			const initialContent = isExcalidrawPath(trimmed)
+				? JSON.stringify({
+						type: "excalidraw",
+						version: 2,
+						source: "https://excalidraw.com",
+						elements: [],
+						appState: { collaborators: [] },
+					})
+				: "";
+			await writeVaultFile(full, initialContent);
 			await refreshTree(vaultPath);
 			openPath(full);
 		} else {
@@ -998,8 +1017,14 @@ export async function migrateZoteroFromWelcome(): Promise<void> {
 			return;
 		}
 		setVaultBusy(true);
-		const path = await pickCreateVaultDirectory();
+		const path = await pickCreateVaultDirectory(
+			i18n.t("app:vault.zoteroVaultDialogTitle"),
+		);
 		if (!path) return;
+		if (await isZoteroDataDir(path)) {
+			notifyError(i18n.t("sidebar:zoteroMigrate.vaultIsZotero"));
+			return;
+		}
 		const result = await createVault(path, i18n.language);
 		const root = result.path || path;
 		await activateVault(root);

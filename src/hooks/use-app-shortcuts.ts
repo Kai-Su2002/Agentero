@@ -33,13 +33,15 @@ export function useAppShortcuts(
 
 			// Editor-native combos — only claim them outside text fields:
 			// ⌘⌫ delete-to-line-start; ⌘← / ⇧⌘← jump/select to line start (macOS);
-			// ⌘X / ⌘V should keep native cut/paste while editing text.
+			// ⌘X / ⌘V should keep native cut/paste while editing text;
+			// ⌥A (layoutTranslate) types composed chars (å) inside text fields.
 			if (
 				id === "deleteTreeItem" ||
 				id === "collapseTreeCurrent" ||
 				id === "collapseTreeDefault" ||
 				id === "cutTreeItem" ||
-				id === "pasteTreeItem"
+				id === "pasteTreeItem" ||
+				id === "layoutTranslate"
 			) {
 				const el = event.target;
 				if (
@@ -55,7 +57,7 @@ export function useAppShortcuts(
 			event.preventDefault();
 			handlersRef.current[id]();
 		};
-		window.addEventListener("keydown", onKeyDown);
-		return () => window.removeEventListener("keydown", onKeyDown);
+		window.addEventListener("keydown", onKeyDown, true);
+		return () => window.removeEventListener("keydown", onKeyDown, true);
 	}, []);
 }

@@ -28,7 +28,7 @@ import { formatAuthorsShort } from "@/lib/paper";
 const COPY_CELL_BASE =
 	"cursor-pointer select-text rounded-sm hover:bg-muted/60 hover:text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
-/** Single-click-to-copy cell control shared by library columns. */
+/** Double-click-to-copy cell control shared by library columns. */
 function CopyCellButton({
 	copyText,
 	labelKey,
@@ -51,7 +51,7 @@ function CopyCellButton({
 			className={cn(COPY_CELL_BASE, className)}
 			title={canCopy ? copyHint : undefined}
 			aria-label={copyHint}
-			onClick={(e) => ctx.onCellCopy(e, copyText, label)}
+			onDoubleClick={() => ctx.onCellCopy(copyText, label)}
 		>
 			{children}
 		</button>

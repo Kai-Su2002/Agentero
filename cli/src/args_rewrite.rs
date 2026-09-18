@@ -14,15 +14,11 @@ const KNOWN_COMMANDS: &[&str] = &[
     "paper",
     "import",
     "export",
-    "trash",
-    "config",
-    "wiki",
     "doctor",
     "layout",
     "mark",
-    "usage",
+    "translate",
     "open",
-    "completion",
     "help",
 ];
 
@@ -183,9 +179,9 @@ mod tests {
     }
 
     #[test]
-    fn leaves_completion_subcommand() {
-        let out = rewrite_path_shorthand(os(&["agentero", "completion", "zsh"]));
-        assert_eq!(as_str(&out), vec!["agentero", "completion", "zsh"]);
+    fn leaves_translate_subcommand() {
+        let out = rewrite_path_shorthand(os(&["agentero", "translate", "hello"]));
+        assert_eq!(as_str(&out), vec!["agentero", "translate", "hello"]);
     }
 
     #[test]

@@ -69,7 +69,18 @@
 			"newFolder": "New folder",
 			"newFolderHint": "e.g. papers/archive",
 			"invalidFolderPath": "Must be under papers/"
-		}
+		},
+		"compileTex": "Compile",
+		"openTexPdf": "Open PDF",
+		"compileSuccess": "Compile succeeded",
+		"compileFailed": "Compile failed — check the log",
+		"selectEngineFirst": "Select a LaTeX engine first",
+		"latexEngine": "LaTeX engine",
+		"detectingEngines": "Detecting engines…",
+		"noLatexEngine": "No LaTeX engine found",
+		"cleanAux": "Clean intermediates",
+		"cleanAuxSuccess": "Intermediates cleaned — ready to recompile",
+		"cleanAuxFailed": "Failed to clean intermediates."
 	},
 	"importLocalPdf": {
 		"dropNoPath": "Could not read the dropped PDF. Try the magic wand → Import PDF, or drop from Finder again."
@@ -121,7 +132,7 @@
 		"colCitations": "Citations",
 		"heatmapTooltip": "{{total}} events · {{highlights}} highlights · {{asks}} asks · {{translates}} translations",
 		"sortBy": "Sort by {{column}}",
-		"copyHint": "Click to copy {{label}}",
+		"copyHint": "Double-click to copy {{label}}",
 		"copied": "Copied {{label}}",
 		"copyFailed": "Could not copy to clipboard",
 		"count": "{{formatted}} papers",
@@ -146,6 +157,7 @@
 		"importPdfMerged": "Merged PDF into existing entry: “{{title}}”",
 		"importPdfMergedMany": "Merged {{count}} PDFs into existing entries",
 		"recognizeMerged": "Matched PDF merged into existing entry: {{id}}",
+		"recognizeArxivRateLimited": "arXiv is rate-limiting metadata lookups ({{id}}). Title/authors were not filled — try Refresh metadata later.",
 		"importFailed": "Import failed",
 		"exportFailed": "Export failed",
 		"backfillPublication": "Backfill venues",
@@ -240,6 +252,7 @@
 				"reading": "Reading",
 				"writing": "Writing",
 				"figures": "Figures",
+				"ppt": "PPT",
 				"reproduce": "Reproduction",
 				"submit": "Submission"
 			}
@@ -252,7 +265,9 @@
 	"zoteroMigrate": {
 		"button": "Migrate from Zotero",
 		"title": "Migrate from Zotero",
+		"stepsHint": "Step 1 is complete: this is your new Agentero vault. Step 2: choose the Zotero source folder containing zotero.sqlite.",
 		"chooseFolder": "Choose Zotero data folder…",
+		"vaultIsZotero": "This is a Zotero data folder. Choose a new folder for the Agentero vault.",
 		"scanning": "Scanning library…",
 		"detecting": "Looking for your Zotero library…",
 		"sqliteMissing": "zotero.sqlite not found. Please select your Zotero data folder.",

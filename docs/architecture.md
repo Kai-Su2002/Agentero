@@ -30,7 +30,7 @@ Agentero 基于 Tauri 2 + React 19，本地优先，Vault 文件与 Catalog SQLi
 | 中间 | Dockview 工作区 | Library / PDF / HTML / 图片 / Markdown / Trash |
 | 右侧栏 | Agent / 批注 / References（引用卡片 + 近邻图）/ Figures | 可选，同样 collapsible |
 
-- **文件树**：顶部虚拟 Library + Recycle Bin、魔棒按钮。论文默认是叶子；`{paper}/attachments/` 非空时行上出现 chevron，子项直接挂在论文下。右键新建/删除/在 Finder 中显示/终端打开。多选（⌘/Shift）+ 拖拽移动。详见 [vault-tree.md](frontend/vault-tree.md)。
+- **文件树**：顶部虚拟 Recycle Bin、魔棒按钮；`papers/` 根文件夹即论文库入口（`Library` 图标，右键含导出 / 发现引用等库操作）。论文默认是叶子；`{paper}/attachments/` 非空时行上出现 chevron，子项直接挂在论文下。右键新建/删除/在 Finder 中显示/终端打开。多选（⌘/Shift）+ 拖拽移动。详见 [vault-tree.md](frontend/vault-tree.md)。
 - **Dockview**：每个打开文档一个 panel，支持 tab、上下左右分屏、多格网格。布局 `toJSON()` 持久化，path/mode 在 panel params。详见 [workspace.md](frontend/workspace.md)。
 - **论文 NOTES**：默认左右分屏（PDF/HTML 左、`NOTES.md` 右）；多篇 paper 叠到同一两栏；body/NOTES tab 同步切换。
 - **错误 Toast**：右上角 Sonner，经 `notifyError`（`src/lib/core/notify.ts`）；表单就地校验不走 Toast。
@@ -42,7 +42,7 @@ Agentero 基于 Tauri 2 + React 19，本地优先，Vault 文件与 Catalog SQLi
 魔棒入库 → 下载 PDF 到 `{paper}/{id}.pdf`；arXiv 另解压 LaTeX 到 `source/`。成功后刷新树并 `openPaper`，展开并滚到新论文。详见 [paper-import.md](frontend/paper-import.md) / [backend/paper-import.md](backend/paper-import.md)。
 
 - **可读正文**：TeX 与 `PAPER.md` 有其一即可（优先 TeX）。无 TeX 时下载后 liteparse 生成 `PAPER.md`。
-- **补下载**：paper 行缺 PDF 或既无 TeX 也无 `PAPER.md` 时显示 Download（hover 说明原因）；Library 行可批量补下。
+- **补下载**：paper 行缺 PDF 或既无 TeX 也无 `PAPER.md` 时显示 Download（hover 说明原因）；`papers/` 论文库节点右键可批量补下。
 - **Rescan**：`paper_rescan` 从 `papers/` 目录（以 `NOTES.md` 为标记）补齐盘上有、catalog 无的条目。
 - **Zotero Connector**：Host 在 `127.0.0.1:23119` 收浏览器扩展 `saveItems` + `saveAttachment`。详见 [backend/connector.md](backend/connector.md)。
 - **MCP Server**：设置开关打开后 Host 在 `127.0.0.1:8765/mcp` 提供 Streamable HTTP MCP（论文 metadata / 入库 / NOTES）。详见 [backend/mcp.md](backend/mcp.md)。
@@ -65,7 +65,7 @@ BYOA，连接本机 ACP Agent。详见 [frontend/agent.md](frontend/agent.md) / 
 
 - **空态**：建议 chips → `summary` / `qa` / `related_work`。
 - **上下文**：当前论文默认加入（实心 chip，可 X 移除）。`@` 提及与文件树拖入为可移除 context chip。
-- **选区上下文**：Markdown/PDF 选中文字 → 瞬时选区 chip（虚线）；`⌘L` 固定为 chip；PDF 仅在 Agent 侧栏打开时于选区右下角显示「加入对话」pill。发送时以引用块消费；PDF 带几何的选区在发送后插入 `kind: ask` 对话卡片页边针（非视觉批注）。
+- **选区上下文**：划词不自动进对话；`⌘L` / `⇧⌘A` / 划词工具栏「加入对话」固定为 chip 并打开 Agent；`⌘K` /「快速对话」打开页内 Ask。发送时以引用块消费；PDF 带几何的选区在发送后插入 `kind: ask` 对话卡片页边针（非视觉批注）。
 - **运行中继续输入**：后续消息进 Queue waitlist，当前回复结束后自动发送。
 - **权限**：全局模式 `restricted`（默认）/ `ask` / `auto`。`ask` 时弹权限对话框。
 - **结构化提问**：各 harness 的 ask-user / elicitation / Grok ext 归一为底部问卷（与 free-text composer 互斥）。详见 [frontend/agent.md](frontend/agent.md) / [backend/agent.md](backend/agent.md)。
@@ -73,11 +73,11 @@ BYOA，连接本机 ACP Agent。详见 [frontend/agent.md](frontend/agent.md) / 
 
 ### PDF 阅读
 
-Vault 任意路径 `.pdf` → `blob:` 预览。页码导航/适应宽·整页/大纲/⌘F 查找。真实 scale 渲染 + 平滑划词覆盖层。划词菜单：高亮/提问/翻译；批注走页右缘竖向入口。支持视觉区域批注（框选插图/表/算法/公式，可写备注或向 Agent 提问）、版面分析（Figures 侧栏列出检测到的图/表/算法/公式）、有编号公式 hover 符号解析卡。详见 [frontend/pdf.md](frontend/pdf.md) / [frontend/pdf-layout-analysis.md](frontend/pdf-layout-analysis.md)。
+Vault 任意路径 `.pdf` → `blob:` 预览。页码导航/底部缩放滑动条/大纲/⌘F 查找。真实 scale 渲染 + 平滑划词覆盖层。划词菜单：高亮/提问/翻译；批注走页右缘竖向入口。支持视觉区域批注（框选插图/表/算法/公式，可写备注或向 Agent 提问）、版面分析（Figures 侧栏列出检测到的图/表/算法/公式）、有编号公式 hover 符号解析卡。详见 [frontend/pdf.md](frontend/pdf.md) / [frontend/pdf-layout-analysis.md](frontend/pdf-layout-analysis.md)。
 
 ### Markdown 编辑
 
-Plate + `@platejs/markdown`。普通文本粘贴默认按 Markdown 解析。右键「整理 Markdown 格式」执行 Prettier round-trip。`\$a\$` 保持普通文本、`$a$` 保持公式。Obsidian Callout（`> [!type]`）结构化渲染并原样写回。内嵌图片粘贴到 `{mdDir}/assets/`，删节点且无引用时 GC。详见 [frontend/markdown.md](frontend/markdown.md)。
+Plate + `@platejs/markdown`。普通文本粘贴默认按 Markdown 解析。`\$a\$` 保持普通文本、`$a$` 保持公式。Obsidian Callout（`> [!type]`）结构化渲染并原样写回。内嵌图片粘贴到 `{mdDir}/assets/`，删节点且无引用时 GC。详见 [frontend/markdown.md](frontend/markdown.md)。
 
 ### 双链与图谱
 
@@ -115,7 +115,7 @@ Plate + `@platejs/markdown`。普通文本粘贴默认按 Markdown 解析。右�
 
 ### 外部改动自动重载
 
-Host `notify` → `vault:file-changed`。打开的 `.md`/`NOTES.md` 磁盘变化：无未存改动则重载；有未存改动则 toast 提示；内容相等抑制自写回声。create/remove/rename 去抖刷新文件树。
+Host `notify` → `vault:file-changed`。打开的 `.md`/`NOTES.md` 磁盘变化：无未存改动则重载；有未存改动则 toast 提示；内容相等抑制自写回声。create/remove/rename 去抖刷新文件树。窗口隐藏/失焦时先缓冲变更，回到前台再 flush；后台去抖窗口更长。
 
 ### 保存冲突
 
@@ -135,7 +135,7 @@ Host `tauri-plugin-log` + 前端 `logger` + CLI `env_logger`。详见 [backend/l
 
 ### 命令面板
 
-`⌘P`/`⌘K` 快速打开（论文 + `vault_search` 全文）；`⇧⌘P`/`>` 执行内置命令。
+`⌘P` 快速打开（论文 + `vault_search` 全文）；`⇧⌘P`/`>` 执行内置命令。`⌘K` 划词快速对话（Ask）；`⌘L` 有选区时加入 Agent 对话。
 
 ### 翻译服务
 

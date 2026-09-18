@@ -11,7 +11,6 @@
 
 import type { useDocumentManagerCapability } from "@embedpdf/plugin-document-manager/react";
 import type { useLayoutAnalysisCapability } from "@embedpdf/plugin-layout-analysis/react";
-import type { UnlistenFn } from "@tauri-apps/api/event";
 import { type RefObject, useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import i18n from "@/i18n";
@@ -19,7 +18,6 @@ import {
 	BackgroundTaskCancelledError,
 	isBackgroundTaskCancelledError,
 } from "@/lib/core/background-tasks";
-import { events } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
 import { notifyError } from "@/lib/core/notify";
 import { runLocalActivity } from "@/lib/core/tasks";
@@ -33,6 +31,7 @@ import {
 	setLayoutOverlayVisible,
 } from "@/lib/pdf/layout";
 import { layoutSidecarPath } from "@/lib/pdf/layout/io";
+import { listenVaultFileChangedGated } from "@/lib/vault/file-change-gate";
 import type { VaultFileChangedPayload } from "@/lib/vault/fs-watch";
 import { normalizePathKey } from "@/lib/vault/path";
 
@@ -79,6 +78,16 @@ export type UsePdfLayoutRunOptions = {
 	docCapRef: RefObject<DocumentManagerCapability>;
 	/** True for remote papers with no local sidecar; disables layout analysis. */
 	isRemotePaper?: boolean;
+	/**
+	 * True for PDFs outside papers/ (plain viewer): no layout analysis at all,
+	 * including the in-viewer auto-run loose PDFs otherwise get.
+	 */
+	plainViewer?: boolean;
+	/**
+	 * Dual-pane translation companion reuses the source pane's layout store /
+	 * sidecar; it must not enqueue a second analysis pass on open.
+	 */
+	translationPane?: boolean;
 };
 
 export type PdfLayoutRun = {
@@ -101,6 +110,8 @@ export function usePdfLayoutRun({
 	docCap,
 	docCapRef,
 	isRemotePaper = false,
+	plainViewer = false,
+	translationPane = false,
 }: UsePdfLayoutRunOptions): PdfLayoutRun {
 	const { t } = useTranslation("viewer");
 	const layoutTaskRef = useRef<LayoutAnalysisTask | null>(null);
@@ -116,7 +127,7 @@ export function usePdfLayoutRun({
 	 */
 	const startLayoutAnalysis = useCallback(
 		(opts?: StartLayoutAnalysisOptions) => {
-			if (isRemotePaper) return;
+			if (isRemotePaper || plainViewer) return;
 			const docs = docCapRef.current ?? docCap;
 			if (!docs?.isDocumentOpen(docId)) {
 				if (opts?.notifyOnError !== false) {
@@ -293,6 +304,7 @@ export function usePdfLayoutRun({
 			docCap,
 			docCapRef,
 			isRemotePaper,
+			plainViewer,
 		],
 	);
 	const startLayoutAnalysisRef = useRef(startLayoutAnalysis);
@@ -300,18 +312,19 @@ export function usePdfLayoutRun({
 
 	// Any open paper (active or not) → headless queue so multi-tab can all
 	// land in the background-tasks panel. Local ONNX stays serial (cap 1);
-	// the Paddle API backend is uncapped at JobCenter.
+	// the Paddle API backend is uncapped at JobCenter. Translation companions
+	// inherit layout from the source pane / store copy — do not re-queue.
 	useEffect(() => {
-		if (isRemotePaper || !paperAbsPath) return;
+		if (translationPane || isRemotePaper || !paperAbsPath) return;
 		enqueuePaperLayoutAnalysis({ paperAbsPath });
-	}, [isRemotePaper, paperAbsPath]);
+	}, [translationPane, isRemotePaper, paperAbsPath]);
 
 	// Active viewer: pull layout into the tab store once sidecar exists.
 	// Headless may still be writing it for this paper (or a sibling tab).
 	// Loose PDFs (no paper folder) still analyze in-viewer.
 	const layoutAutoStartedForDocRef = useRef<string | null>(null);
 	useEffect(() => {
-		if (isRemotePaper) return;
+		if (translationPane || isRemotePaper || plainViewer) return;
 		if (!isActive) return;
 		if (!layoutCap || totalPages <= 0) return;
 		if (getLayoutDocumentResult(docId)) return;
@@ -319,7 +332,7 @@ export function usePdfLayoutRun({
 		if (!layoutCap.forDocument(docId)) return;
 
 		let cancelled = false;
-		let unlisten: UnlistenFn | null = null;
+		let unlisten: (() => void) | null = null;
 		const sidecarKey = paperAbsPath
 			? normalizePathKey(layoutSidecarPath(paperAbsPath))
 			: null;
@@ -376,25 +389,12 @@ export function usePdfLayoutRun({
 		};
 
 		if (paperAbsPath && isTauri()) {
-			void (async () => {
-				try {
-					if (cancelled) return;
-					const stop = await events.vaultFileChanged.listen((event) => {
-						if (cancelled || !eventHitsSidecar(event.payload)) return;
-						void tryLoad();
-					});
-					if (cancelled) {
-						stop();
-						return;
-					}
-					unlisten = stop;
-				} finally {
-					void tryLoad();
-				}
-			})();
-		} else {
-			void tryLoad();
+			unlisten = listenVaultFileChangedGated((payload) => {
+				if (cancelled || !eventHitsSidecar(payload)) return;
+				void tryLoad();
+			});
 		}
+		void tryLoad();
 
 		return () => {
 			cancelled = true;
@@ -405,7 +405,9 @@ export function usePdfLayoutRun({
 			}
 		};
 	}, [
+		translationPane,
 		isRemotePaper,
+		plainViewer,
 		isActive,
 		layoutCap,
 		docCap,

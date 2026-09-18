@@ -3,6 +3,8 @@
  * COLUMN_META plus the row context menu (open / download / edit / reveal /
  * delete / add-to-chat).
  *
+ * Single-click opens the paper; double-click a copyable cell copies that field.
+ *
  * Memoized — the parent must keep `ctx` (t + onCellCopy) and `measureRef`
  * reference-stable or every scroll re-renders all visible rows.
  */
@@ -15,6 +17,7 @@ import {
 	RefreshCw,
 	Trash2,
 } from "lucide-react";
+import type { MouseEvent } from "react";
 import { Fragment, memo } from "react";
 import { COLUMN_META } from "@/components/library/library-columns";
 import {
@@ -50,6 +53,10 @@ type LibraryPaperRowProps = {
 	paperAbsPath: string | null;
 	canEditMeta: boolean;
 	onOpenPaper: (paper: PaperMetadata) => void;
+	onRowClick: (
+		e: MouseEvent<HTMLTableRowElement>,
+		paper: PaperMetadata,
+	) => void;
 	onRefreshMetadata?: (paper: PaperMetadata) => void;
 	/** rowVirtualizer.measureElement — attached to the `<tr>`. */
 	measureRef: (element: Element | null) => void;
@@ -64,6 +71,7 @@ export const LibraryPaperRow = memo(function LibraryPaperRow({
 	paperAbsPath,
 	canEditMeta,
 	onOpenPaper,
+	onRowClick,
 	onRefreshMetadata,
 	measureRef,
 }: LibraryPaperRowProps) {
@@ -81,7 +89,7 @@ export const LibraryPaperRow = memo(function LibraryPaperRow({
 					data-index={index}
 					ref={measureRef}
 					className="border-border/40 border-b transition-colors duration-100 hover:bg-accent/70 active:bg-accent"
-					onDoubleClick={() => onOpenPaper(p)}
+					onClick={(e) => onRowClick(e, p)}
 				>
 					{visibleColumns.map((col) => (
 						<Fragment key={col.key}>

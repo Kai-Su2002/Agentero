@@ -54,19 +54,6 @@ export function rectRightScreen(
 	};
 }
 
-/** Bottom-right corner of a page-coordinate rect, in viewport (client) px. */
-export function rectBottomRightScreen(
-	pageEl: HTMLElement,
-	rect: Rect,
-	zoom: number,
-): { x: number; y: number } {
-	const box = pageEl.getBoundingClientRect();
-	return {
-		x: box.left + (rect.origin.x + rect.size.width) * zoom,
-		y: box.top + (rect.origin.y + rect.size.height) * zoom,
-	};
-}
-
 /**
  * Build a normalized {@link PdfAskAnchor} from an EmbedPDF text selection.
  * EmbedPDF reports rects in PDF page coordinates (points); dividing by the page

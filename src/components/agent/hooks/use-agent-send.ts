@@ -46,7 +46,10 @@ import {
 	type ToolAskUserRequest,
 	upsertChatSessionTurn,
 } from "@/lib/agent/chat-state";
-import { stripInlineTokens } from "@/lib/agent/composer-inline-tokens";
+import {
+	extractSelectionTokens,
+	stripInlineTokens,
+} from "@/lib/agent/composer-inline-tokens";
 import type { AgentComposerState } from "@/lib/agent/composer-state";
 import {
 	consumeSelections,
@@ -300,7 +303,11 @@ export function useAgentSend({
 					text: textRaw,
 				};
 		const resolvedContextPaths = options?.contextPaths ?? contextPaths;
-		const resolvedSelections = options?.selections ?? currentSelections();
+		const inlineSelections = extractSelectionTokens(textRaw);
+		const storeSelections = currentSelections();
+		const resolvedSelections =
+			options?.selections ??
+			(inlineSelections.length > 0 ? inlineSelections : storeSelections);
 		const resolvedSkillIds =
 			options?.skillIds ?? submittedComposerState.selectedSkillIds;
 		const submissionGeneration = ++submissionGenRef.current;
@@ -454,7 +461,6 @@ export function useAgentSend({
 				preferHighestReasoningEffort: preferredEffort === null,
 				fastMode: fastAvailable ? fastEnabled : undefined,
 				skillIds: resolvedSkillIds,
-				autoApprove: loadSettings().agentPermissionMode === "auto",
 				permissionMode: loadSettings().agentPermissionMode,
 			});
 			if (
@@ -642,6 +648,7 @@ export function useAgentSend({
 				...snap.mentionedPaths,
 			];
 			const frozenVisualDrafts = consumeVisualDrafts();
+			const inlineSelections = extractSelectionTokens(textRaw);
 			const item: QueuedPrompt = {
 				id: nextLineId("queue"),
 				// Keep the typed text only; visual drafts / images carry their payload.
@@ -649,7 +656,8 @@ export function useAgentSend({
 				workflow,
 				contextPaths: paths,
 				skillIds: [...snap.selectedSkillIds],
-				selections: consumeSelections(),
+				selections:
+					inlineSelections.length > 0 ? inlineSelections : consumeSelections(),
 				visualDrafts: frozenVisualDrafts,
 				...(attached.length ? { images: attached } : {}),
 			};

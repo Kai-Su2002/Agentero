@@ -205,14 +205,18 @@ export function TranslateStep({
 		return (
 			<div className="grid grid-cols-2 gap-3">
 				<ChoiceCard
-					icon={<KeyRound className="size-5 text-muted-foreground" />}
-					title={t("translate.configureOwn")}
-					onClick={enterConfigure}
-				/>
-				<ChoiceCard
 					icon={<Sparkles className="size-5 text-muted-foreground" />}
 					title={t("translate.useDefault")}
+					description={t("translate.useDefaultDesc")}
+					recommended
+					recommendedLabel={t("recommended")}
 					onClick={() => void chooseSystemDefault()}
+				/>
+				<ChoiceCard
+					icon={<KeyRound className="size-5 text-muted-foreground" />}
+					title={t("translate.configureOwn")}
+					description={t("translate.configureOwnDesc")}
+					onClick={enterConfigure}
 				/>
 			</div>
 		);

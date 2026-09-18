@@ -23,11 +23,6 @@ export {
 	insertEditorLinkTemplate,
 } from "@/lib/markdown/editor-context-menu";
 export {
-	captureMarkdownSelectionBookmark,
-	prepareMarkdownFormat,
-	replaceMarkdownEditorValue,
-} from "@/lib/markdown/editor-format";
-export {
 	exportDefaultName,
 	type MarkdownExportFormat,
 	type MarkdownExportOptions,
@@ -41,7 +36,6 @@ export {
 	peekExternalLinkEditId,
 	selectAfterInlineNode,
 } from "@/lib/markdown/external-link-insert";
-export { formatMarkdownSource } from "@/lib/markdown/format";
 export {
 	convertPropertyKind,
 	countFrontmatterProperties,

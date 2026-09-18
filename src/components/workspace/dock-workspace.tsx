@@ -48,8 +48,11 @@ import { AgenteroTabGroupChip } from "@/components/workspace/tab-group-chip";
 import { cn } from "@/lib/core/utils";
 import { isLibraryVirtualPath, isTrashVirtualPath } from "@/lib/paper/api";
 import { moveDocToWindow } from "@/lib/shell/leaf";
+import { formatShortcutById } from "@/lib/shell/shortcuts";
 import { TAG_COLOR_IDS, tagSwatchStyle } from "@/lib/ui/tag-colors";
+import { openTexPdf } from "@/lib/workspace/actions";
 import { installDockviewDragSelectionGuard } from "@/lib/workspace/dockview-drag-selection";
+import { installDockviewDropOverlayCleanup } from "@/lib/workspace/dockview-drop-overlay-cleanup";
 import { installDockviewSashFrameLoop } from "@/lib/workspace/dockview-sash";
 import { agenteroDockTheme } from "@/lib/workspace/dockview-theme";
 import {
@@ -64,10 +67,49 @@ import {
 	tabIdForPath,
 	tabNotesEligible,
 } from "@/lib/workspace/tabs";
-import type { CenterViewMode } from "@/lib/workspace/viewer";
+import { type CenterViewMode, isTexPath } from "@/lib/workspace/viewer";
 
 /** Grey + paper tag palette (same swatches as library tags). */
 const TAB_GROUP_COLORS = ["grey", ...TAG_COLOR_IDS] as const;
+
+/**
+ * Dockview's built-in menu items only support a plain `label` string.
+ * Build a custom row so we can show a right-aligned shortcut hint (file-tree style).
+ */
+function buildTabContextMenuItem(opts: {
+	label: string;
+	shortcut?: string;
+	action: () => void;
+	disabled?: boolean;
+}): { element: HTMLElement } {
+	const el = document.createElement("div");
+	el.className = "dv-context-menu-item";
+	el.setAttribute("role", "menuitem");
+	if (opts.disabled) {
+		el.classList.add("dv-context-menu-item--disabled");
+		el.setAttribute("aria-disabled", "true");
+	}
+	if (opts.shortcut) {
+		el.classList.add("agentero-dv-context-menu-item--with-shortcut");
+		const labelEl = document.createElement("span");
+		labelEl.textContent = opts.label;
+		const shortcutEl = document.createElement("span");
+		shortcutEl.className = "agentero-dv-context-menu-shortcut";
+		shortcutEl.textContent = opts.shortcut;
+		el.append(labelEl, shortcutEl);
+	} else {
+		el.textContent = opts.label;
+	}
+	if (!opts.disabled) {
+		el.addEventListener("click", () => {
+			opts.action();
+			// Custom `element` items skip dockview's built-in close(); drop the
+			// popover wrapper. PopupService clears leftover listeners on next open.
+			el.closest(".dv-context-menu")?.parentElement?.remove();
+		});
+	}
+	return { element: el };
+}
 
 export type WorkspaceExternalDrop = {
 	paths: string[];
@@ -304,7 +346,11 @@ function resolveReferencePanel(
  * when not shown.
  */
 function rendererForMode(mode: CenterViewMode): DockviewPanelRenderer {
-	return mode === "pdf" || mode === "markdown" || mode === "translation"
+	return mode === "pdf" ||
+		mode === "markdown" ||
+		mode === "translation" ||
+		mode === "excalidraw" ||
+		mode === "text"
 		? "always"
 		: "onlyWhenVisible";
 }
@@ -684,6 +730,9 @@ export const DockWorkspace = memo(
 						workspaceRootRef.current as HTMLDivElement,
 						api,
 					),
+					installDockviewDropOverlayCleanup(
+						workspaceRootRef.current as HTMLDivElement,
+					),
 					api.onUnhandledDragOver((e: DockviewDndOverlayEvent) => {
 						if (!isExternalPathDrag(e.nativeEvent)) return;
 						e.accept();
@@ -820,13 +869,27 @@ export const DockWorkspace = memo(
 				const menu: Array<
 					| "separator"
 					| { label: string; disabled?: boolean; action: () => void }
+					| { element: HTMLElement }
 				> = [];
 				if (onOpenNotesRef.current && tabNotesEligible(tab) && tab?.notesPath) {
 					menu.push(
-						{
+						buildTabContextMenuItem({
 							label: t("tabs.contextOpenNotes"),
+							shortcut: formatShortcutById("splitPane"),
 							action: () => onOpenNotesRef.current?.(panel.id),
-						},
+						}),
+						"separator",
+					);
+				}
+				if (tab != null && isTexPath(tab.path)) {
+					menu.push(
+						buildTabContextMenuItem({
+							label: t("tabs.openTexPdf"),
+							shortcut: formatShortcutById("splitPane"),
+							action: () => {
+								void openTexPdf(tab.path, { referencePanelId: panel.id });
+							},
+						}),
 						"separator",
 					);
 				}
@@ -845,10 +908,11 @@ export const DockWorkspace = memo(
 					});
 				}
 				menu.push(
-					{
+					buildTabContextMenuItem({
 						label: t("tabs.contextClose"),
+						shortcut: formatShortcutById("closeTab"),
 						action: () => panel.api.close(),
-					},
+					}),
 					{
 						label: t("tabs.contextCloseOthers"),
 						disabled: !hasOthers,

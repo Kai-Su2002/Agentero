@@ -24,6 +24,7 @@ import {
 import type { FileNode } from "@/lib/vault";
 import { useMovePicker } from "./hooks/use-move-picker";
 import { usePaperRowActions } from "./hooks/use-paper-row-actions";
+import { useTexCompile } from "./hooks/use-tex-compile";
 import { useTreeContextMenu } from "./hooks/use-tree-context-menu";
 import { useTreeDragDrop } from "./hooks/use-tree-drag-drop";
 import { useTreeExpansion } from "./hooks/use-tree-expansion";
@@ -34,13 +35,7 @@ import { MovePickerPopover } from "./move-picker-popover";
 import { TreeContextMenuPortal } from "./tree-context-menu";
 import { pathKey } from "./tree-helpers";
 import { TreeCreateInput } from "./tree-inputs";
-import {
-	LibraryRow,
-	LoadingRows,
-	PlazaRow,
-	PlazaSourceRow,
-	TrashRow,
-} from "./tree-rows";
+import { LoadingRows, PlazaRow, PlazaSourceRow, TrashRow } from "./tree-rows";
 import { TreeRowsViewport } from "./tree-rows-viewport";
 import type { TreeCreateDraft, TreeCreateKind, TreeRenameDraft } from "./types";
 
@@ -290,6 +285,8 @@ export const FileTree = memo(
 			onReadPaper,
 		});
 
+		const texCompile = useTexCompile();
+
 		const movePicker = useMovePicker({
 			containerRef,
 			onMoveTo,
@@ -317,6 +314,9 @@ export const FileTree = memo(
 				openMovePicker: movePicker.openPicker,
 				onExportLibrary,
 				onDiscoverCiting,
+				onDownloadAllMissing: paperActions.showLibraryDownload
+					? paperActions.downloadAllMissing
+					: undefined,
 				onEmptyTrash,
 				onOpenPaperNotes,
 				onEditPaperMeta,
@@ -368,14 +368,6 @@ export const FileTree = memo(
 			],
 		);
 
-		const libraryRow = (
-			<LibraryRow
-				showDownload={paperActions.showLibraryDownload}
-				busy={paperActions.libraryBusy}
-				downloadingAll={paperActions.downloadingAll}
-				onDownloadAll={paperActions.downloadAllMissing}
-			/>
-		);
 		const trashRow = <TrashRow />;
 		const plazaExpanded = expansion.expanded.has(PLAZA_VIRTUAL_PATH);
 		const plazaRows = plazaEnabled ? (
@@ -397,6 +389,8 @@ export const FileTree = memo(
 					kind={createDraft.kind}
 					onConfirm={onConfirmCreate}
 					onCancel={onCancelCreate}
+					parentPath={createDraft.parentPath}
+					vaultRoot={vaultPath}
 				/>
 			) : null;
 
@@ -420,7 +414,7 @@ export const FileTree = memo(
 					>
 						{nodes.length === 0 && !createDraft ? (
 							<>
-								{/* Virtual library + trash + 广场 always available (empty vault or no vault yet) */}
+								{/* Trash + 广场 always available (empty vault or no vault yet). */}
 								<AiFileTree
 									selectedPath={treeSelectedPath}
 									selectedPaths={selection.selected}
@@ -429,7 +423,6 @@ export const FileTree = memo(
 									onContextMenuPath={handleContextMenuPath}
 									onSelectRow={selection.handleSelectRow}
 								>
-									{libraryRow}
 									{trashRow}
 									{plazaRows}
 								</AiFileTree>
@@ -458,7 +451,6 @@ export const FileTree = memo(
 								<TreeRowsViewport
 									flatRows={flatRows}
 									rowVirtualizer={rowVirtualizer}
-									libraryRow={libraryRow}
 									trashRow={trashRow}
 									createRow={createRow}
 									renameDraft={renameDraft}
@@ -471,6 +463,8 @@ export const FileTree = memo(
 									paperMetaByRelPath={paperMetaByRelPath}
 									paperTreeLabelMode={paperTreeLabelMode}
 									paperActions={paperActions}
+									texCompile={texCompile}
+									vaultPath={vaultPath}
 								/>
 							</AiFileTree>
 						)}

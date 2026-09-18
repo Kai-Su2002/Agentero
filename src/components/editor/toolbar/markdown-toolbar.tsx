@@ -192,6 +192,7 @@ function FetchKimiNotesButton() {
 		<ToolbarButton
 			tooltip={t("toolbar.fetchKimiNotes")}
 			aria-label={t("toolbar.fetchKimiNotes")}
+			data-fetch-cool-papers-notes
 			disabled={busy}
 			onClick={onClick}
 			className="gap-1 px-2"

@@ -40,7 +40,7 @@ type CommandPaletteProps = {
 const PAPER_LIMIT = 8;
 
 /**
- * Global palette: Go (⌘P / ⌘K) = papers + vault search;
+ * Global palette: Go (⌘P) = papers + vault search;
  * Commands (⇧⌘P) = executable app actions. Leading `>` forces commands mode.
  */
 export function CommandPalette({

@@ -2,8 +2,9 @@
  * Lightweight root for `?window=doc&path=…` document popouts.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { TrafficLightSpacer } from "@/components/shell/traffic-light-spacer";
 import {
 	DocView,
 	type DocViewEditorProps,
@@ -11,7 +12,9 @@ import {
 	type DocViewPdfProps,
 } from "@/components/workspace/doc-view";
 import { useSettings, useVaultStore } from "@/hooks/use-app-stores";
+import { useExternalFileDrop } from "@/hooks/use-external-file-drop";
 import { useNativeSelectAllGuard } from "@/hooks/use-native-select-all-guard";
+import { useVaultFileEvents } from "@/hooks/use-vault-file-events";
 import { isMacOS, isTauri } from "@/lib/core/tauri";
 import { isLibraryVirtualPath, isTrashVirtualPath } from "@/lib/paper/api";
 import { refreshLibrary } from "@/lib/paper/library-store";
@@ -20,11 +23,25 @@ import { readDocWindowParams } from "@/lib/shell/doc-window";
 import { openSettingsWindow } from "@/lib/shell/settings-window";
 import { openRecentVault } from "@/lib/vault/actions";
 import { refreshTree, vaultStore } from "@/lib/vault/store";
-import { persistFile } from "@/lib/workspace/actions";
+import { shouldIgnoreInternalRenameEvent } from "@/lib/wiki/store";
+import {
+	applyDiskChange,
+	compileTexOnManualSave,
+	persistExcalidrawFile,
+	persistFile,
+	persistTextFile,
+} from "@/lib/workspace/actions";
 import {
 	createPlaceholderTab,
 	type DocTab,
 	loadTabResources,
+	patchFromTabResources,
+	refreshExcalidrawTab,
+	refreshPdfTab,
+	refreshTextTab,
+	reseedMarkdownTab,
+	reseedNotesTab,
+	syncTabSeedsForPath,
 } from "@/lib/workspace/tabs";
 import type { CenterViewMode } from "@/lib/workspace/viewer";
 
@@ -70,6 +87,8 @@ export function DocWindowRoot() {
 	const [tab, setTab] = useState<DocTab | null>(null);
 	const [error, setError] = useState<string | null>(null);
 	const [ready, setReady] = useState(false);
+	const tabRef = useRef<DocTab | null>(null);
+	tabRef.current = tab;
 	useNativeSelectAllGuard();
 
 	const vaultPath = useVaultStore((s) => s.vaultPath);
@@ -81,6 +100,7 @@ export function DocWindowRoot() {
 	const interfaceFontFamily = useSettings((s) => s.interfaceFontFamily);
 	const monoFontFamily = useSettings((s) => s.monoFontFamily);
 	const fontFamily = resolveFontFamilyCss(textFontFamily, "text");
+	useExternalFileDrop();
 
 	useEffect(() => {
 		applyDocumentChrome({
@@ -128,21 +148,11 @@ export function DocWindowRoot() {
 			if (cancelled) return;
 			if (res.error) setError(res.error);
 
+			// The placeholder carries the URL-param mode: a PDF popout must not
+			// flip to a Markdown editor on a single failed local-PDF probe.
 			const next: DocTab = {
 				...placeholder,
-				kind: res.kind,
-				title: res.title,
-				mode: res.mode,
-				paperMeta: res.paperMeta,
-				pdfUrl: res.pdfUrl,
-				pdfBytes: res.pdfBytes ?? null,
-				htmlUrl: res.htmlUrl,
-				imageUrl: res.imageUrl,
-				notesPath: res.notesPath,
-				notesSeed: res.notesSeed,
-				markdownSeed: res.markdownSeed,
-				seedKey: 1,
-				loaded: true,
+				...patchFromTabResources(res, placeholder),
 			};
 			setTab(next);
 			setReady(true);
@@ -174,6 +184,96 @@ export function DocWindowRoot() {
 		setTab((prev) => (prev && prev.id === id ? { ...prev, ...patch } : prev));
 	}, []);
 
+	const diskChangeSink = useMemo(
+		() => ({
+			getTabs: () => (tabRef.current ? [tabRef.current] : []),
+			refreshNotes: (paperDir: string, content: string) => {
+				setTab((prev) => {
+					if (!prev) return prev;
+					return reseedNotesTab([prev], paperDir, content)[0] ?? prev;
+				});
+			},
+			refreshMarkdown: (absPath: string, content: string) => {
+				setTab((prev) => {
+					if (!prev) return prev;
+					return reseedMarkdownTab([prev], absPath, content)[0] ?? prev;
+				});
+			},
+			refreshExcalidraw: (absPath: string, content: string) => {
+				setTab((prev) => {
+					if (!prev) return prev;
+					return refreshExcalidrawTab([prev], absPath, content)[0] ?? prev;
+				});
+			},
+			refreshText: (absPath: string, content: string) => {
+				setTab((prev) => {
+					if (!prev) return prev;
+					return refreshTextTab([prev], absPath, content)[0] ?? prev;
+				});
+			},
+			refreshPdf: (absPath: string, bytes: ArrayBuffer) => {
+				setTab((prev) => {
+					if (!prev) return prev;
+					return refreshPdfTab([prev], absPath, bytes)[0] ?? prev;
+				});
+			},
+		}),
+		[],
+	);
+
+	const excalidrawProps = useMemo(
+		() => ({
+			onPersistFile: persistExcalidrawFile,
+			onTabPatch: onTabPatch,
+		}),
+		[onTabPatch],
+	);
+
+	const textProps = useMemo(
+		() => ({
+			onPersistFile: persistTextFile,
+			// ⌘S in a popout window compiles the same way as the main dock.
+			onManualSave: (path: string) => void compileTexOnManualSave(path),
+			onTabPatch: onTabPatch,
+		}),
+		[onTabPatch],
+	);
+
+	const onDiskChange = useCallback(
+		(absPath: string) => {
+			void applyDiskChange(absPath, diskChangeSink);
+		},
+		[diskChangeSink],
+	);
+
+	const onStructuralChange = useCallback(() => {
+		if (vaultPath) void refreshTree(vaultPath);
+	}, [vaultPath]);
+
+	// Per-window watcher: Agent / external edits must reseed this popout's
+	// local tab (main-window applyDiskChange cannot see it).
+	useVaultFileEvents({
+		vaultPath,
+		onDiskChange,
+		onStructuralChange,
+		shouldIgnoreEvent: shouldIgnoreInternalRenameEvent,
+	});
+
+	const onPersistFile = useCallback(
+		async (path: string, md: string, lastSaved: string) => {
+			const ok = await persistFile(path, md, lastSaved);
+			if (ok) {
+				// Keep local seed in sync so our own autosave echo is suppressed.
+				setTab((prev) => {
+					if (!prev) return prev;
+					return syncTabSeedsForPath([prev], path, md)[0] ?? prev;
+				});
+			}
+			return ok;
+		},
+		[],
+	);
+
 	const editorProps = useMemo<DocViewEditorProps>(
 		() => ({
 			fontSize,
@@ -182,13 +282,22 @@ export function DocWindowRoot() {
 			showToolbar,
 			notesPlaceholder: t("editor.notesPlaceholder"),
 			markdownPlaceholder: t("editor.markdownPlaceholder"),
-			onPersistFile: persistFile,
+			onPersistFile,
 			onAssetsChanged: () => {
 				if (vaultPath) void refreshTree(vaultPath);
 			},
 			onTabPatch,
 		}),
-		[fontSize, fontFamily, lineHeight, showToolbar, t, vaultPath, onTabPatch],
+		[
+			fontSize,
+			fontFamily,
+			lineHeight,
+			showToolbar,
+			t,
+			vaultPath,
+			onTabPatch,
+			onPersistFile,
+		],
 	);
 
 	const title = tab?.title ?? t("tabs.strip");
@@ -200,10 +309,7 @@ export function DocWindowRoot() {
 					data-titlebar
 					className="flex h-8 shrink-0 items-center border-b border-border/50 bg-background/75 backdrop-blur-xl backdrop-saturate-150 supports-backdrop-blur:bg-background/65 select-none"
 				>
-					<div
-						className="w-[92px] shrink-0 self-stretch"
-						data-tauri-drag-region
-					/>
+					<TrafficLightSpacer />
 					<div
 						className="min-w-0 flex-1 truncate px-2 text-sm font-medium text-muted-foreground"
 						data-tauri-drag-region
@@ -227,6 +333,8 @@ export function DocWindowRoot() {
 						library={LIBRARY_STUB}
 						editor={editorProps}
 						pdf={PDF_STUB}
+						excalidraw={excalidrawProps}
+						text={textProps}
 						onTrashChanged={NOOP_TRASH_CHANGED}
 					/>
 				)}

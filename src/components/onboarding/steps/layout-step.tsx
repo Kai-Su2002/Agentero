@@ -149,11 +149,15 @@ export function LayoutStep({
 				<ChoiceCard
 					icon={<KeyRound className="size-5 text-muted-foreground" />}
 					title={t("layout.configureOwn")}
+					description={t("layout.configureOwnDesc")}
+					recommended
+					recommendedLabel={t("recommended")}
 					onClick={() => setMode("configure")}
 				/>
 				<ChoiceCard
 					icon={<Sparkles className="size-5 text-muted-foreground" />}
 					title={t("layout.useDefault")}
+					description={t("layout.useDefaultDesc")}
 					onClick={useSystemDefault}
 				/>
 			</div>
@@ -202,15 +206,14 @@ export function LayoutStep({
 				<Button
 					type="button"
 					variant="ghost"
-					size="icon-xs"
+					size="xs"
 					className="shrink-0"
-					aria-label={t("layout.openDocs")}
-					title={t("layout.openDocs")}
 					onClick={() =>
 						openExternalUrl(LAYOUT_PROVIDER_DOCS_URLS[provider.id])
 					}
 				>
-					<ExternalLink className="size-4" />
+					<ExternalLink data-icon="inline-start" className="size-4" />
+					{t("layout.openDocsLabel")}
 				</Button>
 				<div className="ml-auto flex items-center gap-2">
 					<span

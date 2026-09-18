@@ -24,6 +24,7 @@ import {
 	removeTreeNode,
 	replaceTreeNodeChildren,
 } from "@/lib/vault";
+import { watchRefreshDelayMs } from "@/lib/vault/shell-activity";
 import { toVaultRelative } from "@/lib/wiki";
 
 export type TreeCreateKind = "file" | "folder";
@@ -305,5 +306,5 @@ export function scheduleTreeRefresh(changedAbsPaths?: string[]): void {
 					// best-effort background refresh
 				});
 		});
-	}, 400);
+	}, watchRefreshDelayMs("tree"));
 }

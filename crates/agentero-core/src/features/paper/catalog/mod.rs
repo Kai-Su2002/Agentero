@@ -81,3 +81,146 @@ pub fn move_paper_under(
     papers::move_under_path(vault, &from, &new_rel)?;
     Ok(new_rel)
 }
+
+/// Move a paper folder from one vault to another.
+///
+/// The source paper is removed from `from_vault` catalog and inserted into
+/// `to_vault` catalog with its new path. The paper directory (PDF, source,
+/// marks, attachments, assets) is moved on disk. Returns the new vault-relative
+/// path inside `to_vault`.
+///
+/// Errors if either vault is not initialized, the paper is missing, the
+/// destination already exists, or the destination vault already has a paper
+/// with the same id.
+pub fn migrate_paper_between_vaults(
+    from_vault: &Path,
+    from_rel: &str,
+    to_vault: &Path,
+    to_parent_rel: &str,
+) -> Result<String, AppError> {
+    if !catalog_db_path(from_vault).is_file() {
+        return Err(AppError::message(format!(
+            "source is not a vault: {}",
+            from_vault.display()
+        )));
+    }
+    if !catalog_db_path(to_vault).is_file() {
+        return Err(AppError::message(format!(
+            "destination is not a vault: {}",
+            to_vault.display()
+        )));
+    }
+    if from_vault == to_vault {
+        return Err(AppError::message(
+            "source and destination vault are the same; use move_paper_under instead",
+        ));
+    }
+
+    let from = sanitize_vault_rel(from_rel).map_err(AppError::message)?;
+    if from == "papers" {
+        return Err(AppError::message("cannot move papers/ root"));
+    }
+
+    let to_parent = {
+        let dest_norm = normalize_rel(to_parent_rel);
+        let dest_parent = if dest_norm.is_empty() {
+            "papers".to_string()
+        } else {
+            sanitize_vault_rel(&dest_norm).map_err(AppError::message)?
+        };
+        if dest_parent != "papers" && !dest_parent.starts_with("papers/") {
+            return Err(AppError::message("destination must be under papers/"));
+        }
+        dest_parent
+    };
+
+    let Some(record) = papers::get_by_path(from_vault, &from)? else {
+        return Err(AppError::message(format!("paper not found: {from}")));
+    };
+
+    let base = from.rsplit('/').next().unwrap_or(&from).to_string();
+    let to = format!("{to_parent}/{base}");
+
+    let from_abs = from_vault.join(&from);
+    let to_abs = to_vault.join(&to);
+    if to_abs.exists() {
+        return Err(AppError::message(format!("target already exists: {to}")));
+    }
+
+    let dst_papers = papers::list_all(to_vault)?;
+    if dst_papers.iter().any(|p| p.id == record.id) {
+        return Err(AppError::message(format!(
+            "destination vault already has paper id '{}'",
+            record.id
+        )));
+    }
+
+    move_dir_all(&from_abs, &to_abs)?;
+    papers::delete_under_path(from_vault, &from)?;
+
+    let mut new_record = record;
+    new_record.path = to.clone();
+    new_record.updated_at = crate::time::now_rfc3339_millis();
+    papers::upsert_paper(to_vault, &new_record)?;
+
+    Ok(to)
+}
+
+/// Move a directory tree, trying a fast rename first and falling back to
+/// copy-and-delete when the source and destination are on different devices.
+fn move_dir_all(src: &Path, dst: &Path) -> Result<(), AppError> {
+    if let Some(parent) = dst.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if std::fs::rename(src, dst).is_ok() {
+        return Ok(());
+    }
+    copy_dir_all(src, dst)?;
+    std::fs::remove_dir_all(src)?;
+    Ok(())
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), AppError> {
+    if !src.is_dir() {
+        return Err(AppError::message(format!(
+            "source is not a directory: {}",
+            src.display()
+        )));
+    }
+    std::fs::create_dir_all(dst)?;
+    for entry in walkdir::WalkDir::new(src)
+        .into_iter()
+        .filter_map(Result::ok)
+    {
+        let rel = entry
+            .path()
+            .strip_prefix(src)
+            .map_err(|_| AppError::message("walkdir entry outside source"))?;
+        let target = dst.join(rel);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)?;
+        } else if entry.file_type().is_file() {
+            if let Some(parent) = target.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::copy(entry.path(), &target)?;
+        } else if entry.file_type().is_symlink() {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::symlink;
+                let link_target = std::fs::read_link(entry.path())?;
+                symlink(link_target, &target)?;
+            }
+            #[cfg(not(unix))]
+            {
+                let link_target = std::fs::read_link(entry.path())?;
+                if link_target.is_dir() {
+                    std::fs::create_dir(target)?;
+                } else {
+                    std::fs::copy(entry.path(), &target)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}

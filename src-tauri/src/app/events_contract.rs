@@ -192,6 +192,10 @@ pub struct AgentSessionInfoEvt(pub crate::features::agent::models::AgentSessionI
 pub struct AgentFailedEvt(pub crate::features::agent::models::AgentFailedEvent);
 
 #[derive(specta::Type, tauri_specta::Event)]
+#[tauri_specta(event_name = "agent:status")]
+pub struct AgentStatusEvt(pub crate::features::agent::models::AgentStatusEvent);
+
+#[derive(specta::Type, tauri_specta::Event)]
 #[tauri_specta(event_name = "agent:stream")]
 pub struct AgentStreamEvt(pub crate::features::agent::models::AgentStreamEvent);
 
@@ -298,6 +302,14 @@ pub struct PaperRenamedEventPayload {
     pub timestamp: i64,
 }
 
+/// Mirror of the inline `json!({ "line" })` in `features::compile::compile_tex`.
+#[derive(serde::Serialize, specta::Type, tauri_specta::Event)]
+#[serde(rename_all = "camelCase")]
+#[tauri_specta(event_name = "compile:log")]
+pub struct CompileLogEvent {
+    pub line: String,
+}
+
 /// Anti-drift: event names registered here must equal the literals/constants
 /// used by the emit sites.
 #[test]
@@ -389,7 +401,7 @@ use std::path::{Path, PathBuf};
 /// Every event name registered in this file (the desktop contract surface).
 fn registered_event_names() -> BTreeSet<String> {
     use tauri_specta::Event as _;
-    let names: [&str; 42] = [
+    let names: [&str; 44] = [
         JobOfferEvent::NAME,
         JobChangedEvent::NAME,
         JobCompletedEvent::NAME,
@@ -417,6 +429,7 @@ fn registered_event_names() -> BTreeSet<String> {
         AgentUsageEvt::NAME,
         AgentSessionInfoEvt::NAME,
         AgentFailedEvt::NAME,
+        AgentStatusEvt::NAME,
         AgentStreamEvt::NAME,
         AgentCompletedEvent::NAME,
         BridgeHostStatusEvent::NAME,
@@ -432,6 +445,7 @@ fn registered_event_names() -> BTreeSet<String> {
         PaperImportedEvent::NAME,
         PaperAssetsReadyEvent::NAME,
         PaperRenamedEventPayload::NAME,
+        CompileLogEvent::NAME,
     ];
     let set: BTreeSet<String> = names.iter().map(|n| n.to_string()).collect();
     assert_eq!(set.len(), names.len(), "duplicate NAME in registered list");

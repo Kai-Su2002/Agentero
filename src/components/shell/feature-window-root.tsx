@@ -5,6 +5,7 @@
 
 import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { TrafficLightSpacer } from "@/components/shell/traffic-light-spacer";
 import {
 	AnnotationsPanel,
 	type AskRow,
@@ -15,9 +16,9 @@ import {
 	useSettings,
 	useVaultStore,
 } from "@/hooks/use-app-stores";
+import { useExternalFileDrop } from "@/hooks/use-external-file-drop";
 import { useNativeSelectAllGuard } from "@/hooks/use-native-select-all-guard";
 import { applyAgentSessionHandoffOnce } from "@/lib/agent/agent-session-store";
-import { normalizeAgentSourcePath } from "@/lib/agent/sources";
 import { toVaultRelative } from "@/lib/core/path";
 import { isMacOS, isTauri } from "@/lib/core/tauri";
 import { toSafeDisposer } from "@/lib/core/tauri-events";
@@ -58,7 +59,7 @@ import { joinVaultPath } from "@/lib/vault";
 import { openRecentVault } from "@/lib/vault/actions";
 import { refreshTree } from "@/lib/vault/store";
 import { rebuildWikiAndNotify } from "@/lib/wiki/store";
-import { openGraphPath } from "@/lib/workspace/actions";
+import { openCitation } from "@/lib/workspace/actions";
 
 const AgentPanel = lazy(() =>
 	import("@/components/agent/agent-panel").then((m) => ({
@@ -109,17 +110,7 @@ function viewTitleKey(
 }
 
 function handleAgentOpenSource(source: string): void {
-	const trimmed = normalizeAgentSourcePath(source);
-	if (!trimmed) return;
-	if (/^https?:\/\//i.test(trimmed)) {
-		void import("@tauri-apps/plugin-opener")
-			.then(({ openUrl }) => openUrl(trimmed))
-			.catch(() => {
-				window.open(trimmed, "_blank", "noopener,noreferrer");
-			});
-		return;
-	}
-	openGraphPath(trimmed);
+	openCitation(source);
 }
 
 function FeatureAnnotations({
@@ -250,6 +241,8 @@ function FeatureAnnotations({
 }
 
 export function FeatureWindowRoot() {
+	useExternalFileDrop();
+
 	const { t } = useTranslation(["app"]);
 	const view = useMemo(() => readFeatureWindowView() ?? "agent", []);
 	const bootQuery = useMemo(() => readFeatureQuery(), []);
@@ -364,10 +357,7 @@ export function FeatureWindowRoot() {
 					data-titlebar
 					className="flex h-8 shrink-0 items-center border-b border-border/50 bg-background/75 backdrop-blur-xl backdrop-saturate-150 supports-backdrop-blur:bg-background/65 select-none"
 				>
-					<div
-						className="w-[92px] shrink-0 self-stretch"
-						data-tauri-drag-region
-					/>
+					<TrafficLightSpacer />
 					<div
 						className="min-w-0 flex-1 truncate px-2 text-sm font-medium text-muted-foreground"
 						data-tauri-drag-region

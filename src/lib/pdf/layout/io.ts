@@ -10,7 +10,7 @@ import type { PdfLayoutKind, PdfLayoutRegion } from "@/lib/pdf/layout/types";
 import { joinVaultPath, readVaultFile, writeVaultFile } from "@/lib/vault";
 
 /** Bump when label mapping / stored region semantics change (invalidates cache). */
-export const LAYOUT_SIDECAR_SCHEMA_VERSION = 2;
+export const LAYOUT_SIDECAR_SCHEMA_VERSION = 3;
 export const LAYOUT_SIDECAR_FILE = "layout.json";
 /** Re-export for consumers that only import from `io`. */
 export { LAYOUT_INDEX_FILE } from "@/lib/pdf/layout/layout-index";

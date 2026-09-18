@@ -537,8 +537,6 @@ export function MarkdownEditor({
 		cut: handleContextMenuCut,
 		paste: handleContextMenuPaste,
 		insertLink: insertContextMenuLink,
-		formatMarkdown: handleContextMenuFormatMarkdown,
-		formatting: formattingMarkdown,
 		headingContext,
 		renameOpen: headingRenameOpen,
 		setRenameOpen: setHeadingRenameOpen,
@@ -548,7 +546,6 @@ export function MarkdownEditor({
 		editor,
 		editorContainerRef,
 		readOnly,
-		serialize,
 		savedRef,
 		dirtyRef,
 		filePathRef,
@@ -796,21 +793,6 @@ export function MarkdownEditor({
 											</ContextMenuShortcut>
 										</ContextMenuItem>
 										<ContextMenuSeparator />
-										<ContextMenuItem
-											disabled={
-												!contextMenuCapabilities.formatMarkdown ||
-												formattingMarkdown
-											}
-											onSelect={() => {
-												void handleContextMenuFormatMarkdown();
-											}}
-										>
-											{i18n.t(
-												formattingMarkdown
-													? "editor:contextMenu.formatMarkdownBusy"
-													: "editor:contextMenu.formatMarkdown",
-											)}
-										</ContextMenuItem>
 										<ContextMenuItem
 											disabled={
 												!contextMenuCapabilities.exportNote || exportBusy

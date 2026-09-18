@@ -10,17 +10,14 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { HighlightColorStack } from "@/components/viewer/pdf/cards/highlight-color-stack";
 import { PDF_SELECTION_MENU } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
 import { cn } from "@/lib/core/utils";
 import {
 	highlightColorOf,
 	isHighlightObject,
 } from "@/lib/pdf/highlight/annotation-store";
-import {
-	HIGHLIGHT_COLORS,
-	type HighlightColor,
-	swatchColorClass,
-} from "@/lib/pdf/highlight/palette";
+import type { HighlightColor } from "@/lib/pdf/highlight/palette";
 
 type HighlightAnnotationMenuProps = AnnotationSelectionMenuProps & {
 	docId: string;
@@ -87,35 +84,22 @@ export function HighlightAnnotationMenu({
 					role="toolbar"
 					aria-label={t("selection.highlightMenuLabel")}
 					className={cn(
-						"pointer-events-auto absolute left-1/2 z-10 flex h-10 items-center gap-0.5 px-1",
+						"pointer-events-auto absolute z-10 flex h-10 items-center gap-0.5 px-1",
 						PDF_SELECTION_MENU,
 						placement.suggestTop ? "top-full mt-1.5" : "bottom-full mb-1.5",
 					)}
-					style={{ transform: "translateX(-50%)" }}
+					// Pin the toolbar by its right edge so the color stack fans left on
+					// hover while the divider / edit / delete actions stay put — same
+					// behavior as the text-selection highlight toolbar.
+					style={{ right: "calc(50% - 68px)" }}
 				>
-					{HIGHLIGHT_COLORS.map((color) => (
-						<Tooltip key={color}>
-							<TooltipTrigger asChild>
-								<button
-									type="button"
-									aria-label={t(`selection.color.${color}`)}
-									aria-pressed={activeColor === color}
-									className={cn(
-										"mx-0.5 size-4 shrink-0 rounded-full ring-1 ring-black/15 transition-transform duration-100 hover:scale-105 active:scale-95 dark:ring-white/25",
-										swatchColorClass(color),
-										activeColor === color &&
-											"ring-2 ring-offset-1 ring-offset-background ring-foreground/70",
-									)}
-									onClick={() =>
-										onChangeColor(context.pageIndex, obj.id, color)
-									}
-								/>
-							</TooltipTrigger>
-							<TooltipContent side={placement.suggestTop ? "bottom" : "top"}>
-								{t(`selection.color.${color}`)}
-							</TooltipContent>
-						</Tooltip>
-					))}
+					<HighlightColorStack
+						activeColor={activeColor}
+						tooltipSide={placement.suggestTop ? "bottom" : "top"}
+						onSelect={(color) =>
+							onChangeColor(context.pageIndex, obj.id, color)
+						}
+					/>
 					<div className="mx-1 h-5 w-px shrink-0 bg-border" />
 					<Tooltip>
 						<TooltipTrigger asChild>

@@ -217,7 +217,7 @@ export function AboutPane() {
 			});
 		}
 		if (cli.installed && !cli.preferredBinOnPath) {
-			return t("about.cli.pathMissing", { dir: cli.preferredBinDir });
+			return t("about.cli.pathMissing");
 		}
 		if (!cli.canInstall) {
 			return t("about.cli.notBundled");
@@ -231,6 +231,10 @@ export function AboutPane() {
 	const canInstallCli = Boolean(cli?.canInstall) && !cliBusy;
 	const showInstall = !cli?.installed || needsCliUpdate;
 	const showBrewCliHint = isMac && showInstall && Boolean(cli?.brewAvailable);
+	const cliVerifyCommand =
+		isWin && cli?.installPath
+			? `call "${cli.installPath.replaceAll('"', '""')}" --version`
+			: `${cli?.commandName ?? "agentero-cli"} --version`;
 
 	const showFinderRow = isMac && isTauri() && finder?.supported !== false;
 	const needsFinderUpdate = Boolean(finder?.installed && !finder.current);
@@ -396,7 +400,7 @@ export function AboutPane() {
 									: t("about.cli.verifyHint")}
 							</p>
 							<CompactCodeBlock
-								code={`${cli.commandName} --version`}
+								code={cliVerifyCommand}
 								language="shell"
 								wrap
 								className="[&_pre]:opacity-75"

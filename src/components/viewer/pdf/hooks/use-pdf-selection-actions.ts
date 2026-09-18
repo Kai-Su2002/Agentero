@@ -1,9 +1,9 @@
 /**
  * Selection actions (highlight / note / copy / ask / add-to-chat / translate).
  *
- * Highlight / copy / ask / translate are wired to the floating selection
- * toolbar; add-to-chat is the pill at the selection's bottom-right; note is
- * typed on the right-rail selection comment chip and committed from there.
+ * Highlight / ask (quick chat) / add-to-chat / translate are wired to the
+ * floating selection toolbar; note is typed on the right-rail selection
+ * comment chip and committed from there.
  * Detection and menu state stay in {@link usePdfTextSelection}; each action's
  * real work belongs to its own cluster.
  */
@@ -12,8 +12,15 @@ import type {
 	FormattedSelection,
 	useSelectionCapability,
 } from "@embedpdf/plugin-selection/react";
-import { type Dispatch, type SetStateAction, useCallback, useRef } from "react";
+import {
+	type Dispatch,
+	type SetStateAction,
+	useCallback,
+	useEffect,
+	useRef,
+} from "react";
 import type { SelectionMenuState } from "@/components/viewer/pdf/types";
+import { registerSelectionQuickChat } from "@/lib/agent/selection-quick-chat";
 import {
 	pinActiveSelection,
 	publishSelection,
@@ -70,7 +77,6 @@ export type PdfSelectionActions = {
 		},
 		comment: string,
 	) => void;
-	handleCopy: () => void;
 	handleMenuAsk: () => void;
 	handleMenuAddToChat: () => void;
 	handleMenuTranslate: () => void;
@@ -132,10 +138,6 @@ export function usePdfSelectionActions({
 		],
 	);
 
-	const handleCopy = useCallback(() => {
-		selectionCap?.copyToClipboard(docId);
-	}, [selectionCap, docId]);
-
 	const handleMenuAsk = useCallback(() => {
 		const menu = selectionMenuRef.current;
 		if (!menu) return;
@@ -144,6 +146,15 @@ export function usePdfSelectionActions({
 		selectionCap?.clear(docId);
 		startFromAnchor(anchor);
 	}, [startFromAnchor, selectionCap, docId, setSelectionMenu]);
+
+	// ⌘K Quick chat — only while this viewer's selection toolbar is armed.
+	useEffect(() => {
+		return registerSelectionQuickChat(() => {
+			if (!selectionMenuRef.current) return false;
+			handleMenuAsk();
+			return true;
+		});
+	}, [handleMenuAsk]);
 
 	const handleMenuAddToChat = useCallback(() => {
 		const menu = selectionMenuRef.current;
@@ -179,7 +190,6 @@ export function usePdfSelectionActions({
 	return {
 		handleHighlight,
 		handleCommitSelectionNote,
-		handleCopy,
 		handleMenuAsk,
 		handleMenuAddToChat,
 		handleMenuTranslate,

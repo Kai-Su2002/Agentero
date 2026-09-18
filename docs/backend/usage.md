@@ -11,7 +11,7 @@
 | macOS / Linux | `~/.local/share/agentero/usage.sqlite` |
 | Windows | `%APPDATA%\agentero\usage.sqlite`（`dirs::data_dir`） |
 
-代码：存储层 `crates/agentero-core/src/usage/`（tauri 无关，桌面与 CLI 共用）；Tauri commands `src-tauri/src/core/usage/commands.rs`。前端入口 `src/lib/activity/track.ts`（`track()` 缓冲批量上报）。
+代码：存储层 `crates/agentero-core/src/usage/`（tauri 无关，桌面端使用）；Tauri commands `src-tauri/src/core/usage/commands.rs`。前端入口 `src/lib/activity/track.ts`（`track()` 缓冲批量上报）。CLI 不再暴露 usage 命令。
 
 ## 开关
 
@@ -134,16 +134,7 @@ PRIMARY KEY (day, vault, kind, paper_path, facet)
 
 ## CLI
 
-```bash
-agentero usage which --json
-agentero usage timeline --days 30 --json
-agentero usage summary --days 30 --json
-agentero usage timeline --kind paper.open --path papers/xxx --json
-agentero usage clear -y          # 当前 --vault
-agentero usage clear --all -y    # 本机全部
-```
-
-未加 `--all-vaults` 时 timeline / summary 过滤当前 Vault。
+CLI 不再暴露 `usage` 命令；查询、统计与清除请通过桌面端设置或 Host API 进行。
 
 ## 前端漏斗
 

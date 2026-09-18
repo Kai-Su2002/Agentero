@@ -1,10 +1,18 @@
-//! MCP resource `agentero://vault` — Markdown vault overview.
+//! MCP resources: vault overview, agent invariants, bundled CLI skill.
 
 use super::McpController;
 use crate::features::paper::catalog::{self, papers};
+use agentero_core::features::vault;
+use agentero_core::ops;
 
 pub const VAULT_URI: &str = "agentero://vault";
 pub const VAULT_NAME: &str = "vault";
+
+pub const INVARIANTS_URI: &str = "agentero://agent-invariants";
+pub const INVARIANTS_NAME: &str = "agent-invariants";
+
+pub const SKILL_URI: &str = "agentero://skills/agentero-cli";
+pub const SKILL_NAME: &str = "agentero-cli-skill";
 
 pub fn vault_markdown(ctrl: &McpController) -> String {
     match ctrl.local_vault() {
@@ -28,7 +36,8 @@ pub fn vault_markdown(ctrl: &McpController) -> String {
                  - **schemaVersion**: {schema}\n\
                  - **papers**: {papers_n}\n\
                  - **unread**: {unread}\n\n\
-                 Use `paper_list` / `paper_get` next. `ref` is a paper id or vault-relative path.\n",
+                 Next: read `{INVARIANTS_URI}`, then `paper_list` (slim by default) / `paper_get`.\n\
+                 `ref` is a paper id or vault-relative path. Use `fields` or `full` on `paper_list` only when needed.\n",
                 vault.display()
             )
         }
@@ -36,5 +45,28 @@ pub fn vault_markdown(ctrl: &McpController) -> String {
             "# Agentero vault\n\nNo local vault is open. Open a vault in Agentero, then read this resource again.\n"
                 .into()
         }
+    }
+}
+
+pub fn invariants_markdown() -> String {
+    ops::agent_invariants_markdown().to_string()
+}
+
+pub fn skill_markdown() -> String {
+    vault::bundled_skill_files()
+        .iter()
+        .find_map(|(rel, content)| {
+            (*rel == ".agents/skills/agentero-cli/SKILL.md").then_some(*content)
+        })
+        .expect("agentero-cli skill bundled")
+        .to_string()
+}
+
+pub fn read(uri: &str, ctrl: &McpController) -> Option<(String, &'static str)> {
+    match uri {
+        VAULT_URI => Some((vault_markdown(ctrl), "text/markdown")),
+        INVARIANTS_URI => Some((invariants_markdown(), "text/markdown")),
+        SKILL_URI => Some((skill_markdown(), "text/markdown")),
+        _ => None,
     }
 }

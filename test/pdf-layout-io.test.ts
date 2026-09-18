@@ -14,7 +14,7 @@ describe("layout sidecar", () => {
 
 	it("parses raw text-enriched layout regions", () => {
 		const sidecar = parseLayoutSidecar({
-			schemaVersion: 2,
+			schemaVersion: 3,
 			source: {
 				mode: "embedpdf-layout",
 				generatedAt: "2026-08-07T00:00:00Z",
@@ -42,7 +42,7 @@ describe("layout sidecar", () => {
 
 	it("accepts the paddle-layout source mode", () => {
 		const sidecar = parseLayoutSidecar({
-			schemaVersion: 2,
+			schemaVersion: 3,
 			source: {
 				mode: "paddle-layout",
 				generatedAt: "2026-08-12T00:00:00Z",
@@ -74,7 +74,7 @@ describe("layout sidecar", () => {
 		).toBeNull();
 		expect(
 			parseLayoutSidecar({
-				schemaVersion: 2,
+				schemaVersion: 3,
 				source: { mode: "embedpdf-layout", generatedAt: "now" },
 				regions: [{ id: "x", kind: "unknown" }],
 			}),

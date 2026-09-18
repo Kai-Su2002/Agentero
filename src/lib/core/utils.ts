@@ -6,6 +6,17 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
+ * Truncate a string to at most `maxChars` grapheme clusters, appending an
+ * ellipsis when it was shortened. Useful for compact chip labels where CSS
+ * truncation is not precise enough.
+ */
+export function truncateToChars(str: string, maxChars: number): string {
+	const chars = Array.from(str);
+	if (chars.length <= maxChars) return str;
+	return `${chars.slice(0, maxChars).join("")}…`;
+}
+
+/**
  * Map over `items` with a concurrency limit. Useful for issuing a bounded
  * number of async RPCs in parallel without pulling in a full-blown queue
  * library.

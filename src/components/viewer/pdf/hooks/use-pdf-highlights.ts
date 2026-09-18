@@ -40,8 +40,6 @@ import {
 } from "react";
 import { isLinkObject } from "@/components/viewer/pdf/layers/citation-links";
 import type { PdfViewerProps } from "@/components/viewer/pdf/types";
-import { events } from "@/lib/core/bindings";
-import { listenEventSafe } from "@/lib/core/tauri-events";
 import {
 	ANNOTATIONS_FILE,
 	type HighlightCustom,
@@ -61,6 +59,7 @@ import type { PdfHighlight } from "@/lib/pdf/highlight/types";
 import type { NormalizedRect } from "@/lib/pdf/selection";
 import { marksDir } from "@/lib/pdf/selection";
 import { isRecentSelfWrite } from "@/lib/pdf/selection/marks-io";
+import { listenVaultFileChangedGated } from "@/lib/vault/file-change-gate";
 import { joinVaultPath, normalizePathKey } from "@/lib/vault/path";
 
 /** Coalesce annotation bursts (drag-create, multi-page highlight) into one export. */
@@ -321,7 +320,7 @@ export function usePdfHighlights({
 			}, 0);
 		};
 
-		const unsub = listenEventSafe(events.vaultFileChanged, (payload) => {
+		const unsub = listenVaultFileChangedGated((payload) => {
 			const paths = [...payload.paths];
 			if (payload.rename) {
 				paths.push(payload.rename.from, payload.rename.to);

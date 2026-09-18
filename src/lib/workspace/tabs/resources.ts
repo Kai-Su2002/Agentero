@@ -12,6 +12,7 @@ import {
 	getRemoteArxivPaperByPath,
 	isPaperDirectory,
 	isRemoteArxivPath,
+	isUnderPapers,
 	loadPaperMetadata,
 	loadPaperOpenBundle,
 	localFileToArrayBuffer,
@@ -42,11 +43,12 @@ import {
 	type TabResources,
 } from "@/lib/workspace/tabs/types";
 import {
-	type CenterViewMode,
 	imageMimeFromPath,
+	isExcalidrawPath,
 	isHtmlPath,
 	isImagePath,
 	isPdfPath,
+	paperBodyMode,
 	preferredModeForPath,
 } from "@/lib/workspace/viewer";
 
@@ -214,7 +216,7 @@ export async function loadTabResources(
 			};
 		}
 		const { pdfUrl, htmlUrl } = paperRemoteAssetsFromMetadata(meta);
-		const mode: CenterViewMode = pdfUrl ? "pdf" : htmlUrl ? "html" : "markdown";
+		const mode = paperBodyMode(Boolean(pdfUrl), htmlUrl);
 		return {
 			kind: "paper",
 			title: meta.title || path.slice(REMOTE_ARXIV_PREFIX.length),
@@ -253,11 +255,15 @@ export async function loadTabResources(
 	// Non-paper directory (org folder under papers/, notes/, etc.) → scoped library.
 	// Tree may be empty during tab restore before refreshTree completes: fall back to
 	// "not an openable file" so folder paths still reopen as library scope tabs.
+	// Outside `papers/` any extension-bearing path is a plain-text fallback file;
+	// extension-less names stay directory-suspect for that restore race.
 	const looksLikeOpenableFile =
 		isPdfPath(path) ||
 		isImagePath(path) ||
 		isHtmlPath(path) ||
-		isTextOpenable(path);
+		isExcalidrawPath(path) ||
+		isTextOpenable(path) ||
+		(!isUnderPapers(path) && /\.[^\\/]+$/.test(path));
 	if (
 		!paperDir &&
 		(treeNode?.kind === "directory" ||
@@ -280,47 +286,67 @@ export async function loadTabResources(
 
 	if (paperDir) {
 		const notesPath = notesPathForPaper(paperDir);
-		const bundle = await loadPaperOpenBundle(paperDir, vaultPath);
-		const notesSeedPromise = bundle
-			? Promise.resolve(bundle.notesSeed ?? NOTES_PLACEHOLDER)
-			: readVaultFile(notesPath).catch(() => NOTES_PLACEHOLDER);
-		const meta =
-			bundle?.paper ?? (await loadPaperMetadata(paperDir, vaultPath));
-		const { pdfUrl: remotePdf, htmlUrl } = paperRemoteAssetsFromMetadata(meta);
-		let paperPdf: string | null = null;
-		let paperBytes: ArrayBuffer | null = null;
-		let didDownload = false;
-		if (bundle?.pdfPath) {
-			paperBytes = await localFileToArrayBuffer(bundle.pdfPath);
+		// Fallback seed read races with the probes below; resolved last so a
+		// bundle that only arrives on the retry wins over an early failed read.
+		const notesFallback = readVaultFile(notesPath).catch(
+			() => NOTES_PLACEHOLDER,
+		);
+		const probeOpenState = async () => {
+			const bundle = await loadPaperOpenBundle(paperDir, vaultPath);
+			const meta =
+				bundle?.paper ?? (await loadPaperMetadata(paperDir, vaultPath));
+			const { pdfUrl: remotePdf, htmlUrl } =
+				paperRemoteAssetsFromMetadata(meta);
+			let paperPdf: string | null = null;
+			let paperBytes: ArrayBuffer | null = null;
+			let didDownload = false;
+			if (bundle?.pdfPath) {
+				paperBytes = await localFileToArrayBuffer(bundle.pdfPath);
+			}
+			if (!paperBytes) {
+				const resolved = await resolvePaperPdfSource(
+					paperDir,
+					vaultPath,
+					meta,
+					remotePdf,
+				);
+				paperPdf = resolved.pdfUrl;
+				paperBytes = resolved.pdfBytes;
+				didDownload = resolved.didDownload;
+			}
+			return { bundle, meta, htmlUrl, paperPdf, paperBytes, didDownload };
+		};
+
+		let open = await probeOpenState();
+		// Startup race: the paper exists on disk, yet neither the catalog bundle
+		// nor metadata resolved — the Host was likely still opening the vault
+		// (fs scope / catalog not ready yet). Hydration runs exactly once, so a
+		// miss here would stick; one delayed re-probe heals the tab instead.
+		if (
+			!open.paperPdf &&
+			!open.paperBytes &&
+			!open.htmlUrl &&
+			(!open.bundle || !open.meta) &&
+			isTauri() &&
+			vaultPath
+		) {
+			await new Promise((resolve) => setTimeout(resolve, 1200));
+			open = await probeOpenState();
 		}
-		if (!paperBytes) {
-			const resolved = await resolvePaperPdfSource(
-				paperDir,
-				vaultPath,
-				meta,
-				remotePdf,
-			);
-			paperPdf = resolved.pdfUrl;
-			paperBytes = resolved.pdfBytes;
-			didDownload = resolved.didDownload;
-		}
+
+		const { bundle, meta, htmlUrl, paperPdf, paperBytes, didDownload } = open;
 		// Open-paper reconcile (§7.4 入口②): backfill PAPER.md (ParseBody) and
 		// references (ParseRefs) as needed. Idempotent — the JobCenter dedupes
 		// jobs, so this is safe even right after a download.
 		reconcilePaperOnOpen(paperDir, vaultPath);
-		const notesSeed = await notesSeedPromise;
+		const notesSeed = bundle?.notesSeed ?? (await notesFallback);
 
 		const openingPaperRoot =
 			normalizePathKey(path) === normalizePathKey(paperDir) ||
 			isPaperDirectory(path, findChildren(tree, path));
 
 		if (openingPaperRoot) {
-			const hasPdf = Boolean(paperPdf || paperBytes);
-			const mode: CenterViewMode = hasPdf
-				? "pdf"
-				: htmlUrl
-					? "html"
-					: "markdown";
+			const mode = paperBodyMode(Boolean(paperPdf || paperBytes), htmlUrl);
 			return {
 				kind: "paper",
 				title: meta?.title || basenameOf(paperDir),
@@ -338,12 +364,34 @@ export async function loadTabResources(
 			};
 		}
 
+		// A directory inside a paper folder (figures/, data/…) is not an
+		// openable file — scoped library, never an empty Markdown editor.
+		if (
+			treeNode?.kind === "directory" ||
+			(treeNode == null && !looksLikeOpenableFile)
+		) {
+			return {
+				kind: "library",
+				title: treeNode?.name || basenameOf(path),
+				mode: "markdown",
+				paperMeta: null,
+				pdfUrl: null,
+				htmlUrl: null,
+				imageUrl: null,
+				notesPath: null,
+				notesSeed: "",
+				markdownSeed: "",
+				loaded: true,
+			};
+		}
+
 		// A file inside a paper folder (e.g. NOTES.md, a nested PDF, or figure).
 		const mode = preferredModeForPath(path);
 		let pdfUrl = paperPdf;
 		let pdfBytes = paperBytes;
 		let imageUrl: string | null = null;
 		let markdownSeed = "";
+		let excalidrawSeed = "";
 
 		if (isPdfPath(path)) {
 			// Prefer the exact file the user clicked (may differ from canonical {id}.pdf).
@@ -380,6 +428,13 @@ export async function loadTabResources(
 				// Leave the editor empty when the file cannot be read.
 			}
 		}
+		if (isExcalidrawPath(path)) {
+			try {
+				excalidrawSeed = await readVaultFile(path);
+			} catch {
+				// Leave the canvas empty when the file cannot be read.
+			}
+		}
 
 		return {
 			kind: "file",
@@ -393,6 +448,7 @@ export async function loadTabResources(
 			notesPath,
 			notesSeed,
 			markdownSeed,
+			excalidrawSeed,
 			loaded: true,
 			didDownloadAssets: didDownload,
 		};
@@ -432,6 +488,27 @@ export async function loadTabResources(
 			return { ...base, mode: "image", error: "cannotPreview" };
 		}
 		return { ...base, mode: "image", imageUrl };
+	}
+
+	if (isExcalidrawPath(path)) {
+		try {
+			const excalidrawSeed = await readVaultFile(path);
+			return { ...base, mode: "excalidraw", excalidrawSeed };
+		} catch (e) {
+			return { ...base, mode: "excalidraw", error: errorText(e) };
+		}
+	}
+
+	// CodeMirror plain-text fallback (Papers 外未知/文本扩展名). Unlike the
+	// Markdown editor this accepts any extension — the text editor is the
+	// catch-all viewer, so no isTextOpenable gate here.
+	if (mode === "text") {
+		try {
+			const textSeed = await readVaultFile(path);
+			return { ...base, textSeed };
+		} catch (e) {
+			return { ...base, error: errorText(e) };
+		}
 	}
 
 	if (isHtmlPath(path)) {

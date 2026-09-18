@@ -1,4 +1,10 @@
-import { Check, ChevronDownIcon, CopyIcon, Pencil } from "lucide-react";
+import {
+	Check,
+	ChevronDownIcon,
+	CopyIcon,
+	Pencil,
+	Terminal,
+} from "lucide-react";
 import type { RefObject } from "react";
 import {
 	Fragment,
@@ -11,6 +17,7 @@ import {
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { useStickToBottomContext } from "use-stick-to-bottom";
 import { AgentThinkingOrb } from "@/components/agent/agent-thinking-orb";
 import {
 	ChatAttachedImages,
@@ -55,12 +62,6 @@ import {
 	ReasoningTrigger,
 } from "@/components/ai-elements/reasoning";
 import { Shimmer } from "@/components/ai-elements/shimmer";
-import {
-	Source,
-	Sources,
-	SourcesContent,
-	SourcesTrigger,
-} from "@/components/ai-elements/sources";
 import { Suggestion } from "@/components/ai-elements/suggestion";
 import {
 	Tool,
@@ -75,6 +76,8 @@ import {
 	CollapsibleContent,
 	CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import { Skeleton } from "@/components/ui/skeleton";
+import { type AgentPhaseState, isAgentAuthFailure } from "@/lib/agent/api";
 import {
 	type AgentPart,
 	agentTextFromParts,
@@ -84,10 +87,11 @@ import {
 	parseAskUserQuestions,
 	SUGGESTION_KEYS,
 	SUGGESTION_WORKFLOW,
+	streamingLabel,
 	toolPartState,
 } from "@/lib/agent/chat-state";
+import { stripInlineTokens } from "@/lib/agent/composer-inline-tokens";
 import { stripPromptEnvelopeForDisplay } from "@/lib/agent/prompt-display";
-import { normalizeAgentSourcePath } from "@/lib/agent/sources";
 import { cn } from "@/lib/core/utils";
 
 /** Compact note: interactive form is docked below, not inside the tool card. */
@@ -105,6 +109,45 @@ function AskUserToolPendingNote() {
 function isNonTextPart(part: AgentPart): boolean {
 	return (
 		part.type === "reasoning" || part.type === "plan" || part.type === "tool"
+	);
+}
+
+/** On tab switch, jump to the latest messages instead of keeping the old scroll position. */
+function TabScrollToBottom({ activeTabId }: { activeTabId: string }) {
+	const { scrollToBottom } = useStickToBottomContext();
+	const prevTabIdRef = useRef(activeTabId);
+
+	useEffect(() => {
+		if (prevTabIdRef.current !== activeTabId) {
+			prevTabIdRef.current = activeTabId;
+			scrollToBottom({ animation: "instant" });
+		}
+	}, [activeTabId, scrollToBottom]);
+
+	return null;
+}
+
+function HistorySessionShimmer() {
+	const { t } = useTranslation("agent");
+	return (
+		<div className="flex w-full flex-col gap-6 pt-2" aria-live="polite">
+			<div className="flex justify-end">
+				<div className="flex w-[78%] max-w-[32rem] flex-col gap-2 rounded-lg bg-muted px-3 py-2.5">
+					<Skeleton className="h-4 w-11/12 bg-muted-foreground/15" />
+					<Skeleton className="h-4 w-7/12 bg-muted-foreground/15" />
+				</div>
+			</div>
+			<div className="flex w-full max-w-[38rem] flex-col gap-3">
+				<Shimmer className="text-sm" as="p">
+					{t("history.restoring")}
+				</Shimmer>
+				<div className="flex flex-col gap-2">
+					<Skeleton className="h-4 w-10/12" />
+					<Skeleton className="h-4 w-full" />
+					<Skeleton className="h-4 w-8/12" />
+				</div>
+			</div>
+		</div>
 	);
 }
 
@@ -154,9 +197,12 @@ function AgentProcessCollapsible({
 function StreamingActivityRow({
 	parts,
 	streaming,
+	phase = null,
 }: {
 	parts: AgentPart[];
 	streaming: boolean;
+	/** Backend loading phase (starting / waiting-model / reconnecting) outranks part-derived labels. */
+	phase?: AgentPhaseState | null;
 }) {
 	const { t } = useTranslation("agent");
 	const [elapsed, setElapsed] = useState(0);
@@ -173,21 +219,16 @@ function StreamingActivityRow({
 
 	if (!streaming) return null;
 
-	const lastNonText = [...parts].reverse().find((p) => p.type !== "text");
-	let label: string;
-	if (lastNonText?.type === "tool") {
-		label = lastNonText.tool.title || lastNonText.tool.kind;
-	} else if (lastNonText?.type === "reasoning") {
-		label = lastNonText.text.trim() || t("streaming.reasoning");
-	} else if (lastNonText?.type === "plan") {
-		label = t("streaming.plan");
-	} else {
-		label = t("streaming.thinking");
-	}
+	const label = streamingLabel(phase, parts, t);
 
 	return (
 		<div className="flex w-full items-center gap-2 text-muted-foreground text-sm">
-			<AgentThinkingOrb parts={parts} streaming={streaming} showLabel={false} />
+			<AgentThinkingOrb
+				parts={parts}
+				streaming={streaming}
+				phase={phase}
+				showLabel={false}
+			/>
 			<span className="min-w-0 flex-1 truncate">{label}</span>
 			<span className="text-xs tabular-nums">
 				{t("streaming.elapsed", { count: elapsed })}
@@ -214,6 +255,7 @@ type RowHandlers = {
 	onResendEdited: (lineId: string) => void;
 	onStartEditing: (lineId: string, text: string) => void;
 	onSendSuggestion: (label: string, workflow?: string) => void;
+	onAgentLogin?: () => void;
 	onOpenSource?: (source: string) => void;
 	editCompositionProps: {
 		onCompositionStart?: () => void;
@@ -274,6 +316,7 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 	handlers,
 	partOpenState,
 	onPartOpenChange,
+	phase = null,
 }: {
 	line: ChatLine;
 	activeTabId: string;
@@ -291,6 +334,8 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 	 */
 	partOpenState: Record<string, boolean>;
 	onPartOpenChange: (key: string, open: boolean) => void;
+	/** Loading phase, only passed to the last streaming agent row. */
+	phase?: AgentPhaseState | null;
 }) {
 	const { t } = useTranslation("agent");
 	const { onOpenSource } = handlers;
@@ -353,7 +398,9 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 				</Message>
 			);
 		}
-		const userDisplay = stripPromptEnvelopeForDisplay(line.text);
+		const userDisplay = stripPromptEnvelopeForDisplay(
+			stripInlineTokens(line.text),
+		);
 		// Never render Codex env / Host system envelopes as user bubbles.
 		if (!userDisplay && visuals.length === 0 && attachedImages.length === 0)
 			return null;
@@ -364,35 +411,42 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 		});
 		return (
 			<Message from="user" className="max-w-[85%]">
-				{/* Visual / image chips above the text bubble (not inside it). */}
+				{/* Visual chips above the text bubble (not inside it). */}
 				{visuals.length > 0 ? (
 					<ChatVisualAnnotations annotations={visuals} />
 				) : null}
-				{attachedImages.length > 0 ? (
-					<ChatAttachedImages images={attachedImages} />
-				) : null}
-				{/* Free-text only: skip empty bubble when the turn is image/visual-only. */}
-				{userDisplay ? (
-					<MessageContent className="rounded-2xl px-4 py-2.5">
-						<MessageResponse className="text-base leading-relaxed">
-							{userDisplay}
-						</MessageResponse>
-					</MessageContent>
-				) : null}
-				{/* Align under user content (Message is full-width) */}
-				<MessageActions className="-mt-1 ml-auto opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-					{activeTabIsRunning || !userDisplay ? null : (
-						<MessageAction
-							tooltip={t("edit.action")}
-							label={t("edit.action")}
-							disabled={submitting || switching}
-							onClick={() => handlers.onStartEditing(line.id, userDisplay)}
-						>
-							<Pencil className="size-3.5" />
-						</MessageAction>
-					)}
-					<CopyAction text={copyPayload} />
-				</MessageActions>
+				{/*
+				 * Right-anchored content block. Hover actions float at its
+				 * bottom-left corner, out of layout flow — a hidden action row
+				 * used to add a blank line between the user turn and the reply.
+				 */}
+				<div className="relative ml-auto w-fit max-w-full">
+					{attachedImages.length > 0 ? (
+						<ChatAttachedImages images={attachedImages} />
+					) : null}
+					{/* Free-text only: skip empty bubble when the turn is image/visual-only. */}
+					{userDisplay ? (
+						<MessageContent className="rounded-2xl px-4 py-2.5">
+							<MessageResponse className="text-base leading-relaxed">
+								{userDisplay}
+							</MessageResponse>
+						</MessageContent>
+					) : null}
+					{/* Hovers beside the bubble's bottom-left, outside the box. */}
+					<MessageActions className="absolute right-full bottom-0 mr-1.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+						{activeTabIsRunning || !userDisplay ? null : (
+							<MessageAction
+								tooltip={t("edit.action")}
+								label={t("edit.action")}
+								disabled={submitting || switching}
+								onClick={() => handlers.onStartEditing(line.id, userDisplay)}
+							>
+								<Pencil className="size-3.5" />
+							</MessageAction>
+						)}
+						<CopyAction text={copyPayload} />
+					</MessageActions>
+				</div>
 			</Message>
 		);
 	}
@@ -436,6 +490,7 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 						/>
 						<ReasoningContent
 							className={insideProcess ? "mt-2 px-2 pb-2" : undefined}
+							onOpenSource={onOpenSource}
 						>
 							{part.text}
 						</ReasoningContent>
@@ -547,7 +602,10 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 				Boolean(line.streaming) && index === lastIndex && part.text.length > 0;
 			return (
 				<div key={partKey} className="min-w-0">
-					<MessageResponse isAnimating={isAnimating}>
+					<MessageResponse
+						isAnimating={isAnimating}
+						onOpenSource={onOpenSource}
+					>
 						{part.text}
 					</MessageResponse>
 				</div>
@@ -577,9 +635,16 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 									renderAgentPart(part, index, false),
 								)}
 							</>
-						) : isStreaming && nonTextParts.length > 0 ? (
+						) : isStreaming &&
+							(nonTextParts.length > 0 || parts.length === 0) ? (
 							<>
-								<StreamingActivityRow parts={parts} streaming={isStreaming} />
+								{/* Empty parts: send → first chunk used to render nothing; the
+								    phase label + orb now fill that gap. */}
+								<StreamingActivityRow
+									parts={parts}
+									streaming={isStreaming}
+									phase={phase}
+								/>
 								{textParts.map((part, index) =>
 									renderAgentPart(part, index, false),
 								)}
@@ -594,36 +659,28 @@ const ChatTranscriptRow = memo(function ChatTranscriptRow({
 						</MessageActions>
 					) : null}
 				</Message>
-				{line.sources && line.sources.length > 0 ? (
-					<Sources>
-						<SourcesTrigger count={line.sources.length} />
-						<SourcesContent>
-							{line.sources.map((raw) => {
-								const s = normalizeAgentSourcePath(raw);
-								const isHttp = /^https?:\/\//i.test(s);
-								return (
-									<Source
-										key={s}
-										title={s}
-										// External URLs are opened by the opener plugin via onClick;
-										// do not render them as <a target="_blank"> to avoid Tauri
-										// creating an empty in-app webview window.
-										href={isHttp ? undefined : s}
-										onClick={onOpenSource ? () => onOpenSource(s) : undefined}
-									/>
-								);
-							})}
-						</SourcesContent>
-					</Sources>
-				) : null}
 			</div>
 		);
 	}
 	if (line.kind === "error") {
+		const canLogin =
+			Boolean(handlers.onAgentLogin) && isAgentAuthFailure(line.text);
 		return (
 			<Message from="assistant">
 				<MessageContent className="text-destructive">
 					<MessageResponse>{line.text}</MessageResponse>
+					{canLogin ? (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="mt-2 h-7 gap-1 px-2 text-xs"
+							onClick={() => handlers.onAgentLogin?.()}
+						>
+							<Terminal className="size-3" />
+							{t("login.action")}
+						</Button>
+					) : null}
 				</MessageContent>
 			</Message>
 		);
@@ -661,6 +718,7 @@ function TranscriptBody({
 	partOpenState,
 	onPartOpenChange,
 	forceVirtualize,
+	phase,
 }: {
 	lines: ChatLine[];
 	activeTabId: string;
@@ -674,6 +732,8 @@ function TranscriptBody({
 	partOpenState: Record<string, boolean>;
 	onPartOpenChange: (key: string, open: boolean) => void;
 	forceVirtualize?: boolean;
+	/** Loading phase, forwarded only to the last streaming agent row. */
+	phase?: AgentPhaseState | null;
 }) {
 	const { rowVirtualizer, virtualized } = useTranscriptVirtualizer({
 		lines,
@@ -691,6 +751,17 @@ function TranscriptBody({
 		}
 	}, [editingLineId, virtualized, lines, rowVirtualizer]);
 
+	// Only the last streaming agent row carries the phase, so memoized
+	// history rows do not re-render on every phase change.
+	let lastStreamingAgentId: string | null = null;
+	for (let index = lines.length - 1; index >= 0; index -= 1) {
+		const line = lines[index];
+		if (line.kind === "agent" && line.streaming) {
+			lastStreamingAgentId = line.id;
+			break;
+		}
+	}
+
 	const renderRow = (line: ChatLine) => {
 		const isEditing = editingLineId === line.id;
 		return (
@@ -706,6 +777,7 @@ function TranscriptBody({
 				handlers={handlers}
 				partOpenState={partOpenState}
 				onPartOpenChange={onPartOpenChange}
+				phase={phase && line.id === lastStreamingAgentId ? phase : null}
 			/>
 		);
 	};
@@ -746,6 +818,7 @@ function TranscriptBody({
 export function ChatTranscript({
 	lines,
 	activeTabId,
+	hydratingSessionId,
 	compact = false,
 	forceVirtualize = false,
 	activeTabIsRunning,
@@ -761,10 +834,13 @@ export function ChatTranscript({
 	onResendEdited,
 	onStartEditing,
 	onSendSuggestion,
+	onAgentLogin,
 	onOpenSource,
+	phase = null,
 }: {
 	lines: ChatLine[];
 	activeTabId: string;
+	hydratingSessionId: string | null;
 	compact?: boolean;
 	/** Storybook / tests: windowed rendering even below the line threshold. */
 	forceVirtualize?: boolean;
@@ -784,10 +860,15 @@ export function ChatTranscript({
 	onResendEdited: (lineId: string) => void;
 	onStartEditing: (lineId: string, text: string) => void;
 	onSendSuggestion: (label: string, workflow?: string) => void;
+	onAgentLogin?: () => void;
 	/** Open a vault path / paper (or external URL) from Sources / inline citation. */
 	onOpenSource?: (source: string) => void;
+	/** Loading phase of the in-flight turn (starting / waiting-model / reconnecting). */
+	phase?: AgentPhaseState | null;
 }) {
 	const { t } = useTranslation("agent");
+	const restoringHistorySession =
+		hydratingSessionId === activeTabId && lines.length === 0;
 
 	// Lifted Reasoning/Tool/Plan open state so virtualized rows keep their
 	// fold state across unmount/remount. Keyed by `${rowKey}:${part.id}`.
@@ -814,6 +895,7 @@ export function ChatTranscript({
 		onResendEdited,
 		onStartEditing,
 		onSendSuggestion,
+		onAgentLogin,
 		onOpenSource,
 		editCompositionProps,
 	});
@@ -824,6 +906,7 @@ export function ChatTranscript({
 		onResendEdited,
 		onStartEditing,
 		onSendSuggestion,
+		onAgentLogin,
 		onOpenSource,
 		editCompositionProps,
 	};
@@ -841,6 +924,9 @@ export function ChatTranscript({
 				latestHandlersRef.current.onStartEditing(lineId, text),
 			onSendSuggestion: (label, workflow) =>
 				latestHandlersRef.current.onSendSuggestion(label, workflow),
+			onAgentLogin: onAgentLogin
+				? () => latestHandlersRef.current.onAgentLogin?.()
+				: undefined,
 			// Keep undefined when absent so rows preserve "no open handler" UI.
 			onOpenSource: hasOpenSource
 				? (source) => latestHandlersRef.current.onOpenSource?.(source)
@@ -852,7 +938,7 @@ export function ChatTranscript({
 					latestHandlersRef.current.editCompositionProps.onCompositionEnd?.(),
 			},
 		}),
-		[hasOpenSource],
+		[hasOpenSource, onAgentLogin],
 	);
 
 	return (
@@ -864,7 +950,10 @@ export function ChatTranscript({
 						: undefined
 				}
 			>
-				{lines.length === 0 ? (
+				<TabScrollToBottom activeTabId={activeTabId} />
+				{restoringHistorySession ? (
+					<HistorySessionShimmer />
+				) : lines.length === 0 ? (
 					<div className="flex w-full flex-col gap-6">
 						<ConversationEmptyState
 							title={t("empty.title")}
@@ -908,6 +997,7 @@ export function ChatTranscript({
 						partOpenState={partOpenState}
 						onPartOpenChange={handlePartOpenChange}
 						forceVirtualize={forceVirtualize}
+						phase={phase}
 					/>
 				)}
 			</ConversationContent>

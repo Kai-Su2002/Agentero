@@ -10,6 +10,8 @@ import "driver.js/dist/driver.css";
 import type { TFunction } from "i18next";
 import { useCallback, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
+import { useStore } from "zustand";
+import { onboardingStore } from "@/components/onboarding/onboarding-store";
 import { useSettings, useVaultStore } from "@/hooks/use-app-stores";
 import { isMobileApp, isTauri } from "@/lib/core/tauri";
 import { listenTourRequest } from "@/lib/onboarding/api";
@@ -59,8 +61,21 @@ async function startTour(t: TFunction<"onboarding">): Promise<void> {
 
 	const candidates = [
 		{ selector: "[data-vault-sidebar]", key: "sidebar", side: "right" },
+		{ selector: "[data-library-row]", key: "library", side: "right" },
+		{ selector: "[data-cool-papers]", key: "coolPapers", side: "right" },
 		{ selector: "[data-magic-wand]", key: "magicWand", side: "bottom" },
+		{ selector: "[data-read-paper]", key: "readPaper", side: "right" },
 		{ selector: ".agentero-dockview", key: "workspace", side: "top" },
+		{
+			selector: "[data-full-text-translate]",
+			key: "fullTextTranslate",
+			side: "bottom",
+		},
+		{
+			selector: "[data-fetch-cool-papers-notes]",
+			key: "fetchCoolPapersNotes",
+			side: "bottom",
+		},
 		{ selector: "[data-agent-panel]", key: "agent", side: "left" },
 		{ selector: "[data-titlebar]", key: "titlebar", side: "bottom" },
 	] as const;
@@ -113,21 +128,24 @@ export function useFeatureTour(): void {
 	const { t } = useTranslation("onboarding");
 	const vaultPath = useVaultStore((s) => s.vaultPath);
 	const featureTourDone = useSettings((s) => s.featureTourDone);
+	const onboardingOpen = useStore(onboardingStore, (s) => s.open);
 	const startedRef = useRef(false);
 
 	const start = useCallback(() => {
 		void startTour(t);
 	}, [t]);
 
-	// Auto-start: first time a vault is active and the tour was never seen.
-	// Delay lets the tree / workspace settle before highlighting.
+	// Auto-start: first time a vault is active, the tour was never seen, and the
+	// onboarding wizard is closed. Waiting for the wizard to dismiss prevents the
+	// highlight tour from racing with the onboarding overlay.
 	useEffect(() => {
 		if (!isTauri() || isMobileApp()) return;
-		if (!vaultPath || featureTourDone || startedRef.current) return;
+		if (!vaultPath || featureTourDone || startedRef.current || onboardingOpen)
+			return;
 		startedRef.current = true;
 		const timer = window.setTimeout(start, 800);
 		return () => window.clearTimeout(timer);
-	}, [vaultPath, featureTourDone, start]);
+	}, [vaultPath, featureTourDone, start, onboardingOpen]);
 
 	// Settings → main event: replay on demand.
 	useEffect(() => {

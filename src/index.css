@@ -15,6 +15,21 @@
 	}
 }
 
+/* Citation jump attention flash: hold, then fade out (~CITATION_FOCUS_FLASH_MS). */
+@keyframes citation-focus-flash {
+	0%,
+	55% {
+		opacity: 1;
+	}
+	100% {
+		opacity: 0;
+	}
+}
+
+.citation-focus-flash {
+	animation: citation-focus-flash 1.6s ease-out forwards;
+}
+
 .library-shimmer {
 	background: linear-gradient(
 		110deg,
@@ -476,6 +491,103 @@
 }
 
 /*
+ * PDF bottom-bar zoom slider: muted gray at rest, brand accent on hover /
+ * focus / drag so the control stays quiet until the pointer engages it.
+ * Use --brand (chromatic) rather than --primary (near black/white neutrals).
+ */
+.pdf-zoom-slider {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 4.25rem;
+	height: 1.25rem;
+	margin: 0;
+	background: transparent;
+	cursor: default;
+	accent-color: var(--muted-foreground);
+}
+
+.pdf-zoom-slider:hover,
+.pdf-zoom-slider:focus-visible,
+.pdf-zoom-slider:active {
+	accent-color: var(--brand);
+}
+
+.pdf-zoom-slider:focus {
+	outline: none;
+}
+
+.pdf-zoom-slider:focus-visible {
+	outline: 2px solid color-mix(in oklch, var(--brand) 40%, transparent);
+	outline-offset: 2px;
+	border-radius: 999px;
+}
+
+.pdf-zoom-slider::-webkit-slider-runnable-track {
+	height: 0.2rem;
+	border-radius: 999px;
+	background: color-mix(in oklch, var(--muted-foreground) 35%, transparent);
+}
+
+.pdf-zoom-slider:hover::-webkit-slider-runnable-track,
+.pdf-zoom-slider:focus-visible::-webkit-slider-runnable-track,
+.pdf-zoom-slider:active::-webkit-slider-runnable-track {
+	background: color-mix(in oklch, var(--brand) 45%, transparent);
+}
+
+.pdf-zoom-slider::-webkit-slider-thumb {
+	-webkit-appearance: none;
+	appearance: none;
+	width: 0.75rem;
+	height: 0.75rem;
+	margin-top: -0.275rem;
+	border-radius: 999px;
+	border: none;
+	background: var(--muted-foreground);
+	box-shadow: 0 0 0 1px color-mix(in oklch, var(--background) 70%, transparent);
+	transition:
+		background-color 120ms ease,
+		box-shadow 120ms ease;
+}
+
+.pdf-zoom-slider:hover::-webkit-slider-thumb,
+.pdf-zoom-slider:focus-visible::-webkit-slider-thumb,
+.pdf-zoom-slider:active::-webkit-slider-thumb {
+	background: var(--brand);
+	box-shadow: 0 0 0 1px color-mix(in oklch, var(--brand) 35%, transparent);
+}
+
+.pdf-zoom-slider::-moz-range-track {
+	height: 0.2rem;
+	border-radius: 999px;
+	background: color-mix(in oklch, var(--muted-foreground) 35%, transparent);
+}
+
+.pdf-zoom-slider:hover::-moz-range-track,
+.pdf-zoom-slider:focus-visible::-moz-range-track,
+.pdf-zoom-slider:active::-moz-range-track {
+	background: color-mix(in oklch, var(--brand) 45%, transparent);
+}
+
+.pdf-zoom-slider::-moz-range-thumb {
+	width: 0.75rem;
+	height: 0.75rem;
+	border: none;
+	border-radius: 999px;
+	background: var(--muted-foreground);
+	box-shadow: 0 0 0 1px color-mix(in oklch, var(--background) 70%, transparent);
+	transition:
+		background-color 120ms ease,
+		box-shadow 120ms ease;
+}
+
+.pdf-zoom-slider:hover::-moz-range-thumb,
+.pdf-zoom-slider:focus-visible::-moz-range-thumb,
+.pdf-zoom-slider:active::-moz-range-thumb {
+	background: var(--brand);
+	box-shadow: 0 0 0 1px color-mix(in oklch, var(--brand) 35%, transparent);
+}
+
+/*
  * Auto-hiding pane scrollbars: hidden by default, shown while scrolling or on
  * hover so content bounds stay clean when idle.
  */
@@ -639,6 +751,19 @@
 	color: var(--foreground);
 	height: 100%;
 	width: 100%;
+}
+
+/* Tab context-menu rows that show a shortcut hint (see dock-workspace). */
+.agentero-dockview
+.dv-context-menu-item.agentero-dv-context-menu-item--with-shortcut {
+	justify-content: space-between;
+	gap: 1rem;
+	min-width: 11rem;
+}
+.agentero-dockview .agentero-dv-context-menu-shortcut {
+	color: var(--muted-foreground);
+	font-size: 0.75rem;
+	letter-spacing: 0.025em;
 }
 
 /* Context menu / overflow popovers mount on this anchor (prepended to root). */
@@ -902,6 +1027,18 @@ body.agentero-dockview-dragging * {
 }
 .dark .agentero-codeblock .hljs-subst {
 	color: #c9d1d9;
+}
+
+/*
+ * Privacy mode: when the window loses focus (see `usePdfPrivacy`), fade out
+ * PDF annotation / comment / translate overlays so a screenshot of a
+ * different window never leaks them. The page rasters stay visible.
+ * Specificity (0,2,0) beats any single utility class on the tagged overlay.
+ */
+.pdf-privacy-hidden .pdf-privacy-hide {
+	opacity: 0;
+	pointer-events: none;
+	transition: opacity 150ms ease;
 }
 .dark .agentero-codeblock .hljs-bullet {
 	color: #f2cc60;

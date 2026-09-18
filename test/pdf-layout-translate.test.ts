@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { fontSizeForLayoutTranslateBox } from "@/components/viewer/pdf/layers/layout-translate-overlay";
+import {
+	expandLayoutTranslateBbox,
+	fontSizeForLayoutTranslateBox,
+} from "@/components/viewer/pdf/layers/layout-translate-overlay";
 import {
 	applyLayoutTranslateSidecar,
 	groupLayoutTranslateItemsByPage,
@@ -261,6 +264,39 @@ describe("fontSizeForLayoutTranslateBox", () => {
 		// Denser CN may use a larger size to fill the same box, but not unbounded.
 		expect(withZh).toBeGreaterThanOrEqual(paperLike * 0.95);
 		expect(withZh).toBeLessThanOrEqual(paperLike * 1.25 + 0.5);
+	});
+});
+
+describe("expandLayoutTranslateBbox", () => {
+	function item(kind: LayoutTranslateItem["kind"]): LayoutTranslateItem {
+		return {
+			id: "title",
+			pageIndex: 0,
+			bbox: { x: 0.1, y: 0.1, w: 0.2, h: 0.03 },
+			kind,
+			readingOrder: 0,
+			source: "A long section title",
+			translated: "这是一个用于验证安全扩框行为的更长章节标题",
+			status: "done",
+		};
+	}
+
+	it("borrows right-side whitespace for a heading but stops before a blocker", () => {
+		const expanded = expandLayoutTranslateBbox(item("header"), [
+			region({
+				id: "next-column",
+				kind: "text",
+				pageIndex: 0,
+				bbox: { x: 0.42, y: 0.1, w: 0.3, h: 0.1 },
+			}),
+		]);
+		expect(expanded.w).toBeGreaterThan(0.2);
+		expect(expanded.x + expanded.w).toBeLessThan(0.42);
+	});
+
+	it("does not expand a long body paragraph into adjacent content", () => {
+		const body = { ...item("text"), source: "word ".repeat(100) };
+		expect(expandLayoutTranslateBbox(body)).toEqual(body.bbox);
 	});
 });
 

@@ -30,11 +30,11 @@ import type {
 } from "@/components/viewer/pdf/types";
 import { useImeGuard } from "@/hooks/use-ime-guard";
 import { cn } from "@/lib/core/utils";
+import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
 import {
 	DEFAULT_HIGHLIGHT_COLOR,
 	swatchColorClass,
 } from "@/lib/pdf/highlight/palette";
-
 /** Card width in CSS px — also the gutter width reserved on the viewport. */
 export const COMMENT_CARD_WIDTH_PX = 224;
 /** Collapsed selection-comment chip width (icon only). */
@@ -62,10 +62,18 @@ const VIEW_CONVERSATION_PREVIEW_LINES = 3;
 const EDIT_MIN_COMMENT_LINES = 3;
 /** In-place editor: layout estimate cap; textarea scrolls past this. */
 const EDIT_MAX_COMMENT_LINES = 12;
+const COMMENT_CARD_SURFACE_CLASS =
+	"group pointer-events-auto absolute select-none rounded-lg border border-white/55 bg-background/88 shadow-[0_10px_28px_rgba(15,23,42,0.16),0_2px_8px_rgba(15,23,42,0.1)] ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 transition-[box-shadow,background-color,transform] duration-150 ease-out hover:z-[7] hover:shadow-[0_16px_36px_rgba(15,23,42,0.2),0_4px_12px_rgba(15,23,42,0.12)] hover:!h-auto supports-backdrop-blur:bg-background/70 dark:border-white/10 dark:shadow-[0_12px_32px_rgba(0,0,0,0.45),0_2px_10px_rgba(0,0,0,0.35)] dark:hover:shadow-[0_18px_40px_rgba(0,0,0,0.55),0_4px_14px_rgba(0,0,0,0.42)] dark:ring-white/10";
+const COMMENT_DRAFT_SURFACE_CLASS =
+	"group/draft pointer-events-auto absolute z-[6] cursor-text overflow-hidden rounded-lg border border-white/55 bg-background/88 text-left shadow-[0_10px_28px_rgba(15,23,42,0.16),0_2px_8px_rgba(15,23,42,0.1)] ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 outline-none supports-backdrop-blur:bg-background/70 dark:border-white/10 dark:shadow-[0_12px_32px_rgba(0,0,0,0.45),0_2px_10px_rgba(0,0,0,0.35)] dark:ring-white/10";
+const COMMENT_ACTION_BAR_CLASS =
+	"absolute top-1.5 right-1.5 flex items-center gap-0.5 rounded-md border border-white/50 bg-background/82 p-0.5 shadow-[0_6px_18px_rgba(15,23,42,0.14)] ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 transition-opacity duration-150 dark:border-white/10 dark:shadow-[0_8px_20px_rgba(0,0,0,0.4)] dark:ring-white/10";
 
 type CommentCardsLayerProps = {
 	/** Comments for this page only. */
 	items: PageAnnotationComment[];
+	/** Rendered page width in px (zoom-aware); used by the hover connector. */
+	pageWidthPx: number;
 	/** Rendered page height in px (zoom-aware). */
 	pageHeightPx: number;
 	/** Id of the card currently being edited in place; null when idle. */
@@ -180,6 +188,54 @@ export function layoutCommentCards(
 	return laid;
 }
 
+/**
+ * Word / Feishu-style orthogonal leader from the nearest highlight segment to
+ * the laid-out card's left midpoint, folding at the page's right edge.
+ * Multi-line highlights pick the rect closest to the card (not the envelope mid).
+ * Returns an SVG path `d` in page-pixel coordinates, or null when undrawable.
+ */
+export function commentConnectorPath(
+	rects: readonly PdfAskNormalizedRect[],
+	placement: CommentCardPlacement,
+	pageWidthPx: number,
+	pageHeightPx: number,
+): string | null {
+	if (rects.length === 0 || pageWidthPx <= 0 || pageHeightPx <= 0) return null;
+
+	const round = (n: number) => Math.round(n * 100) / 100;
+	const y2 = placement.topPx + placement.heightPx / 2;
+	const y2Norm = y2 / pageHeightPx;
+
+	let best = rects[0];
+	let bestDist = Number.POSITIVE_INFINITY;
+	for (const rect of rects) {
+		const top = rect.y;
+		const bottom = rect.y + rect.h;
+		// Distance from the card mid to the closest point inside this segment.
+		const clamped = Math.min(Math.max(y2Norm, top), bottom);
+		const dist = Math.abs(clamped - y2Norm);
+		const right = rect.x + rect.w;
+		const bestRight = best.x + best.w;
+		if (
+			dist < bestDist ||
+			(dist === bestDist &&
+				(right > bestRight || (right === bestRight && rect.y < best.y)))
+		) {
+			best = rect;
+			bestDist = dist;
+		}
+	}
+
+	const attachYNorm = Math.min(Math.max(y2Norm, best.y), best.y + best.h);
+	const x1 = round((best.x + best.w) * pageWidthPx);
+	const y1 = round(attachYNorm * pageHeightPx);
+	const xMid = round(pageWidthPx);
+	const x2 = round(pageWidthPx + COMMENT_CARD_GAP_PX);
+	const y2Rounded = round(y2);
+
+	return `M ${x1} ${y1} L ${xMid} ${y1} L ${xMid} ${y2Rounded} L ${x2} ${y2Rounded}`;
+}
+
 function autosizeTextarea(el: HTMLTextAreaElement | null) {
 	if (!el) return;
 	el.style.height = "0px";
@@ -272,12 +328,12 @@ const CommentCard = memo(function CommentCard({
 		<div
 			data-pdf-chrome
 			className={cn(
-				"group pointer-events-auto absolute select-none rounded-lg border border-border/50 bg-background/90 shadow-sm ring-1 backdrop-blur-md backdrop-saturate-150 transition-[box-shadow,background-color] duration-150 ease-out hover:z-[7] hover:shadow-md hover:!h-auto supports-backdrop-blur:bg-background/75",
+				COMMENT_CARD_SURFACE_CLASS,
 				editing
-					? "z-[6] ring-2 ring-ring/50"
+					? "z-[6] bg-background/92 shadow-[0_18px_44px_rgba(15,23,42,0.22),0_4px_16px_rgba(15,23,42,0.12)] ring-2 ring-ring/50 dark:shadow-[0_18px_46px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.45)]"
 					: hovered
-						? "z-[6] ring-2 ring-primary/40 shadow-md"
-						: "ring-black/5 dark:ring-white/10",
+						? "z-[6] bg-background/92 shadow-[0_18px_44px_rgba(15,23,42,0.22),0_4px_16px_rgba(15,23,42,0.12)] ring-2 ring-primary/45 dark:shadow-[0_18px_46px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.45)]"
+						: "",
 			)}
 			style={{
 				left: `calc(100% + ${COMMENT_CARD_GAP_PX}px)`,
@@ -415,7 +471,7 @@ const CommentCard = memo(function CommentCard({
 				)}
 				<div
 					className={cn(
-						"absolute top-1.5 right-1.5 flex items-center gap-0.5 rounded-lg bg-background/80 p-0.5 shadow-sm ring-1 ring-border/60 backdrop-blur-sm transition-opacity duration-150",
+						COMMENT_ACTION_BAR_CLASS,
 						editing
 							? "opacity-0 group-hover:opacity-100"
 							: "opacity-0 group-hover:opacity-100 group-focus-within:opacity-100",
@@ -614,11 +670,11 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 			aria-label={t("selection.note")}
 			data-pdf-chrome
 			className={cn(
-				"group/draft pointer-events-auto absolute z-[6] cursor-text overflow-hidden rounded-lg border border-border/50 bg-background/90 text-left shadow-sm ring-1 ring-black/5 backdrop-blur-md backdrop-saturate-150 outline-none supports-backdrop-blur:bg-background/75 dark:ring-white/10",
-				"transition-[width,box-shadow] duration-200 ease-out motion-reduce:transition-none",
+				COMMENT_DRAFT_SURFACE_CLASS,
+				"transition-[width,box-shadow,background-color] duration-200 ease-out motion-reduce:transition-none",
 				editing
-					? "z-[7] w-56 shadow-md ring-primary/40"
-					: "w-9 select-none hover:shadow-md",
+					? "z-[7] w-56 bg-background/92 shadow-[0_18px_44px_rgba(15,23,42,0.22),0_4px_16px_rgba(15,23,42,0.12)] ring-2 ring-primary/45 dark:shadow-[0_18px_46px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.45)]"
+					: "w-9 select-none hover:shadow-[0_14px_34px_rgba(15,23,42,0.2),0_3px_12px_rgba(15,23,42,0.12)] dark:hover:shadow-[0_14px_34px_rgba(0,0,0,0.5),0_3px_12px_rgba(0,0,0,0.4)]",
 				focused && "ring-2 ring-ring/50",
 			)}
 			style={{
@@ -727,6 +783,7 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 
 export const CommentCardsLayer = memo(function CommentCardsLayer({
 	items,
+	pageWidthPx,
 	pageHeightPx,
 	editingId,
 	wikiTarget,
@@ -749,9 +806,54 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 
 	const laid = layoutCommentCards(items, pageHeightPx, editingId);
 	const byId = new Map(items.map((item) => [item.id, item]));
+	const hoveredPlacement = hoveredId
+		? (laid.find((pos) => pos.id === hoveredId) ?? null)
+		: null;
+	const hoveredItem = hoveredId ? (byId.get(hoveredId) ?? null) : null;
+	const connectorD =
+		hoveredItem && hoveredPlacement
+			? commentConnectorPath(
+					hoveredItem.rects,
+					hoveredPlacement,
+					pageWidthPx,
+					pageHeightPx,
+				)
+			: null;
+	const svgWidth = pageWidthPx + COMMENT_CARD_GAP_PX + COMMENT_CARD_WIDTH_PX;
 
 	return (
 		<div className="pointer-events-none absolute inset-0 z-[5] overflow-visible">
+			{connectorD ? (
+				// Decorative hover leader; announced via the card / hit-target labels.
+				// biome-ignore lint/a11y/noSvgWithoutTitle: purely visual connector
+				<svg
+					aria-hidden
+					focusable="false"
+					className="pointer-events-none absolute top-0 left-0 overflow-visible"
+					width={svgWidth}
+					height={pageHeightPx}
+					viewBox={`0 0 ${svgWidth} ${pageHeightPx}`}
+				>
+					<path
+						d={connectorD}
+						fill="none"
+						className="stroke-background/95 dark:stroke-background/90"
+						strokeWidth={5}
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						vectorEffect="non-scaling-stroke"
+					/>
+					<path
+						d={connectorD}
+						fill="none"
+						className="stroke-primary/85"
+						strokeWidth={2.5}
+						strokeLinecap="round"
+						strokeLinejoin="round"
+						vectorEffect="non-scaling-stroke"
+					/>
+				</svg>
+			) : null}
 			<TooltipProvider delayDuration={200}>
 				{laid.map((pos) => {
 					const item = byId.get(pos.id);

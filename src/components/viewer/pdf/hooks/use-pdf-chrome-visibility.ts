@@ -23,9 +23,9 @@ type UsePdfChromeVisibilityOptions = {
 };
 
 /**
- * Auto show/hide for the floating PDF top toolbars (issue #400): the chrome
+ * Auto show/hide for the floating PDF left toolbar (issue #400): the chrome
  * appears while the viewport scrolls and while the pointer is near the top
- * edge, then fades out once reading resumes.
+ * edge, then fades out once reading resumes. The top-right toolbar stays pinned.
  */
 export function usePdfChromeVisibility({
 	hostRef,

@@ -24,38 +24,8 @@ pub fn doi_landing_url(doi: &str) -> String {
     format!("https://doi.org/{doi}")
 }
 
-/// Derive the canonical ACL Anthology PDF URL from a paper landing page.
-/// ACL Anthology paper URLs look like:
-///   https://aclanthology.org/2026.acl-long.1248/
-/// and the PDF is always:
-///   https://aclanthology.org/2026.acl-long.1248.pdf
-pub fn acl_anthology_pdf_url(url: &str) -> Option<String> {
-    let lower = url.to_ascii_lowercase();
-    if !lower.contains("aclanthology.org/") {
-        return None;
-    }
-    // Already a PDF.
-    if lower.ends_with(".pdf") {
-        return Some(url.trim().to_string());
-    }
-    let trimmed = url.trim_end_matches('/');
-    let slug = trimmed.rsplit('/').next()?;
-    // Expect: YYYY.venue-type.number (e.g. 2026.acl-long.1248)
-    let parts: Vec<&str> = slug.split('.').collect();
-    if parts.len() != 3 {
-        return None;
-    }
-    if parts[0].len() != 4 || !parts[0].chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    if !parts[1].contains('-') {
-        return None;
-    }
-    if !parts[2].chars().all(|c| c.is_ascii_digit()) {
-        return None;
-    }
-    Some(format!("{}.pdf", trimmed))
-}
+// ACL Anthology / USENIX / and other venue landing-page → PDF-URL derivations
+// live in `features::import::sources` (one file per venue).
 
 #[cfg(test)]
 mod tests {
@@ -72,23 +42,5 @@ mod tests {
     #[test]
     fn doi_landing_url_is_https_doi_org() {
         assert_eq!(doi_landing_url("10.1/abc"), "https://doi.org/10.1/abc");
-    }
-
-    #[test]
-    fn acl_anthology_pdf_url_derivation() {
-        assert_eq!(
-            acl_anthology_pdf_url("https://aclanthology.org/2026.acl-long.1248/"),
-            Some("https://aclanthology.org/2026.acl-long.1248.pdf".to_string())
-        );
-        assert_eq!(
-            acl_anthology_pdf_url("https://aclanthology.org/2026.acl-long.1248.pdf"),
-            Some("https://aclanthology.org/2026.acl-long.1248.pdf".to_string())
-        );
-        assert_eq!(
-            acl_anthology_pdf_url("https://www.aclanthology.org/2025.emnlp-main.42/"),
-            Some("https://www.aclanthology.org/2025.emnlp-main.42.pdf".to_string())
-        );
-        assert!(acl_anthology_pdf_url("https://aclanthology.org/venues/acl/").is_none());
-        assert!(acl_anthology_pdf_url("https://example.com/2026.acl-long.1248/").is_none());
     }
 }

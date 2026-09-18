@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-
+import { PDF_VISUAL_REGION_FRAME_CLASS } from "@/components/viewer/pdf/layers/visual-region-frame";
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
 import { normalizedRegionFromPoints } from "@/lib/pdf/region";
 
@@ -88,7 +88,7 @@ export function PdfRegionSelectLayer({
 		>
 			{draft ? (
 				<div
-					className="pointer-events-none absolute rounded border border-primary bg-primary/10 shadow-sm"
+					className={PDF_VISUAL_REGION_FRAME_CLASS}
 					style={{
 						left: `${draft.x * 100}%`,
 						top: `${draft.y * 100}%`,

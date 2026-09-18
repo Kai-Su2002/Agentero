@@ -1,4 +1,3 @@
-import { homeDir, join } from "@tauri-apps/api/path";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
 	BookOpen,
@@ -38,6 +37,7 @@ import { readJsonStorage, writeJsonStorage } from "@/lib/core/storage";
 import { runLocalActivity } from "@/lib/core/tasks";
 import { isTauri } from "@/lib/core/tauri";
 import {
+	discoverZoteroDirs,
 	isSqliteMissingError,
 	migrateZotero,
 	pickZoteroDir,
@@ -87,9 +87,9 @@ function saveOpts(o: SavedOpts) {
 	writeJsonStorage(OPTS_KEY, o);
 }
 
-/** "View import tutorial" target. Replace with your hosted tutorial/docs URL. */
+/** "View import tutorial" target: the "Migrate from Zotero" section of the docs site. */
 const IMPORT_TUTORIAL_URL =
-	"https://github.com/poco-ai/motif/blob/main/docs/backend/identifier-lookup.md";
+	"https://agentero-docs.poco-ai.com/usage/import-papers/#zotero";
 function openTutorial() {
 	void openUrl(IMPORT_TUTORIAL_URL).catch(() => {
 		window.open(IMPORT_TUTORIAL_URL, "_blank");
@@ -156,7 +156,11 @@ export function ZoteroMigrateDialog({
 	};
 
 	const handleOpenChange = (next: boolean) => {
-		if (!next && !busy) reset();
+		if (!next && !busy) {
+			reset();
+			// Closing after Vault creation must clear the initial tree loading state.
+			onDone();
+		}
 		onOpenChange(next);
 	};
 
@@ -201,12 +205,14 @@ export function ZoteroMigrateDialog({
 		void (async () => {
 			setDetecting(true);
 			try {
-				const candidate = await join(await homeDir(), "Zotero");
-				const r = await scanZotero(candidate);
-				if (!cancelled && r.valid && r.itemCount > 0) {
-					setDir(candidate);
-					setScan(r);
-					setSelectedItems(new Set(r.items.map((i) => i.id)));
+				for (const candidate of await discoverZoteroDirs()) {
+					const r = await scanZotero(candidate);
+					if (!cancelled && r.valid && r.itemCount > 0) {
+						setDir(candidate);
+						setScan(r);
+						setSelectedItems(new Set(r.items.map((i) => i.id)));
+						break;
+					}
 				}
 			} catch {
 				// no default library here — the user picks the folder manually
@@ -436,6 +442,9 @@ export function ZoteroMigrateDialog({
 						</div>
 					) : (
 						<div className="space-y-4">
+							<p className="text-muted-foreground text-xs">
+								{t("sidebar:zoteroMigrate.stepsHint")}
+							</p>
 							<div className="space-y-1.5">
 								<Button
 									type="button"

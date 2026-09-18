@@ -3,9 +3,11 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
 	clearSelections,
 	consumeSelections,
+	currentSelections,
 	pinActiveSelection,
 	publishSelection,
 	selectionStore,
+	selectionsPromptBlock,
 	selectionsWithPdfAnchor,
 } from "@/lib/agent/selection-store";
 
@@ -73,12 +75,49 @@ describe("selection-store PDF anchor", () => {
 			paperAbsPath: "/vault/papers/b",
 		});
 		const all = consumeSelections();
-		// live "pdf missing rects" + two pinned
-		expect(all.length).toBeGreaterThanOrEqual(2);
+		// Only pinned chips are consumed; the live "pdf missing rects" is dropped.
+		expect(all).toHaveLength(2);
+		expect(selectionStore.getState().active).toBeNull();
 		const anchored = selectionsWithPdfAnchor(all);
 		expect(anchored).toHaveLength(1);
 		expect(anchored[0]?.text).toBe("with geometry");
 		expect(anchored[0]?.page).toBe(2);
 		expect(anchored[0]?.paperAbsPath).toBe("/vault/papers/a");
+	});
+
+	it("currentSelections ignores the live active selection until pinned", () => {
+		publishSelection({
+			text: "live only",
+			sourcePath: "papers/x",
+			origin: "pdf",
+			page: 1,
+			rects: [rect],
+			paperAbsPath: "/vault/papers/x",
+		});
+		expect(currentSelections()).toEqual([]);
+		expect(pinActiveSelection()).toBe(true);
+		expect(currentSelections()).toHaveLength(1);
+	});
+
+	it("prompt block carries the line span of code-editor selections", () => {
+		publishSelection({
+			text: "\\section{Introduction}",
+			sourcePath: "thesis/main.tex",
+			origin: "markdown",
+			lineFrom: 7,
+			lineTo: 7,
+		});
+		pinActiveSelection();
+		publishSelection({
+			text: "line a\nline b\nline c",
+			sourcePath: "thesis/main.tex",
+			origin: "markdown",
+			lineFrom: 12,
+			lineTo: 14,
+		});
+		pinActiveSelection();
+		const block = selectionsPromptBlock(consumeSelections());
+		expect(block).toContain("from thesis/main.tex (lines 7):");
+		expect(block).toContain("from thesis/main.tex (lines 12-14):");
 	});
 });

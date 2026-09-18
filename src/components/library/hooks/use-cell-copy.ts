@@ -1,9 +1,10 @@
 /**
- * Deferred cell-copy for the library table.
+ * Row interactions for the library table.
  *
- * Single-click a cell schedules a copy after a short delay; the second half
- * of a double-click (or the row `dblclick` that opens the paper) cancels it
- * so opening never writes the clipboard.
+ * - Single-click a row opens the paper after a short delay.
+ * - Double-click a cell copies that field; the second click cancels the pending
+ *   open so a copy never also opens the paper.
+ * - Direct open (context menu) cancels any pending open.
  */
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { useCallback, useEffect, useRef } from "react";
@@ -12,11 +13,11 @@ import { copyTextToClipboard } from "@/lib/core/clipboard";
 import type { PaperMetadata } from "@/lib/paper";
 
 /**
- * Delay before committing a cell-copy click.
- * Must outlast a typical double-click interval so the first half of a
- * double-click does not copy before `detail > 1` / `dblclick` can cancel it.
+ * Delay before committing a single-click open.
+ * Must outlast a typical double-click interval so a double-click copy can
+ * cancel the open before it fires.
  */
-const CELL_COPY_CLICK_DELAY_MS = 320;
+const ROW_OPEN_CLICK_DELAY_MS = 320;
 
 export function useCellCopy({
 	t,
@@ -25,21 +26,21 @@ export function useCellCopy({
 	t: CellT;
 	onOpenPaper: (paper: PaperMetadata) => void;
 }) {
-	/** Pending cell-copy timer — cleared when a double-click opens the paper. */
-	const pendingCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+	/** Pending row-open timer — cleared by a double-click or direct open. */
+	const pendingOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
 		null,
 	);
 
-	const cancelPendingCopy = useCallback(() => {
-		if (pendingCopyTimerRef.current != null) {
-			clearTimeout(pendingCopyTimerRef.current);
-			pendingCopyTimerRef.current = null;
+	const cancelPendingOpen = useCallback(() => {
+		if (pendingOpenTimerRef.current != null) {
+			clearTimeout(pendingOpenTimerRef.current);
+			pendingOpenTimerRef.current = null;
 		}
 	}, []);
 
-	useEffect(() => () => cancelPendingCopy(), [cancelPendingCopy]);
+	useEffect(() => () => cancelPendingOpen(), [cancelPendingOpen]);
 
-	/** Single-click a cell → copy that field; skip empty values. */
+	/** Double-click a cell → copy that field; skip empty values. */
 	const copyField = useCallback(
 		async (text: string | null | undefined, label: string) => {
 			const value = text?.trim();
@@ -56,34 +57,41 @@ export function useCellCopy({
 		[t],
 	);
 
-	/**
-	 * Cell click → schedule copy. Double-click fires a second click with
-	 * `detail > 1` plus `dblclick` on the row; both cancel the pending copy
-	 * so opening a paper does not also write the clipboard.
-	 */
+	/** Double-click a cell → copy immediately. */
 	const onCellCopy = useCallback(
-		(e: ReactMouseEvent, text: string | null | undefined, label: string) => {
-			// Second (or later) click of a multi-click: abort any scheduled copy.
+		(text: string | null | undefined, label: string) => {
+			void copyField(text, label);
+		},
+		[copyField],
+	);
+
+	/**
+	 * Single-click a row → schedule open. Double-click (detail > 1) cancels the
+	 * pending open so copying a cell does not also open the paper.
+	 */
+	const onRowClick = useCallback(
+		(e: ReactMouseEvent, paper: PaperMetadata) => {
 			if (e.detail > 1) {
-				cancelPendingCopy();
+				cancelPendingOpen();
 				return;
 			}
-			cancelPendingCopy();
-			pendingCopyTimerRef.current = setTimeout(() => {
-				pendingCopyTimerRef.current = null;
-				void copyField(text, label);
-			}, CELL_COPY_CLICK_DELAY_MS);
+			cancelPendingOpen();
+			pendingOpenTimerRef.current = setTimeout(() => {
+				pendingOpenTimerRef.current = null;
+				onOpenPaper(paper);
+			}, ROW_OPEN_CLICK_DELAY_MS);
 		},
-		[cancelPendingCopy, copyField],
+		[cancelPendingOpen, onOpenPaper],
 	);
 
+	/** Direct open from the context menu — cancel any pending click-open first. */
 	const openPaperFromRow = useCallback(
 		(paper: PaperMetadata) => {
-			cancelPendingCopy();
+			cancelPendingOpen();
 			onOpenPaper(paper);
 		},
-		[cancelPendingCopy, onOpenPaper],
+		[cancelPendingOpen, onOpenPaper],
 	);
 
-	return { onCellCopy, openPaperFromRow };
+	return { onCellCopy, onRowClick, openPaperFromRow };
 }

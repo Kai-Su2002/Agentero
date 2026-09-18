@@ -1,6 +1,6 @@
 [package]
 name = "agentero-cli"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2021"
 description = "Headless Agentero CLI for Vault / Catalog (no BYOA)"
 authors = ["you"]
@@ -18,7 +18,6 @@ path = "src/main.rs"
 # Tauri-free domain services (catalog, vault, import, wiki, feeds, zotero, …).
 agentero-core = { path = "../crates/agentero-core" }
 clap = { version = "4", features = ["derive", "env"] }
-clap_complete = "4"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }

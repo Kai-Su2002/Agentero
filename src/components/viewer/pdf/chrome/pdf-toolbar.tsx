@@ -1,13 +1,6 @@
 import type { PdfEngine } from "@embedpdf/models";
-import {
-	Languages,
-	Library,
-	Loader2,
-	Minus,
-	Plus,
-	ScanSearch,
-} from "lucide-react";
-import type { RefObject } from "react";
+import { Clock, Languages, Library, Loader2, ScanSearch } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -16,42 +9,21 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
-import {
-	PDF_CHROME_CHIP,
-	PDF_CHROME_VIS,
-	PDF_CHROME_VIS_HIDE,
-	PDF_CHROME_VIS_SHOW,
-} from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
+import { PDF_CHROME_CHIP } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
 import { cn } from "@/lib/core/utils";
-import {
-	formatPdfZoomPercentage,
-	PDF_ZOOM_MAX,
-	PDF_ZOOM_MIN,
-} from "@/lib/pdf/zoom";
 import { formatShortcutById } from "@/lib/shell/shortcuts";
 
 type PdfToolbarProps = {
-	zoomLevel: number;
-	onZoomIn: () => void;
-	onZoomOut: () => void;
-	/** Editable zoom percentage (raw text while typing). */
-	zoomField: string;
-	onZoomFieldChange: (value: string) => void;
-	/** True while the field owns focus, so zoom updates do not clobber typing. */
-	zoomFieldFocusedRef: RefObject<boolean>;
-	/** Escape sets this so the blur that follows discards the edit. */
-	zoomFieldCancelRef: RefObject<boolean>;
-	onCommitZoomField: (value: string) => void;
 	regionSelecting: boolean;
 	visualCropPending: boolean;
 	engine: PdfEngine | null;
 	onToggleRegionSelect: () => void;
 	layoutTranslateRunning: boolean;
+	/** Queued behind layout analysis; plain click cancels the wait. */
+	layoutTranslateWaiting?: boolean;
 	layoutTranslateActive: boolean;
 	layoutTranslateLabel: string;
 	onToggleLayoutTranslate: () => void;
-	/** Auto show/hide driven by scroll + pointer proximity (issue #400). */
-	visible: boolean;
 	/** True when viewing a remote paper that has no local sidecar. */
 	isRemotePaper?: boolean;
 	/** Import the remote paper into the current vault. */
@@ -60,123 +32,118 @@ type PdfToolbarProps = {
 	importBusy?: boolean;
 };
 
-/** Top-right toolbar: zoom, region select, bulk translate. */
+/** Top-right toolbar: region select, bulk translate. Always visible. */
 export function PdfToolbar({
-	zoomLevel,
-	onZoomIn,
-	onZoomOut,
-	zoomField,
-	onZoomFieldChange,
-	zoomFieldFocusedRef,
-	zoomFieldCancelRef,
-	onCommitZoomField,
 	regionSelecting,
 	visualCropPending,
 	engine,
 	onToggleRegionSelect,
 	layoutTranslateRunning,
+	layoutTranslateWaiting = false,
 	layoutTranslateActive,
 	layoutTranslateLabel,
 	onToggleLayoutTranslate,
-	visible,
 	isRemotePaper = false,
 	onImportToLibrary,
 	importBusy = false,
 }: PdfToolbarProps) {
 	const { t } = useTranslation("viewer");
 
+	const LONG_PRESS_MS = 300;
+	const longPressTimerRef = useRef<number | null>(null);
+	const longPressTriggeredRef = useRef(false);
+	const suppressNextClickRef = useRef(false);
+	const [longPressing, setLongPressing] = useState(false);
+
+	const clearLongPressTimer = useCallback(() => {
+		if (longPressTimerRef.current != null) {
+			clearTimeout(longPressTimerRef.current);
+			longPressTimerRef.current = null;
+		}
+	}, []);
+
+	useEffect(() => clearLongPressTimer, [clearLongPressTimer]);
+
+	const handleTranslatePointerDown = useCallback(
+		(event: React.PointerEvent<HTMLButtonElement>) => {
+			if (event.button !== 0) return;
+			if (layoutTranslateActive || layoutTranslateRunning) return;
+			if (layoutTranslateWaiting) return;
+			setLongPressing(true);
+			longPressTriggeredRef.current = false;
+			suppressNextClickRef.current = false;
+			longPressTimerRef.current = window.setTimeout(() => {
+				longPressTriggeredRef.current = true;
+				suppressNextClickRef.current = true;
+				setLongPressing(true);
+				onToggleLayoutTranslate();
+			}, LONG_PRESS_MS);
+		},
+		[
+			layoutTranslateActive,
+			layoutTranslateRunning,
+			layoutTranslateWaiting,
+			onToggleLayoutTranslate,
+		],
+	);
+
+	const handleTranslatePointerUp = useCallback(
+		(event: React.PointerEvent<HTMLButtonElement>) => {
+			clearLongPressTimer();
+			setLongPressing(false);
+			if (event.button !== 0) return;
+			if (!longPressTriggeredRef.current) return;
+			longPressTriggeredRef.current = false;
+			if (layoutTranslateActive || layoutTranslateRunning) {
+				onToggleLayoutTranslate();
+			}
+		},
+		[
+			clearLongPressTimer,
+			layoutTranslateActive,
+			layoutTranslateRunning,
+			onToggleLayoutTranslate,
+		],
+	);
+
+	const handleTranslatePointerLeave = useCallback(() => {
+		clearLongPressTimer();
+		setLongPressing(false);
+		if (!longPressTriggeredRef.current) return;
+		longPressTriggeredRef.current = false;
+		suppressNextClickRef.current = true;
+		if (layoutTranslateActive || layoutTranslateRunning) {
+			onToggleLayoutTranslate();
+		}
+	}, [
+		clearLongPressTimer,
+		layoutTranslateActive,
+		layoutTranslateRunning,
+		onToggleLayoutTranslate,
+	]);
+
+	const handleTranslateClick = useCallback(
+		(event: React.MouseEvent<HTMLButtonElement>) => {
+			if (suppressNextClickRef.current) {
+				event.preventDefault();
+				suppressNextClickRef.current = false;
+				return;
+			}
+			onToggleLayoutTranslate();
+		},
+		[onToggleLayoutTranslate],
+	);
+
 	return (
-		<div
-			className={cn(
-				"pointer-events-none absolute top-2 right-3 z-20 flex items-center gap-1 origin-top-right",
-				PDF_CHROME_VIS,
-				visible ? PDF_CHROME_VIS_SHOW : PDF_CHROME_VIS_HIDE,
-			)}
-		>
+		<div className="pointer-events-none absolute top-2 right-3 z-20 flex origin-top-right items-center gap-1">
 			<TooltipProvider delayDuration={200}>
 				<div
 					data-pdf-chrome
 					className={cn(
-						"flex h-7 select-none items-center gap-0.5 rounded-lg p-0.5",
+						"pointer-events-auto flex h-7 select-none items-center gap-0.5 rounded-lg p-0.5",
 						PDF_CHROME_CHIP,
-						visible ? "pointer-events-auto" : "pointer-events-none",
 					)}
 				>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								size="icon-xs"
-								variant="ghost"
-								className="shrink-0 self-center"
-								aria-label={t("pdf.zoomOut")}
-								disabled={zoomLevel <= PDF_ZOOM_MIN}
-								onClick={onZoomOut}
-							>
-								<Minus className="size-3.5" />
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="bottom">{t("pdf.zoomOut")}</TooltipContent>
-					</Tooltip>
-					<div className="flex h-6 shrink-0 items-center self-center">
-						<input
-							type="text"
-							inputMode="decimal"
-							maxLength={6}
-							value={zoomField}
-							aria-label={t("pdf.zoomPercentage")}
-							title={t("pdf.zoomPercentage")}
-							size={Math.max(zoomField.length, 1)}
-							style={{ width: `${Math.max(zoomField.length, 1)}ch` }}
-							className="h-6 min-w-[1ch] rounded border border-transparent bg-transparent p-0 text-center font-medium text-muted-foreground text-sm leading-6 tabular-nums outline-none hover:border-border focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/40"
-							onChange={(event) => onZoomFieldChange(event.target.value)}
-							onFocus={(event) => {
-								zoomFieldFocusedRef.current = true;
-								event.currentTarget.select();
-							}}
-							onBlur={(event) => {
-								zoomFieldFocusedRef.current = false;
-								if (zoomFieldCancelRef.current) {
-									zoomFieldCancelRef.current = false;
-									onZoomFieldChange(formatPdfZoomPercentage(zoomLevel));
-									return;
-								}
-								onCommitZoomField(event.currentTarget.value);
-							}}
-							onKeyDown={(event) => {
-								if (event.key === "Enter") {
-									event.preventDefault();
-									event.currentTarget.blur();
-								} else if (event.key === "Escape") {
-									event.preventDefault();
-									zoomFieldCancelRef.current = true;
-									event.currentTarget.blur();
-								}
-							}}
-						/>
-						<span
-							aria-hidden="true"
-							className="select-none text-muted-foreground text-sm leading-none"
-						>
-							%
-						</span>
-					</div>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								size="icon-xs"
-								variant="ghost"
-								className="shrink-0 self-center"
-								aria-label={t("pdf.zoomIn")}
-								disabled={zoomLevel >= PDF_ZOOM_MAX}
-								onClick={onZoomIn}
-							>
-								<Plus className="size-3.5" />
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="bottom">{t("pdf.zoomIn")}</TooltipContent>
-					</Tooltip>
 					{isRemotePaper ? (
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -239,14 +206,27 @@ export function PdfToolbar({
 								<Button
 									type="button"
 									size="icon-xs"
-									variant={layoutTranslateActive ? "secondary" : "ghost"}
+									variant={
+										layoutTranslateActive ||
+										layoutTranslateWaiting ||
+										longPressing
+											? "secondary"
+											: "ghost"
+									}
 									className="shrink-0 self-center"
+									data-full-text-translate
 									aria-label={layoutTranslateLabel}
-									aria-pressed={layoutTranslateActive}
+									aria-pressed={layoutTranslateActive || layoutTranslateWaiting}
 									disabled={!engine}
-									onClick={onToggleLayoutTranslate}
+									onPointerDown={handleTranslatePointerDown}
+									onPointerUp={handleTranslatePointerUp}
+									onPointerLeave={handleTranslatePointerLeave}
+									onPointerCancel={handleTranslatePointerLeave}
+									onClick={handleTranslateClick}
 								>
-									{layoutTranslateRunning ? (
+									{layoutTranslateWaiting ? (
+										<Clock className="size-3.5 animate-pulse" aria-hidden />
+									) : layoutTranslateRunning && !longPressing ? (
 										<Loader2 className="size-3.5 animate-spin" aria-hidden />
 									) : (
 										<Languages className="size-3.5" aria-hidden />
@@ -255,6 +235,10 @@ export function PdfToolbar({
 							</TooltipTrigger>
 							<TooltipContent side="bottom">
 								{layoutTranslateLabel}
+								{/* Inverted tooltip: mute via text-background, not muted-foreground. */}
+								<span className="ml-2 text-background/70">
+									{formatShortcutById("layoutTranslate")}
+								</span>
 							</TooltipContent>
 						</Tooltip>
 					) : null}

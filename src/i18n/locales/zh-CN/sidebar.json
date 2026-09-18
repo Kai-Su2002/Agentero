@@ -69,7 +69,18 @@
 			"newFolder": "新建文件夹",
 			"newFolderHint": "例如 papers/archive",
 			"invalidFolderPath": "必须位于 papers/ 下"
-		}
+		},
+		"compileTex": "编译",
+		"openTexPdf": "打开 PDF",
+		"compileSuccess": "编译成功",
+		"compileFailed": "编译失败，请检查日志",
+		"selectEngineFirst": "请先选择一个 LaTeX 引擎",
+		"latexEngine": "LaTeX 引擎",
+		"detectingEngines": "检测引擎中…",
+		"noLatexEngine": "未找到 LaTeX 引擎",
+		"cleanAux": "清除中间产物",
+		"cleanAuxSuccess": "已清除中间产物，可重新编译",
+		"cleanAuxFailed": "清除中间产物失败。"
 	},
 	"importLocalPdf": {
 		"dropNoPath": "无法读取拖入的 PDF。请改用魔棒 → 导入 PDF，或从 Finder 再拖一次。"
@@ -121,7 +132,7 @@
 		"colCitations": "被引量",
 		"heatmapTooltip": "{{total}} 次 · 高亮 {{highlights}} · 对话 {{asks}} · 翻译 {{translates}}",
 		"sortBy": "按{{column}}排序",
-		"copyHint": "单击复制{{label}}",
+		"copyHint": "双击复制{{label}}",
 		"copied": "已复制{{label}}",
 		"copyFailed": "无法复制到剪贴板",
 		"count": "共 {{formatted}} 篇",
@@ -146,6 +157,7 @@
 		"importPdfMerged": "已将 PDF 合入已有条目：「{{title}}」",
 		"importPdfMergedMany": "已将 {{count}} 个 PDF 合入已有条目",
 		"recognizeMerged": "识别后的 PDF 已合入已有条目：{{id}}",
+		"recognizeArxivRateLimited": "arXiv 接口限流（{{id}}），未能补全标题/作者。请稍后再点「刷新元数据」。",
 		"importFailed": "导入失败",
 		"exportFailed": "导出失败",
 		"backfillPublication": "补全期刊/会议",
@@ -240,6 +252,7 @@
 				"reading": "论文阅读",
 				"writing": "论文写作",
 				"figures": "绘图",
+				"ppt": "PPT制作",
 				"reproduce": "复现",
 				"submit": "投稿"
 			}
@@ -252,7 +265,9 @@
 	"zoteroMigrate": {
 		"button": "从 Zotero 迁移",
 		"title": "从 Zotero 迁移",
+		"stepsHint": "第 1 步已完成：这是新的 Agentero 文献库。第 2 步请选择包含 zotero.sqlite 的 Zotero 来源目录。",
 		"chooseFolder": "选择 Zotero 数据文件夹…",
+		"vaultIsZotero": "这里是 Zotero 数据目录，请为 Agentero 选择一个新的文献库文件夹。",
 		"scanning": "正在扫描文库…",
 		"detecting": "正在查找你的 Zotero 文库…",
 		"sqliteMissing": "未找到 zotero.sqlite，请选择 Zotero 数据目录",

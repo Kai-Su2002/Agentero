@@ -43,7 +43,7 @@ Issue 原文诉求拆两层：
 | 能力 | 现状 |
 |---|---|
 | marks 落盘 | 前端写 `marks/*.json` 与 `annotations.json`；Host 无统一 marks command（`api.md` 曾规划 `reader:annotations`，未做） |
-| CLI 命令组 | `vault` / `tree` / `paper` / `trash` / `import` / `export` / `config` / `wiki`；**无** `mark` / `translate` |
+| CLI 命令组 | `vault` / `tree` / `paper` / `import` / `export` / `doctor`；**无** `mark` / `translate` |
 | CLI 与 marks | 仅 `paper get` → `assets.marksDir` 是否存在；skill 将 marks 列为 L2.5 **只读** |
 | 文字 → 框 | 阅读器用 EmbedPDF `searchAllPages`（⌘F）；CLI 用 `features/pdf_locate` 直调 PDFium 文本引擎（同源），**已**接 mark 写入 |
 | 翻译 Host | `translate_text` 已有；CLI `translate` 已暴露（仅免费引擎） |
@@ -98,7 +98,7 @@ Issue 原文诉求拆两层：
 | `--json` 机器可读 | 交互式 PDF 渲染 |
 | 写 per-id mark、列目录 | 默认每次 add 冷启动扒 PDF |
 | 免费 MT 文本翻译（上层） | BYOA Agent 翻译经 CLI |
-| 与 `wiki check`、`[[@id]]` 兼容的 id | 伪造 id、手写 0–1 坐标充 resolved |
+| 与 `doctor wiki`、`[[@id]]` 兼容的 id | 伪造 id、手写 0–1 坐标充 resolved |
 
 ### 4.4 目标命令面（内置到 `agentero` 后）
 
@@ -127,7 +127,7 @@ agentero translate "Hello world" --to zh --json
 agentero mark add papers/… --kind translate --quote "…" --result "…" --json
 ```
 
-全局约定不变：`--vault` → `AGENTERO_VAULT` → cwd 上溯 → config `default_vault`；破坏性操作 `-y`。
+全局约定不变：`--vault` → `AGENTERO_VAULT` → cwd 上溯；破坏性操作 `-y`。
 
 ### 4.5 总体实施策略
 
@@ -180,7 +180,7 @@ agentero mark delete <paper> <id> -y --json
 ### 5.3 只读增强（可选但便宜）
 
 - `paper get` / `paths` 已暴露 `marksDir`：可增加 `mark list` 摘要计数。
-- `wiki check` 对 `@id` 仍可不打开 marks 验存在（保持现状）；文档写清。
+- `doctor wiki` 对 `@id` 仍可不打开 marks 验存在（保持现状）；文档写清。
 
 ### 5.4 基础阶段验收
 
@@ -268,7 +268,7 @@ Skill 是 **约定与工作流**，不是第二套业务逻辑。实现顺序应
 | S0（对齐阶段一） | L2.5 从只读改为：可用 `mark list/get/add/…`；禁止编造 rects；默认 pending |
 | S1（对齐定位 P0） | 说明「打开 PDF 后自动补位置」；教写独特 quote、可选 page |
 | S2 | `translate` 命令与 translate mark；与划词翻译语义一致 |
-| S3 | 与 `wiki check`、`[[@id]]` 互链写法；仍不伪造 id |
+| S3 | 与 `doctor wiki`、`[[@id]]` 互链写法；仍不伪造 id |
 | S4 | 若桌面已内置 CLI：说明 PATH / `agentero` 发现方式（与 [CLI 文档](../backend/cli.md) 用户文档对齐） |
 
 Hard boundaries 保持：

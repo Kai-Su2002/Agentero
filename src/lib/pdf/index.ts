@@ -92,6 +92,7 @@ export {
 	pickCrossrefRegionByLabel,
 } from "@/lib/pdf/crossref-resolve";
 export { createPdfViewportResizeGate } from "@/lib/pdf/dockview-resize";
+export { embedPdfDocumentId } from "@/lib/pdf/document-id";
 export {
 	ANNOTATIONS_FILE,
 	type HighlightCustom,
@@ -144,6 +145,8 @@ export {
 	layoutAnalysisStore,
 	layoutKindBorder,
 	layoutKindFill,
+	layoutKindFromCitationFragment,
+	layoutKindFromRegionId,
 	layoutKindHex,
 	layoutKindI18nKey,
 	layoutSidecarPath,
@@ -212,6 +215,12 @@ export {
 	PDF_PAPER_TONES,
 	type PdfPaperTone,
 } from "@/lib/pdf/page-theme";
+export {
+	clearPendingPdfPage,
+	consumePendingPdfPage,
+	peekPendingPdfPage,
+	setPendingPdfPage,
+} from "@/lib/pdf/pending-pdf-page";
 export { readReadingPage, writeReadingPage } from "@/lib/pdf/reading-position";
 export {
 	normalizedRegionFromPoints,
@@ -247,14 +256,22 @@ export type {
 	PdfTranslateRect,
 } from "@/lib/pdf/translate/types";
 export {
-	bindWheelZoomGesture,
-	createWheelZoomCoalescer,
+	createPdfViewportScrollScheduler,
+	type PdfViewportScrollRequest,
+	type PdfViewportScrollScheduler,
+} from "@/lib/pdf/viewport-scroll";
+export {
+	bindZoomGesture,
+	wheelDeltaToZoomRatio,
+	type ZoomGesturePoint,
 } from "@/lib/pdf/wheel-zoom";
 export {
+	clampZoomPreviewScale,
 	formatPdfZoomPercentage,
 	PDF_ZOOM_MAX,
 	PDF_ZOOM_MIN,
 	parsePdfZoomPercentage,
+	zoomPreviewTranslate,
 } from "@/lib/pdf/zoom";
 // citation-dest-keys.worker.ts (web worker entry) and marks/* (internal mark
 // store schema/io) are intentionally not re-exported from this barrel.

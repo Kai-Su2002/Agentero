@@ -13,8 +13,8 @@ export function tabNotesEligible(tab: DocTab | null): boolean {
 	return (
 		tab.kind !== "library" &&
 		!isRemoteArxivPath(tab.path) &&
-		Boolean(tab.paperMeta) &&
-		(tab.mode === "pdf" || tab.mode === "html")
+		(tab.mode === "pdf" || tab.mode === "html") &&
+		Boolean(tab.paperMeta ?? tab.notesPath)
 	);
 }
 
@@ -28,7 +28,7 @@ export function isPaperContentTab(tab: DocTab | null): boolean {
 
 /** Center Markdown mode while a paper is open edits its NOTES.md live. */
 export function tabIsPaperNotes(tab: DocTab | null): boolean {
-	if (!tab?.paperMeta || tab.mode !== "markdown" || !tab.notesPath) {
+	if (tab?.mode !== "markdown" || !tab.notesPath) {
 		return false;
 	}
 	const tabPath = normalizeTabPath(tab.path);
@@ -120,7 +120,7 @@ export function paperReadingPlacements(
 }
 
 export function createNotesSplitPane(tab: DocTab): DocTab | null {
-	if (!tab.notesPath || !tab.paperMeta) return null;
+	if (!tab.notesPath) return null;
 	return {
 		...createPlaceholderTab(tab.notesPath, "markdown"),
 		kind: "file",
@@ -204,6 +204,107 @@ export function reseedMarkdownTab(
 				markdownDirty: false,
 				seedKey: t.seedKey + 1,
 			};
+		}
+		return t;
+	});
+}
+
+/** Reseed an open Excalidraw tab after our own save (no remount). */
+export function reseedExcalidrawTab(
+	prev: DocTab[],
+	absPath: string,
+	content: string,
+): DocTab[] {
+	const key = normalizeTabPath(absPath);
+	return prev.map((t) => {
+		if (normalizeTabPath(t.path) === key && t.mode === "excalidraw") {
+			return {
+				...t,
+				excalidrawSeed: content,
+				excalidrawDirty: false,
+			};
+		}
+		return t;
+	});
+}
+
+/** Refresh an open Excalidraw tab from disk (bumps key to force remount). */
+export function refreshExcalidrawTab(
+	prev: DocTab[],
+	absPath: string,
+	content: string,
+): DocTab[] {
+	const key = normalizeTabPath(absPath);
+	return prev.map((t) => {
+		if (normalizeTabPath(t.path) === key && t.mode === "excalidraw") {
+			return {
+				...t,
+				excalidrawSeed: content,
+				excalidrawDirty: false,
+				excalidrawKey: t.excalidrawKey + 1,
+			};
+		}
+		return t;
+	});
+}
+
+/** Reseed an open plain-text tab after our own save (no reload needed). */
+export function reseedTextTab(
+	prev: DocTab[],
+	absPath: string,
+	content: string,
+): DocTab[] {
+	const key = normalizeTabPath(absPath);
+	return prev.map((t) => {
+		if (normalizeTabPath(t.path) === key && t.mode === "text") {
+			return { ...t, textSeed: content, textDirty: false };
+		}
+		return t;
+	});
+}
+
+/**
+ * Refresh an open plain-text tab from disk (bumps key; the editor swaps the
+ * document in place — no remount, scroll and view state survive).
+ */
+export function refreshTextTab(
+	prev: DocTab[],
+	absPath: string,
+	content: string,
+): DocTab[] {
+	const key = normalizeTabPath(absPath);
+	return prev.map((t) => {
+		if (normalizeTabPath(t.path) === key && t.mode === "text") {
+			return {
+				...t,
+				textSeed: content,
+				textDirty: false,
+				textKey: t.textKey + 1,
+			};
+		}
+		return t;
+	});
+}
+
+/**
+ * Refresh an open PDF / translation pane from disk. A fresh `pdfBytes`
+ * identity is the viewer's reload signal (EmbedPDF re-inits on the new
+ * buffer); panes the TeX compile flow owns (`texCompiling`) are skipped —
+ * openTexPdf fills those itself when the run lands.
+ */
+export function refreshPdfTab(
+	prev: DocTab[],
+	absPath: string,
+	bytes: ArrayBuffer,
+): DocTab[] {
+	const key = normalizeTabPath(absPath);
+	return prev.map((t) => {
+		if (
+			normalizeTabPath(t.path) === key &&
+			(t.mode === "pdf" || t.mode === "translation") &&
+			!t.texCompiling
+		) {
+			return { ...t, pdfBytes: bytes, loaded: true };
 		}
 		return t;
 	});

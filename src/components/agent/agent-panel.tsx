@@ -181,8 +181,10 @@ export const AgentPanel = memo(function AgentPanel({
 	const {
 		lines,
 		activeTabId,
+		hydratingSessionId,
 		selected,
 		activeTabIsRunning,
+		activePhase,
 		submitting,
 		switching,
 		editingLineId,
@@ -194,6 +196,8 @@ export const AgentPanel = memo(function AgentPanel({
 		cancelEditingMessage,
 		resendEditedMessage,
 		startEditingMessage,
+		openSelectedAgentLogin,
+		selectedLogin,
 		submitComposer,
 		messageQueue,
 		removeQueuedMessage,
@@ -208,6 +212,7 @@ export const AgentPanel = memo(function AgentPanel({
 		selectAgent,
 		composerText,
 		onComposerTextChangeFromUser,
+		composerInputRef,
 		setComposerMenuDismissed,
 		setMentionActiveIndex,
 		setSkillActiveIndex,
@@ -350,8 +355,10 @@ export const AgentPanel = memo(function AgentPanel({
 					<ChatTranscript
 						lines={lines}
 						activeTabId={activeTabId}
+						hydratingSessionId={hydratingSessionId}
 						compact={composerCompact}
 						activeTabIsRunning={activeTabIsRunning}
+						phase={activePhase}
 						submitting={submitting}
 						switching={switching}
 						editingLineId={editingLineId}
@@ -364,6 +371,7 @@ export const AgentPanel = memo(function AgentPanel({
 						onResendEdited={(lineId) => void resendEditedMessage(lineId)}
 						onStartEditing={startEditingMessage}
 						onSendSuggestion={sendSuggestion}
+						onAgentLogin={selectedLogin ? openSelectedAgentLogin : undefined}
 						onOpenSource={onOpenSource}
 					/>
 
@@ -457,6 +465,7 @@ export const AgentPanel = memo(function AgentPanel({
 								onAttachSlashCommand={attachSlashCommand}
 								onSlashActiveIndexChange={setSlashActiveIndex}
 								activeUsage={activeUsage}
+								composerInputRef={composerInputRef}
 								onCancelRun={() => void cancelCurrentRun()}
 							/>
 						</>

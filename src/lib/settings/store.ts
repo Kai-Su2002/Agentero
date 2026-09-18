@@ -353,6 +353,10 @@ function normalizePartial(
 	if (typeof parsed.autoOpenPaperNotes !== "boolean") {
 		merged.autoOpenPaperNotes = DEFAULT_SETTINGS.autoOpenPaperNotes;
 	}
+	if (typeof parsed.replaceCurrentTabOnOpenPaper !== "boolean") {
+		merged.replaceCurrentTabOnOpenPaper =
+			DEFAULT_SETTINGS.replaceCurrentTabOnOpenPaper;
+	}
 	if (
 		merged.autoUpdateInternalLinks !== "ask" &&
 		merged.autoUpdateInternalLinks !== "always"
@@ -590,18 +594,17 @@ function normalizeEmbeddingSettings(
 	return base;
 }
 
-/** Mirrors the Rust `resolve_embedding_source` rule case-for-case. */
+/** Browser/dev counterpart of Rust `resolve_embedding_source`. */
 function resolveEmbeddingSource(
 	rawSource: unknown,
-	fields: Pick<EmbeddingSettings, "baseUrl" | "apiKey" | "model">,
+	_fields: Pick<EmbeddingSettings, "baseUrl" | "apiKey" | "model">,
 ): EmbeddingSource {
 	const explicit =
 		typeof rawSource === "string" ? rawSource.trim().toLowerCase() : "";
 	if (explicit === "builtin" || explicit === "custom") return explicit;
-	// Any populated BYOK field (an all-`*` mask counts) implies a custom endpoint.
-	const configured =
-		fields.baseUrl !== "" || fields.apiKey !== "" || fields.model !== "";
-	return configured ? "custom" : "builtin";
+	// Browser/dev cannot know whether a Host key was compiled in. Keep inferred
+	// values on the BYOK side; keyed desktop builds send an explicit source.
+	return "custom";
 }
 
 function normalizeTranslateSettings(

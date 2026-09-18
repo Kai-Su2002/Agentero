@@ -31,6 +31,7 @@ macro_rules! common_commands {
             crate::features::agent::commands::agent_probe,
             crate::features::agent::commands::agent_probe_catalog,
             crate::features::agent::commands::doctor_check_host,
+            crate::features::agent::commands::doctor_install_node,
             crate::features::agent::commands::doctor_check_agents,
             crate::features::system::network::commands::doctor_check_network,
             crate::features::agent::commands::agent_cancel_run,
@@ -57,6 +58,7 @@ macro_rules! common_commands {
             crate::features::agent::commands::agent_respond_permission,
             crate::features::agent::commands::agent_respond_elicitation,
             crate::features::agent::commands::agent_respond_ask_user,
+            crate::features::agent::commands::agent_resolve_citation,
             crate::features::markdown::wiki::commands::graph_get_backlinks,
             crate::features::markdown::wiki::commands::wiki_resolve,
             crate::features::markdown::wiki::commands::wiki_embed_read,
@@ -107,6 +109,7 @@ macro_rules! common_commands {
             crate::features::paper::catalog::commands::paper_get,
             crate::features::paper::catalog::commands::paper_list,
             crate::features::paper::catalog::commands::paper_move,
+            crate::features::paper::catalog::commands::paper_repath,
             crate::features::paper::catalog::commands::paper_set_is_read,
             crate::features::paper::catalog::commands::paper_update_meta,
             crate::features::paper::catalog::commands::paper_set_tags,
@@ -159,6 +162,7 @@ pub fn attach_handlers(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<ta
             crate::features::agent::commands::agent_list_sessions,
             crate::features::agent::commands::agent_load_session,
             crate::features::agent::commands::agent_warm,
+            crate::features::agent::commands::doctor_open_agent_login_terminal,
             crate::integration::remote::commands::remote_connect,
             crate::integration::remote::commands::remote_ssh_config_hosts,
             crate::integration::remote::commands::remote_disconnect,
@@ -216,6 +220,11 @@ pub fn attach_handlers(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<ta
             crate::app::finder_service::commands::finder_service_install,
             crate::app::finder_service::commands::finder_service_uninstall,
             crate::features::pdf::export::commands::export_system_cjk_font,
+            crate::features::web::commands::web_proxy_allow_host,
+            crate::features::compile::detect_latex_engines,
+            crate::features::compile::clean_latex_aux_files,
+            crate::features::compile::chktex_lint,
+            crate::features::jobs::commands::job_latex_compile_enqueue,
         ])
     }
     #[cfg(target_os = "ios")]

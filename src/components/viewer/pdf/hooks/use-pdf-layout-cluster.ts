@@ -37,6 +37,7 @@ type ScrollCapability = ReturnType<typeof useScroll>["provides"];
 
 export type UsePdfLayoutClusterOptions = {
 	docId: string;
+	translationPane?: boolean;
 	totalPages: number;
 	/** Workspace active tab; only the active viewer auto-runs the analysis. */
 	isActive: boolean;
@@ -62,6 +63,8 @@ export type UsePdfLayoutClusterOptions = {
 	hostRef: RefObject<HTMLDivElement | null>;
 	/** True for remote papers with no local sidecar; disables layout analysis. */
 	isRemotePaper?: boolean;
+	/** True for PDFs outside papers/ (plain viewer): no layout analysis. */
+	plainViewer?: boolean;
 };
 
 export type PdfLayoutCluster = Omit<PdfLayoutRegions, "layoutDocRegions"> &
@@ -80,6 +83,7 @@ export type PdfLayoutCluster = Omit<PdfLayoutRegions, "layoutDocRegions"> &
 
 export function usePdfLayoutCluster({
 	docId,
+	translationPane = false,
 	totalPages,
 	isActive,
 	paperAbsPath,
@@ -94,6 +98,7 @@ export function usePdfLayoutCluster({
 	scrollRef,
 	hostRef,
 	isRemotePaper = false,
+	plainViewer = false,
 }: UsePdfLayoutClusterOptions): PdfLayoutCluster {
 	// Four hooks: region buckets, the analysis run, hover (sole owner of the two
 	// mutually exclusive hover cards) and the bulk-translate job.
@@ -115,10 +120,12 @@ export function usePdfLayoutCluster({
 		docCap,
 		docCapRef,
 		isRemotePaper,
+		plainViewer,
+		translationPane,
 	});
 
 	const handleAnalyzeLayout = useCallback(() => {
-		if (isRemotePaper) return;
+		if (isRemotePaper || plainViewer) return;
 		startLayoutAnalysisRef.current({
 			force: false,
 			openFigures: true,
@@ -126,7 +133,7 @@ export function usePdfLayoutCluster({
 			asBackgroundTask: true,
 			notifyOnError: true,
 		});
-	}, [isRemotePaper, startLayoutAnalysisRef]);
+	}, [isRemotePaper, plainViewer, startLayoutAnalysisRef]);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: scrollRef is an injected stable ref; EmbedPDF returns a fresh scope object per render, so only the ref may be read here.
 	const handleJumpToLayoutRegion = useCallback(
 		(region: PdfLayoutRegion) => {
@@ -134,7 +141,11 @@ export function usePdfLayoutCluster({
 				pageNumber: region.pageIndex + 1,
 				behavior: "instant",
 			});
-			setFocusedLayoutRegion(docId, region.id);
+			setFocusedLayoutRegion(docId, region.id, {
+				pageIndex: region.pageIndex,
+				bbox: region.bbox,
+				kind: region.kind,
+			});
 		},
 		[docId],
 	);
@@ -170,6 +181,7 @@ export function usePdfLayoutCluster({
 		layoutTranslateItemsByPage,
 		layoutTranslatePageStateByPage,
 		layoutTranslateRunning,
+		layoutTranslateWaiting,
 		layoutTranslateActive,
 		layoutTranslateLabel,
 		toggleLayoutTranslate,
@@ -177,7 +189,9 @@ export function usePdfLayoutCluster({
 	} = usePdfLayoutTranslate({
 		docId,
 		layoutRawRegions,
+		translationPane,
 		paperAbsPath,
+		paperRelPath,
 		paperKey,
 		vaultPath,
 	});
@@ -196,6 +210,7 @@ export function usePdfLayoutCluster({
 		layoutTranslateItemsByPage,
 		layoutTranslatePageStateByPage,
 		layoutTranslateRunning,
+		layoutTranslateWaiting,
 		layoutTranslateActive,
 		layoutTranslateLabel,
 		toggleLayoutTranslate,

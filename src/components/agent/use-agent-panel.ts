@@ -5,7 +5,7 @@
  * cross-window session handoff, agent switch, and new conversation.
  * UI lives in sibling components under `src/components/agent/`.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAgentComposer } from "@/components/agent/hooks/use-agent-composer";
 import { useAgentConfig } from "@/components/agent/hooks/use-agent-config";
@@ -20,6 +20,7 @@ import { useSessionComposerState } from "@/hooks/use-session-composer-state";
 import {
 	cancelAgentRun,
 	ensureCatalogAgent,
+	openAgentLoginTerminal,
 	setDefaultAgent,
 } from "@/lib/agent";
 import { agentChromeStore } from "@/lib/agent/agent-chrome-store";
@@ -36,6 +37,7 @@ import {
 	resolveSelected,
 } from "@/lib/agent/chat-state";
 import { removeVisualDraft } from "@/lib/agent/visual-context-store";
+import { notifyError } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { listenAgentSessionHandoff } from "@/lib/shell/workspace-broadcast";
 
@@ -101,8 +103,12 @@ export function useAgentPanel({
 	const sessionHistory = useAgentSessionStore((s) => s.sessions);
 	const setSessionHistory = useAgentSessionStore((s) => s.setSessions);
 	const activeTabId = useAgentSessionStore((s) => s.activeTabId);
+	const hydratingSessionId = useAgentSessionStore((s) => s.hydratingSessionId);
 	const setActiveTabId = useAgentSessionStore((s) => s.setActiveTabId);
 	const startDraft = useAgentSessionStore((s) => s.startDraft);
+	const setHydratingSessionId = useAgentSessionStore(
+		(s) => s.setHydratingSessionId,
+	);
 	const hydrateAndActivateSession = useAgentSessionStore(
 		(s) => s.hydrateAndActivateSession,
 	);
@@ -200,6 +206,30 @@ export function useAgentPanel({
 
 	const options = buildOptions(registry, catalog);
 	const selected = resolveSelected(options, selectedAgentId, registry);
+	const selectedLogin = useMemo(() => {
+		const templateId = selected?.templateId ?? selected?.template ?? null;
+		if (!templateId || templateId === "custom") return null;
+		const entry = catalog?.entries.find(
+			(candidate) => candidate.templateId === templateId,
+		);
+		const command = entry?.loginCommand?.trim();
+		if (!command) return null;
+		return { templateId, command };
+	}, [catalog, selected]);
+
+	const openSelectedAgentLogin = useCallback(async () => {
+		if (!selectedLogin) return;
+		try {
+			await openAgentLoginTerminal(selectedLogin.templateId);
+			for (const delay of [2_000, 5_000, 10_000, 20_000]) {
+				window.setTimeout(() => {
+					void refresh();
+				}, delay);
+			}
+		} catch (error) {
+			notifyError(errorText(error));
+		}
+	}, [selectedLogin, refresh]);
 
 	// Keep app chrome (title bar, mobile nav, …) in sync with the active agent.
 	useEffect(() => {
@@ -228,6 +258,7 @@ export function useAgentPanel({
 		applyPlanEvent,
 		completeSession,
 		failSession,
+		phaseBySession,
 	} = useAgentSessionRuntime({
 		refs,
 		t,
@@ -355,6 +386,7 @@ export function useAgentPanel({
 		handleComposerDragOver,
 		handleComposerDrop,
 		onComposerTextChangeFromUser,
+		composerInputRef,
 	} = useAgentComposer({
 		refs,
 		composer: composerState,
@@ -399,6 +431,7 @@ export function useAgentPanel({
 		setMentionActiveIndex(0);
 		setSkillActiveIndex(0);
 		setActiveTabId("draft");
+		setHydratingSessionId(null);
 		activeTabRef.current = "draft";
 		activeConversationRef.current = null;
 		clearMessageQueue();
@@ -408,6 +441,7 @@ export function useAgentPanel({
 		setLines,
 		setSessionHistory,
 		setActiveTabId,
+		setHydratingSessionId,
 		resetSessionContext,
 		setUsage,
 		setUsageBySession,
@@ -491,6 +525,7 @@ export function useAgentPanel({
 			activateComposerSession("draft");
 			activeTabRef.current = "draft";
 			setActiveTabId("draft");
+			setHydratingSessionId(null);
 			setLines([]);
 			setSessionHistory([]);
 			clearMessageQueue();
@@ -525,6 +560,7 @@ export function useAgentPanel({
 		setSessionHistory,
 		setLines,
 		hydrateAndActivateSession,
+		setHydratingSessionId,
 		activateComposerSession,
 		setHistoryOpen,
 		historyOpen,
@@ -536,8 +572,11 @@ export function useAgentPanel({
 		// Transcript
 		lines,
 		activeTabId,
+		hydratingSessionId,
 		selected,
 		activeTabIsRunning,
+		/** Loading phase of the active tab's in-flight turn (starting / waiting / reconnecting). */
+		activePhase: phaseBySession[activeTabId] ?? null,
 		submitting,
 		switching,
 		editingLineId,
@@ -549,6 +588,8 @@ export function useAgentPanel({
 		cancelEditingMessage,
 		resendEditedMessage,
 		startEditingMessage,
+		openSelectedAgentLogin,
+		selectedLogin,
 		send,
 		submitComposer,
 		messageQueue,
@@ -568,6 +609,7 @@ export function useAgentPanel({
 		composerText,
 		setComposerText,
 		onComposerTextChangeFromUser,
+		composerInputRef,
 		setComposerMenuDismissed,
 		setMentionActiveIndex,
 		setSkillActiveIndex,

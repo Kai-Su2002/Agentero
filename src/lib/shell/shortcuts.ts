@@ -3,6 +3,8 @@
  * Display uses Apple symbols: ⌘ ⌥ ⇧ ⌃
  */
 
+import { getPlatformOS } from "@/lib/core/tauri";
+
 export type ShortcutId =
 	| "settings"
 	| "newWindow"
@@ -19,12 +21,14 @@ export type ShortcutId =
 	/** ⇧⌘← — reset tree to only papers/ expanded (children listed, not open) */
 	| "collapseTreeDefault"
 	| "magicWand"
-	/** ⌘P / ⌘K — quick open papers & contents */
+	/** ⌘P — quick open papers & contents */
 	| "quickOpen"
 	/** ⇧⌘P — run app commands */
 	| "commandPalette"
 	| "toggleSidebar"
 	| "toggleChat"
+	/** ⌘K — in-page Quick chat (Ask) from the live selection */
+	| "quickChat"
 	/** ⇧⌘A — pin the live selection into the Agent context and focus the composer */
 	| "addSelectionToChat"
 	| "closeSheet"
@@ -41,9 +45,15 @@ export type ShortcutId =
 	| "zoomOut"
 	| "zoomReset"
 	/** ⌘. — start/cancel PDF visual-region annotation (active PDF tab). */
-	| "visualAnnotation";
+	| "visualAnnotation"
+	/** ⌥A — toggle PDF full-text (layout) translation (active PDF tab). */
+	| "layoutTranslate"
+	/** F11 — borderless fullscreen (Windows only). */
+	| "toggleFullscreen";
 
 export type ShortcutGroup = "App" | "Navigation" | "Vault";
+
+export type ShortcutPlatform = "windows" | "macos" | "linux";
 
 export type ShortcutDef = {
 	id: ShortcutId;
@@ -62,6 +72,8 @@ export type ShortcutDef = {
 	whenSettingsOpen?: boolean;
 	/** When true, only matches if no app overlay is open. */
 	whenSettingsClosed?: boolean;
+	/** When set, only active / listed on these desktop OSes. */
+	platforms?: readonly ShortcutPlatform[];
 };
 
 export const SHORTCUTS: ShortcutDef[] = [
@@ -230,7 +242,16 @@ export const SHORTCUTS: ShortcutDef[] = [
 	{
 		id: "toggleChat",
 		group: "Navigation",
+		// ⌘L — with a selection: Add to chat (pin + open Agent); else toggle rail.
 		key: "l",
+		meta: true,
+		whenSettingsClosed: true,
+	},
+	{
+		id: "quickChat",
+		group: "Navigation",
+		// ⌘K — in-page Quick chat (Ask) from the live PDF / Plaza selection.
+		key: "k",
 		meta: true,
 		whenSettingsClosed: true,
 	},
@@ -315,19 +336,34 @@ export const SHORTCUTS: ShortcutDef[] = [
 		meta: true,
 		whenSettingsClosed: true,
 	},
+	{
+		id: "layoutTranslate",
+		group: "App",
+		// ⌥A — toggle PDF full-text (layout) translation (active PDF tab).
+		// Immersive Translate convention; guard text fields (⌥A types "å").
+		key: "a",
+		alt: true,
+		whenSettingsClosed: true,
+	},
+	{
+		id: "toggleFullscreen",
+		group: "App",
+		// F11 — exclusive (borderless) fullscreen; Windows only
+		key: "F11",
+		platforms: ["windows"],
+	},
 ];
+
+function shortcutAvailableOnPlatform(def: ShortcutDef): boolean {
+	if (!def.platforms?.length) return true;
+	const os = getPlatformOS();
+	return os === "windows" || os === "macos" || os === "linux"
+		? def.platforms.includes(os)
+		: false;
+}
 
 /** Secondary aliases that still work (documented lightly). */
 const ALIASES: Partial<Record<ShortcutId, ShortcutDef[]>> = {
-	quickOpen: [
-		{
-			id: "quickOpen",
-			group: "Navigation",
-			// ⌘K — alias for quick open (Agentero habit)
-			key: "k",
-			meta: true,
-		},
-	],
 	toggleSidebar: [
 		{
 			id: "toggleSidebar",
@@ -410,7 +446,18 @@ export function formatShortcutById(id: ShortcutId): string {
 export function matchShortcut(event: KeyboardEvent, def: ShortcutDef): boolean {
 	const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
 	const defKey = def.key.length === 1 ? def.key.toLowerCase() : def.key;
-	if (key !== defKey && event.key !== def.key) return false;
+	// macOS composes ⌥+letter into a single character (⌥A → "å"), so event.key
+	// never equals the def letter. Alt-only letter shortcuts fall back to the
+	// physical key (event.code), which stays stable across layouts.
+	const physicalKey = /^Key[A-Z]$/.test(event.code)
+		? event.code.slice(3).toLowerCase()
+		: null;
+	if (
+		key !== defKey &&
+		event.key !== def.key &&
+		!(def.alt && !def.meta && physicalKey === defKey)
+	)
+		return false;
 
 	const wantMeta = Boolean(def.meta);
 	const wantAlt = Boolean(def.alt);
@@ -449,6 +496,7 @@ export function resolveShortcutId(
 	});
 
 	for (const def of candidates) {
+		if (!shortcutAvailableOnPlatform(def)) continue;
 		if (def.whenSettingsOpen && !overlayOpen) continue;
 		if (def.whenSettingsClosed && overlayOpen) continue;
 		if (matchShortcut(event, def)) return def.id;
@@ -463,6 +511,8 @@ export function shortcutsByGroup(): {
 	const order = ["App", "Vault", "Navigation"] as const;
 	return order.map((group) => ({
 		group,
-		items: SHORTCUTS.filter((s) => s.group === group),
+		items: SHORTCUTS.filter(
+			(s) => s.group === group && shortcutAvailableOnPlatform(s),
+		),
 	}));
 }

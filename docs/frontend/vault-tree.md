@@ -1,12 +1,15 @@
 # 文件树
 
-左侧 Vault 文件树：虚拟 Library / Recycle Bin、魔棒、paper 行操作、多选拖拽。
+左侧 Vault 文件树：虚拟 Recycle Bin、`papers/` 论文库入口、魔棒、paper 行操作、多选拖拽。
+
+## 论文库入口
+
+`papers/` 根文件夹即论文库入口：行首用 `Library` 图标，标题显示为「论文库」，仍可展开组织子文件夹；单击打开全库表格。其右键菜单在通用文件夹操作之外，追加入库操作：下载全部不完整论文资源、导出 BibTeX、发现引用我的新论文。
 
 ## 虚拟节点
 
 | 节点 | 路径常量 | 行为 |
 |---|---|---|
-| Library | `agentero:library` | 打开全库表格；右键导出 BibTeX / 发现引用我的新论文 |
 | Recycle Bin | `agentero:trash` | 打开回收站视图；右键清空 |
 | 广场 | `agentero:plaza` | 单击只切换展开/收起（纯虚拟文件夹，无广场首页）；`Globe` 图标。子来源含 Cool Papers、ModelScope 论文、Skill 推荐与 **订阅**；右键父节点列出全部来源逐条勾选显隐（`plazaHiddenSources`） |
 
@@ -23,7 +26,7 @@
 - 默认只展开 `papers/` 及其一级子目录。
 - 所有节点图标统一位于行首并使用一致的左右边距；文件夹与广场行悬停或键盘聚焦时，在同一位置将自身图标替换为展开/收缩箭头，保持行宽稳定并提示该行可展开。
 - 虚拟化：`@tanstack/react-virtual` 拍平窗口化；`getItemKey` 用行稳定 id，避免内联新建草稿插入/移除后按索引缓存行高留下空隙。文件/文件夹行固定为 `h-7`，论文资源操作按钮不改变行高。行定位用 `top`（不用 `translateY`），并在视口 Resize 时把 `scrollTop` 同步回 virtualizer，避免 WKWebView 在打开论文 / 刷新树后侧栏整片不绘制、滚动才恢复（见 [bug_fix/vault-sidebar-blank-until-scroll.md](../bug_fix/vault-sidebar-blank-until-scroll.md)）。
-- 外部工具 / CLI 导入论文时，watcher 会刷新文件树，并在 Catalog 或 `papers/` 结构变更后去抖刷新 Library 元数据；论文行标签因此可在不重开论文库的情况下从目录 ID 更新为标题/作者。
+- 外部工具 / CLI 导入论文时，watcher 会刷新文件树，并在 Catalog 或 `papers/` 结构变更后去抖刷新 Library 元数据；论文行标签因此可在不重开论文库的情况下从目录 ID 更新为标题/作者。窗口隐藏/失焦时变更先缓冲，回到前台再 flush；后台去抖更长。
 
 ### 论文目录识别
 

@@ -1,4 +1,5 @@
 import type { LucideIcon } from "lucide-react";
+import { motion, useReducedMotion } from "motion/react";
 import {
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
@@ -239,6 +240,7 @@ export function SelectionCard({
 	children,
 }: SelectionCardProps) {
 	const rootRef = useRef<HTMLDivElement>(null);
+	const reduceMotion = useReducedMotion();
 	const { left, top, maxHeight } = placeSelectionCard(screen, {
 		width,
 		height,
@@ -247,6 +249,15 @@ export function SelectionCard({
 		trackPin,
 		preferRight,
 	});
+	// The gutter pin sits on the side the card opens toward. Reveal the card
+	// from that corner so it looks like the pin expands into the full card.
+	const isRightSide = left + width / 2 >= screen.x;
+	const originClip = isRightSide
+		? "inset(0 100% 100% 0)"
+		: "inset(0 0 100% 100%)";
+	const transition = reduceMotion
+		? { duration: 0 }
+		: { type: "spring" as const, bounce: 0.15, duration: 0.35 };
 
 	// If the card mounts / remounts under an existing pointer (mode switch,
 	// open under cursor), browsers do not re-fire pointerenter — re-arm the
@@ -265,7 +276,7 @@ export function SelectionCard({
 	};
 
 	return (
-		<div
+		<motion.div
 			ref={rootRef}
 			className={cn(
 				"fixed z-50 flex flex-col",
@@ -274,6 +285,10 @@ export function SelectionCard({
 				PDF_FLOAT_CARD,
 				className,
 			)}
+			initial={{ clipPath: originClip }}
+			animate={{ clipPath: "inset(0 0 0 0)" }}
+			exit={{ clipPath: originClip }}
+			transition={transition}
 			style={{
 				left,
 				top,
@@ -358,6 +373,6 @@ export function SelectionCard({
 			{footer ? (
 				<div className="shrink-0 border-border/60 border-t p-2">{footer}</div>
 			) : null}
-		</div>
+		</motion.div>
 	);
 }

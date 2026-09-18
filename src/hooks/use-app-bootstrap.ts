@@ -24,6 +24,8 @@ import { registerImportTaskExecutor } from "@/lib/paper/import/import-tasks";
 import { startJobCompletionRefresh } from "@/lib/paper/job-refresh";
 import { refreshLibrary } from "@/lib/paper/library-store";
 import { registerLibraryTaskExecutors } from "@/lib/paper/library-tasks";
+// Side-effect: register catalog title lookup for JobCenter task subjects.
+import "@/lib/paper/task-label";
 import { registerLayoutTaskExecutor } from "@/lib/pdf/layout/enqueue-paper-layout";
 import { applyDocumentChrome } from "@/lib/settings";
 import { validateRestoredVault } from "@/lib/vault/actions";

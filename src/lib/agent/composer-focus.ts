@@ -1,5 +1,5 @@
 /**
- * Focus the Agent composer input (⇧⌘A / palette). React `autoFocus` only fires
+ * Focus the Agent composer input (⌘K / ⇧⌘A / palette). React `autoFocus` only fires
  * on mount, and the rail composer stays mounted while hidden, so callers that
  * just expanded the rail need an imperative focus. The composer may appear a few
  * frames later (rail expand + lazy panel), hence the bounded retry.

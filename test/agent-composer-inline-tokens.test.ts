@@ -3,14 +3,17 @@ import {
 	appendMissingInlineTokens,
 	encodeCommandToken,
 	encodeMentionToken,
+	encodeSelectionToken,
 	encodeSkillToken,
 	extractMentionPaths,
+	extractSelectionTokens,
 	extractSkillIds,
 	parseInlineTokenParts,
 	plainTriggerSuffix,
 	replaceTrailingTriggerWithToken,
 	stripInlineTokens,
 } from "@/lib/agent/composer-inline-tokens";
+import type { SelectionContext } from "@/lib/agent/selection-store";
 
 describe("composer inline tokens", () => {
 	it("round-trips mention and skill markers", () => {
@@ -97,5 +100,61 @@ describe("composer inline tokens", () => {
 			{ type: "text", value: " C " },
 			{ type: "command", name: "cmd" },
 		]);
+	});
+
+	describe("selection tokens", () => {
+		const selection: SelectionContext = {
+			id: "sel-1",
+			text: "attention is all you need",
+			sourcePath: "papers/transformer",
+			origin: "pdf",
+			page: 3,
+			pinned: false,
+		};
+
+		it("round-trips selection markers", () => {
+			const token = encodeSelectionToken(selection);
+			const text = `see ${token} please`;
+			expect(extractSelectionTokens(text)).toEqual([selection]);
+			expect(stripInlineTokens(text)).toBe("see please");
+		});
+
+		it("preserves PDF anchor geometry", () => {
+			const withGeometry: SelectionContext = {
+				...selection,
+				rects: [{ x: 0.1, y: 0.2, w: 0.3, h: 0.05 }],
+				paperAbsPath: "/vault/papers/transformer",
+			};
+			const token = encodeSelectionToken(withGeometry);
+			const recovered = extractSelectionTokens(token);
+			expect(recovered).toEqual([withGeometry]);
+		});
+
+		it("round-trips selection text with Unicode characters", () => {
+			const unicode: SelectionContext = {
+				...selection,
+				text: "注意力机制 你好 🌍",
+				sourcePath: "papers/注意力机制",
+			};
+			const token = encodeSelectionToken(unicode);
+			const recovered = extractSelectionTokens(`x ${token} y`);
+			expect(recovered).toEqual([unicode]);
+		});
+
+		it("parses selection parts for rendering", () => {
+			const token = encodeSelectionToken(selection);
+			const parts = parseInlineTokenParts(`A ${token} B`);
+			expect(parts).toEqual([
+				{ type: "text", value: "A " },
+				{ type: "selection", selection },
+				{ type: "text", value: " B" },
+			]);
+		});
+
+		it("masks selection markers in trigger suffix", () => {
+			const text = `x ${encodeSelectionToken(selection)} $c`;
+			expect(plainTriggerSuffix(text).endsWith(" $c")).toBe(true);
+			expect(plainTriggerSuffix(text)).not.toContain("{{");
+		});
 	});
 });

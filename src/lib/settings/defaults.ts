@@ -14,14 +14,15 @@ export const DEFAULT_PDF_ASK_SETTINGS: PdfAskSettings = {
 };
 
 export const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = {
-	source: "builtin",
+	source: "custom",
 	baseUrl: "",
 	apiKey: "",
 	model: "",
 };
 
 /** Default Translator Runtime endpoint (overridable in Settings). */
-export const DEFAULT_TRANSLATOR_BASE_URL = "https://translator.philfan.cn";
+export const DEFAULT_TRANSLATOR_BASE_URL =
+	"https://translation-server.agentero.app";
 export const DEFAULT_NETWORK_PROXY_URL = "http://127.0.0.1:7890";
 
 /**
@@ -70,6 +71,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	autoUpdateInternalLinks: "ask",
 	paperNoteMode: "standard",
 	autoOpenPaperNotes: true,
+	replaceCurrentTabOnOpenPaper: false,
 	libraryColumns: DEFAULT_LIBRARY_COLUMNS.map((c) => ({ ...c })),
 	connectorEnabled: false,
 	connectorPort: 23119,

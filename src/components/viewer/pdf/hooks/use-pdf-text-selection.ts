@@ -14,7 +14,6 @@
  * selection outside the viewer host so it cannot steal a normal copy.
  */
 
-import type { Rect } from "@embedpdf/models";
 import type { useDocumentManagerCapability } from "@embedpdf/plugin-document-manager/react";
 import type {
 	FormattedSelection,
@@ -26,12 +25,12 @@ import {
 	type SetStateAction,
 	useCallback,
 	useEffect,
+	useRef,
 	useState,
 } from "react";
 import {
 	anchorFromEmbedSelection,
 	pageElByIndex,
-	rectBottomRightScreen,
 	rectTopCenterScreen,
 } from "@/components/viewer/pdf/coords";
 import {
@@ -68,20 +67,15 @@ function menuAnchorPage(
 	return pages[pages.length - 1] ?? pages[0] ?? null;
 }
 
-/** Map a formatted selection page to toolbar + add-to-chat screen anchors. */
-function menuScreenPoints(
+/** Map a formatted selection page to the floating toolbar screen anchor. */
+function menuScreenPoint(
 	host: HTMLElement | null,
 	anchorPage: FormattedSelection,
 	zoom: number,
-): { screen: ScreenPoint; bottomRight: ScreenPoint } | null {
+): ScreenPoint | null {
 	const pageEl = pageElByIndex(host, anchorPage.pageIndex);
 	if (!pageEl) return null;
-	const screen = rectTopCenterScreen(pageEl, anchorPage.rect, zoom);
-	const lastSeg: Rect =
-		anchorPage.segmentRects[anchorPage.segmentRects.length - 1] ??
-		anchorPage.rect;
-	const bottomRight = rectBottomRightScreen(pageEl, lastSeg, zoom);
-	return { screen, bottomRight };
+	return rectTopCenterScreen(pageEl, anchorPage.rect, zoom);
 }
 
 export type UsePdfTextSelectionOptions = {
@@ -111,11 +105,15 @@ export type PdfTextSelection = {
 	/** Dismiss the menu and drop the underlying PDFium selection. */
 	closeSelectionMenu: () => void;
 	/**
-	 * Recompute toolbar / add-to-chat screen anchors from the live page DOM.
+	 * Recompute the toolbar screen anchor from the live page DOM.
 	 * Call on viewport scroll and zoom so the menu stays glued to the selection.
 	 */
 	rePlaceSelectionMenu: () => void;
+	/** Transient screen position for the auto-copy confirmation label. */
+	copiedLabelPos: { x: number; y: number } | null;
 };
+
+const COPIED_LABEL_DURATION_MS = 1000;
 
 export function usePdfTextSelection({
 	selectionCap,
@@ -131,38 +129,54 @@ export function usePdfTextSelection({
 		null,
 	);
 	const [isSelecting, setIsSelecting] = useState(false);
+	const [copiedLabelPos, setCopiedLabelPos] = useState<{
+		x: number;
+		y: number;
+	} | null>(null);
+	const labelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const mouseUpPosRef = useRef<{ x: number; y: number } | null>(null);
+
+	const clearCopiedLabel = useCallback(() => {
+		if (labelTimerRef.current) {
+			clearTimeout(labelTimerRef.current);
+			labelTimerRef.current = null;
+		}
+		setCopiedLabelPos(null);
+	}, []);
 
 	const closeSelectionMenu = useCallback(() => {
 		setSelectionMenu(null);
+		clearCopiedLabel();
 		selectionCap?.clear(docId);
-	}, [selectionCap, docId]);
+	}, [selectionCap, docId, clearCopiedLabel]);
 
 	const rePlaceSelectionMenu = useCallback(() => {
 		setSelectionMenu((prev) => {
 			if (!prev) return prev;
 			const anchorPage = menuAnchorPage(prev.pages, prev.anchor.page - 1);
 			if (!anchorPage) return prev;
-			const next = menuScreenPoints(
+			const screen = menuScreenPoint(
 				hostRef.current,
 				anchorPage,
 				zoomRef.current,
 			);
-			if (!next) return prev;
-			if (
-				next.screen.x === prev.screen.x &&
-				next.screen.y === prev.screen.y &&
-				next.bottomRight.x === prev.bottomRight.x &&
-				next.bottomRight.y === prev.bottomRight.y
-			) {
+			if (!screen) return prev;
+			if (screen.x === prev.screen.x && screen.y === prev.screen.y) {
 				return prev;
 			}
-			return { ...prev, ...next };
+			return { ...prev, screen };
 		});
 	}, [hostRef, zoomRef]);
 
 	// Show the selection action menu when a drag-selection ends.
 	useEffect(() => {
 		if (!selectionCap || !docCap) return;
+
+		const onMouseUp = (event: MouseEvent) => {
+			mouseUpPosRef.current = { x: event.clientX, y: event.clientY };
+		};
+		document.addEventListener("mouseup", onMouseUp);
+
 		const scope = selectionCap.forDocument(docId);
 		const offBegin = scope.onBeginSelection(() => {
 			setIsSelecting(true);
@@ -189,16 +203,15 @@ export function usePdfTextSelection({
 				return;
 			}
 
-			const placed = menuScreenPoints(
+			const screen = menuScreenPoint(
 				hostRef.current,
 				anchorPage,
 				zoomRef.current,
 			);
-			if (!placed) {
+			if (!screen) {
 				setIsSelecting(false);
 				return;
 			}
-			const { screen, bottomRight } = placed;
 			// Keep isSelecting true across the async quote extract so link
 			// previews cannot flash between mouseup and the selection menu.
 			void (async () => {
@@ -221,8 +234,24 @@ export function usePdfTextSelection({
 					setIsSelecting(false);
 					return;
 				}
-				setSelectionMenu({ screen, bottomRight, anchor, pages });
+				setSelectionMenu({ screen, anchor, pages });
 				setIsSelecting(false);
+				if (quote) {
+					try {
+						selectionCap.copyToClipboard(docId);
+						clearCopiedLabel();
+						const pos = mouseUpPosRef.current;
+						if (pos) {
+							setCopiedLabelPos(pos);
+							labelTimerRef.current = setTimeout(() => {
+								labelTimerRef.current = null;
+								setCopiedLabelPos(null);
+							}, COPIED_LABEL_DURATION_MS);
+						}
+					} catch {
+						// auto-copy is best-effort
+					}
+				}
 				publishSelection({
 					text: quote,
 					sourcePath: paperRelPath ?? paperAbsPath ?? "PDF",
@@ -237,14 +266,17 @@ export function usePdfTextSelection({
 			if (!sel) {
 				setIsSelecting(false);
 				setSelectionMenu(null);
+				clearCopiedLabel();
 				clearActiveSelection("pdf");
 			}
 		});
 		return () => {
+			document.removeEventListener("mouseup", onMouseUp);
 			offBegin();
 			offEnd();
 			offChange();
 			setIsSelecting(false);
+			clearCopiedLabel();
 			clearActiveSelection("pdf");
 		};
 	}, [
@@ -255,6 +287,7 @@ export function usePdfTextSelection({
 		paperAbsPath,
 		hostRef,
 		zoomRef,
+		clearCopiedLabel,
 	]);
 
 	// PDFium selections are invisible to the browser: intercept copy so ⌘/Ctrl+C
@@ -300,5 +333,6 @@ export function usePdfTextSelection({
 		isSelecting,
 		closeSelectionMenu,
 		rePlaceSelectionMenu,
+		copiedLabelPos,
 	};
 }

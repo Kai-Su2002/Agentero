@@ -2,8 +2,8 @@
  * Vault library: table of all papers from catalog.sqlite (display only).
  * Click column headers to sort ascending / descending.
  * Title-header inline search + tags-header filter (no separate toolbar).
- * Single-click a cell to copy that field (deferred so double-click can cancel);
- * double-click a row to open the paper without copying.
+ * Single-click a row to open the paper (deferred so double-click can cancel);
+ * double-click a cell to copy that field.
  * Reading heat: title text background as a left→right spine (doc start→end).
  */
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -147,7 +147,10 @@ export function PapersLibrary({
 		[sortKey],
 	);
 
-	const { onCellCopy, openPaperFromRow } = useCellCopy({ t, onOpenPaper });
+	const { onCellCopy, onRowClick, openPaperFromRow } = useCellCopy({
+		t,
+		onOpenPaper,
+	});
 
 	const canEditMeta =
 		Boolean(vaultPath) && !isRemoteVaultHandle(vaultPath ?? "");
@@ -423,6 +426,7 @@ export function PapersLibrary({
 										}
 										canEditMeta={canEditMeta}
 										onOpenPaper={openPaperFromRow}
+										onRowClick={onRowClick}
 										onRefreshMetadata={handleRefreshPaperMetadata}
 										measureRef={rowVirtualizer.measureElement}
 									/>

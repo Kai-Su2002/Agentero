@@ -49,8 +49,8 @@ import {
 	listenOpenAgentWithPrompt,
 	setPendingAgentComposerPrompt,
 } from "@/lib/agent/composer-seed";
+import { runSelectionQuickChat } from "@/lib/agent/selection-quick-chat";
 import { pinActiveSelection } from "@/lib/agent/selection-store";
-import { notifyWarning } from "@/lib/core/notify";
 import { closeTopOverlay } from "@/lib/core/overlay-stack";
 import { isMacOS, isTauri } from "@/lib/core/tauri";
 import { doctorSetDirtyPaths } from "@/lib/doctor/api";
@@ -71,6 +71,7 @@ import {
 	toggleSidebar,
 } from "@/lib/shell/ui-store";
 import { openRightTab, toggleChat } from "@/lib/shell/ui-window-actions";
+import { toggleBorderlessFullscreen } from "@/lib/shell/window-fullscreen";
 import {
 	createNewVault,
 	deleteSelectedPath,
@@ -189,14 +190,14 @@ function WelcomeCenter() {
 }
 
 export default function App() {
-	const { t } = useTranslation(["app"]);
+	useTranslation(["app"]);
 	useAppBootstrap();
 	useConnectorSync();
 	useMcpSync();
 	useLayoutModelPrefetch();
 	// Soft-probe catalog ACP agents at open (sidebar panel is lazy-mounted).
 	useAgentCatalogPrefetch();
-	// Cancel WebView navigation on any OS file drop (PDF import is tree-only).
+	// Cancel WebView navigation and route unclaimed external PDF drops globally.
 	useExternalFileDrop();
 	// First-vault highlight tour (driver.js) + Settings replay listener.
 	useFeatureTour();
@@ -301,8 +302,14 @@ export default function App() {
 			}
 		},
 		onUnverifiedRename: (payload) => {
+			// Incomplete OS rename pairs cannot authorize link rewrites. Path-extension
+			// heuristics still run (md/pdf/images/dirs), but toasting every echo was
+			// noisy for ordinary saves — log only.
 			if (renameMayAffectWikiTargets(payload.paths)) {
-				notifyWarning(t("vault.externalRename.unverified"));
+				console.warn(
+					"[wiki] unverified external rename; links left unchanged",
+					payload.paths,
+				);
 			}
 		},
 	});
@@ -329,14 +336,17 @@ export default function App() {
 		quickOpen: () => openPalette("go"),
 		commandPalette: () => openPalette("commands"),
 		toggleSidebar,
-		// ⌘L (Cursor-style): pin the live selection into the Agent context and
-		// focus the chat; with no selection it just toggles the sidebar.
+		// ⌘L: Add to chat when a selection is staged; otherwise toggle the rail.
 		toggleChat: () => {
 			if (pinActiveSelection()) {
 				openRightTab("agent");
 			} else toggleChat();
 		},
-		// ⇧⌘A — add the selection (when any) to the Agent context and type there.
+		// ⌘K: in-page Quick chat (Ask) from the armed PDF / Plaza selection.
+		quickChat: () => {
+			runSelectionQuickChat();
+		},
+		// ⇧⌘A: pin the selection, open Agent, and focus the composer.
 		addSelectionToChat: () => {
 			pinActiveSelection();
 			openRightTab("agent");
@@ -358,6 +368,15 @@ export default function App() {
 		// split), resolve the sibling paper tab instead of requiring mode=pdf.
 		visualAnnotation: () => {
 			resolveActivePdfHandle()?.toggleVisualAnnotation();
+		},
+		// ⌥A — toggle full-text (layout) translation for the paper being read.
+		// Same dual-pane-aware path as the toolbar Languages button.
+		layoutTranslate: () => {
+			resolveActivePdfHandle()?.toggleLayoutTranslate();
+		},
+		// F11 — Windows borderless fullscreen (no-op on other platforms).
+		toggleFullscreen: () => {
+			void toggleBorderlessFullscreen();
 		},
 	});
 

@@ -149,6 +149,11 @@ export type AppSettings = {
 	 */
 	autoOpenPaperNotes: boolean;
 	/**
+	 * When opening a new paper, close the active tab instead of adding another one.
+	 * Default **off**; turn on for a single-paper-at-a-time workflow.
+	 */
+	replaceCurrentTabOnOpenPaper: boolean;
+	/**
 	 * Papers Library table columns: order (array position) + visibility.
 	 * Reconciled against {@link LIBRARY_COLUMN_KEYS}; `title` is always visible.
 	 */

@@ -3,7 +3,7 @@
  * keys, comparator, column order/visibility edits, and the cell-renderer
  * context types shared by COLUMN_META and the row component. No React state.
  */
-import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
+import type { ReactNode } from "react";
 import type { PaperLibraryRow, PaperMetadata } from "@/lib/paper";
 import type { ReadingHeatmap } from "@/lib/paper/reading-heatmap";
 import { type PaperTag, visiblePaperTags } from "@/lib/paper/tags";
@@ -124,11 +124,7 @@ export type CellT = (key: string, options?: Record<string, unknown>) => string;
 
 export type CellCtx = {
 	t: CellT;
-	onCellCopy: (
-		e: ReactMouseEvent,
-		text: string | null | undefined,
-		label: string,
-	) => void;
+	onCellCopy: (text: string | null | undefined, label: string) => void;
 	heat: ReadingHeatmap | undefined;
 	tags: PaperTag[];
 };

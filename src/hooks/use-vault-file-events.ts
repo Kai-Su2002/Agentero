@@ -1,8 +1,7 @@
 import { useEffect } from "react";
-import { events } from "@/lib/core/bindings";
 import { isTauri } from "@/lib/core/tauri";
-import { listenEventSafe } from "@/lib/core/tauri-events";
 import { isPaperAssetPath, isUnderPapers } from "@/lib/paper/paths";
+import { listenVaultFileChangedGated } from "@/lib/vault/file-change-gate";
 import {
 	startVaultWatch,
 	stopVaultWatch,
@@ -61,7 +60,9 @@ export function useVaultFileEvents({
 	}, [vaultPath]);
 
 	useEffect(() => {
-		return listenEventSafe(events.vaultFileChanged, async (payload) => {
+		// Buffer while the window is hidden/unfocused; flush on return so refresh
+		// work does not run against an invisible shell.
+		return listenVaultFileChangedGated(async (payload) => {
 			if (shouldIgnoreEvent?.(payload)) return;
 			if (onLibraryChange && payloadAffectsLibrary(payload)) {
 				onLibraryChange();

@@ -32,7 +32,11 @@ export type PdfViewerProps = {
 	 * some webviews (Windows WebView2). `source` is the fallback (remote https).
 	 */
 	sourceBytes?: ArrayBuffer | null;
-	/** Stable per-tab document id (EmbedPDF documentId + scope key). */
+	/**
+	 * Base per-tab document id (EmbedPDF scope key). Buffer-backed sources get
+	 * a per-read revision suffix inside the viewer so a reloaded PDF registers
+	 * under a fresh PDFium document.
+	 */
 	docId?: string | null;
 	/** Absolute path to paper folder for annotations/marks persistence */
 	paperAbsPath?: string | null;
@@ -73,12 +77,21 @@ export type PdfViewerProps = {
 	 * behind the dual-pane setting.
 	 */
 	translationPane?: boolean;
+	/** Render the PDF page and translation overlay without reader chrome. */
+	translationOnly?: boolean;
 	/**
 	 * True for remote papers (e.g. arXiv Daily preview) that have no local
 	 * sidecar. Hides mark-persisting UI (highlight / note / translate); Ask /
 	 * Add-to-chat stay available as ephemeral session actions. Offers import.
 	 */
 	isRemotePaper?: boolean;
+	/**
+	 * True for PDFs outside `papers/` (e.g. a compiled plans/a.pdf). Renders a
+	 * plain viewer: layout analysis, visual annotation, full-text translation,
+	 * the selection toolbar, and annotations are all hidden; basic reading
+	 * (pages, zoom, search, text selection + copy) stays.
+	 */
+	plainViewer?: boolean;
 	/**
 	 * Identifier used by the "Import to library" action for remote papers.
 	 * Usually the arXiv abs/source URL.
@@ -102,8 +115,6 @@ export type CardScreenPoint = ScreenPoint & {
 export type SelectionMenuState = {
 	/** Top-center of the selection — floating toolbar anchor. */
 	screen: ScreenPoint;
-	/** Bottom-right of the last selected line — Add-to-chat pill anchor. */
-	bottomRight: ScreenPoint;
 	anchor: PdfAskAnchor;
 	pages: FormattedSelection[];
 };

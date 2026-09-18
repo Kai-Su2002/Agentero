@@ -3,7 +3,7 @@
 //!
 //! Coverage: every command registered for desktop in `app::handlers`
 //! (`common_commands!` + the desktop-only extras) is collected here, and every
-//! event emitted on desktop is declared in `app::events_contract` (42 events;
+//! event emitted on desktop is declared in `app::events_contract` (44 events;
 //! `event_name` matches the emit literal, emit sites unchanged). The iOS-only
 //! bridge client commands (`integration::bridge::client_commands`) and client
 //! events (`bridge:status` / `bridge:progress` / `bridge:pair-pending`) are
@@ -46,7 +46,9 @@ fn export_typescript_bindings() {
             crate::features::agent::commands::agent_probe,
             crate::features::agent::commands::agent_probe_catalog,
             crate::features::agent::commands::doctor_check_host,
+            crate::features::agent::commands::doctor_install_node,
             crate::features::agent::commands::doctor_check_agents,
+            crate::features::agent::commands::doctor_open_agent_login_terminal,
             crate::features::system::network::commands::doctor_check_network,
             crate::features::agent::commands::agent_cancel_run,
             crate::features::jobs::commands::job_parse_refs_enqueue,
@@ -72,6 +74,7 @@ fn export_typescript_bindings() {
             crate::features::agent::commands::agent_respond_permission,
             crate::features::agent::commands::agent_respond_elicitation,
             crate::features::agent::commands::agent_respond_ask_user,
+            crate::features::agent::commands::agent_resolve_citation,
             crate::features::markdown::wiki::commands::graph_get_backlinks,
             crate::features::markdown::wiki::commands::wiki_resolve,
             crate::features::markdown::wiki::commands::wiki_embed_read,
@@ -122,6 +125,7 @@ fn export_typescript_bindings() {
             crate::features::paper::catalog::commands::paper_get,
             crate::features::paper::catalog::commands::paper_list,
             crate::features::paper::catalog::commands::paper_move,
+            crate::features::paper::catalog::commands::paper_repath,
             crate::features::paper::catalog::commands::paper_set_is_read,
             crate::features::paper::catalog::commands::paper_update_meta,
             crate::features::paper::catalog::commands::paper_set_tags,
@@ -221,6 +225,11 @@ fn export_typescript_bindings() {
             crate::app::finder_service::commands::finder_service_install::<tauri::Wry>,
             crate::app::finder_service::commands::finder_service_uninstall::<tauri::Wry>,
             crate::features::pdf::export::commands::export_system_cjk_font,
+            crate::features::web::commands::web_proxy_allow_host,
+            crate::features::compile::detect_latex_engines,
+            crate::features::compile::clean_latex_aux_files,
+            crate::features::compile::chktex_lint,
+            crate::features::jobs::commands::job_latex_compile_enqueue,
         ])
         // Desktop event surface (see `app::events_contract`): emit sites keep
         // using `app.emit("<literal>", payload)`; the wrappers/mirrors there
@@ -254,6 +263,7 @@ fn export_typescript_bindings() {
             crate::app::events_contract::AgentUsageEvt,
             crate::app::events_contract::AgentSessionInfoEvt,
             crate::app::events_contract::AgentFailedEvt,
+            crate::app::events_contract::AgentStatusEvt,
             crate::app::events_contract::AgentStreamEvt,
             crate::app::events_contract::AgentCompletedEvent,
             crate::app::events_contract::BridgeHostStatusEvent,
@@ -269,6 +279,7 @@ fn export_typescript_bindings() {
             crate::app::events_contract::PaperImportedEvent,
             crate::app::events_contract::PaperAssetsReadyEvent,
             crate::app::events_contract::PaperRenamedEventPayload,
+            crate::app::events_contract::CompileLogEvent,
         ])
         // Tauri IPC serializes `i64`/`u64`/`usize` through serde_json as JSON
         // numbers, which the frontend already parses as JS `number` via the

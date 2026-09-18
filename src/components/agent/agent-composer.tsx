@@ -1,5 +1,9 @@
 import { ImageIcon } from "lucide-react";
-import type { KeyboardEvent, DragEvent as ReactDragEvent } from "react";
+import type {
+	KeyboardEvent,
+	DragEvent as ReactDragEvent,
+	RefObject,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
 	ComposerImageAttachments,
@@ -7,6 +11,7 @@ import {
 } from "@/components/agent/composer/composer-attachments";
 import { ComposerContextChips } from "@/components/agent/composer/composer-context-chips";
 import { ComposerDropTarget } from "@/components/agent/composer/composer-drop-target";
+import type { ComposerInlineInputHandle } from "@/components/agent/composer/composer-inline-input";
 import { ComposerInlineInput } from "@/components/agent/composer/composer-inline-input";
 import { ComposerMentionMenu } from "@/components/agent/composer/composer-mention-menu";
 import { ComposerQueue } from "@/components/agent/composer/composer-queue";
@@ -87,6 +92,7 @@ export type AgentComposerProps = {
 	onSlashActiveIndexChange: (index: number) => void;
 	activeUsage: { used: number; size: number } | null;
 	onCancelRun: () => void;
+	composerInputRef: RefObject<ComposerInlineInputHandle | null>;
 };
 
 export function AgentComposer(props: AgentComposerProps) {
@@ -159,10 +165,8 @@ export function AgentComposer(props: AgentComposerProps) {
 				)}
 				style={!compact && heightPx != null ? { height: heightPx } : undefined}
 			>
-				{/* Block chips: current file / selection / visual only. @ and $ are inline. */}
-				{props.currentFilePath ||
-				props.selectionChips.length > 0 ||
-				visualDrafts.length > 0 ? (
+				{/* Block chips: current file / visual only. Selections now live inline. */}
+				{props.currentFilePath || visualDrafts.length > 0 ? (
 					<div
 						className={cn(
 							"flex shrink-0 items-center gap-1.5",
@@ -174,7 +178,7 @@ export function AgentComposer(props: AgentComposerProps) {
 							currentFilePath={props.currentFilePath}
 							currentFileLabel={props.currentFileLabel}
 							mentionChipPaths={[]}
-							selectionChips={props.selectionChips}
+							selectionChips={[]}
 							onRemoveSelection={props.onRemoveSelection}
 							visualDrafts={visualDrafts}
 							onRemoveVisualDraft={props.onRemoveVisualDraft}
@@ -287,6 +291,7 @@ export function AgentComposer(props: AgentComposerProps) {
 											/>
 										) : null}
 										<ComposerInlineInput
+											ref={props.composerInputRef}
 											autoFocus={Boolean(autoFocus)}
 											compact={compact}
 											value={composerText}

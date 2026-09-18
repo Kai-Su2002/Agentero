@@ -8,11 +8,21 @@ use agentero_core::features::doctor::{
     apply_alias_repairs, apply_catalog_duplicate_repairs, apply_visual_mark_repairs, diagnose,
     AliasRepairCandidate, AliasRepairChange, DoctorReport, VisualMarkRepairChange,
 };
-use clap::Subcommand;
+use agentero_core::features::wiki::index::WikiIndex;
+use agentero_core::features::wiki::models::LinkResolutionStatus;
+use agentero_core::fs::sanitize_vault_rel;
+use clap::{Subcommand, ValueHint};
 use serde_json::{json, Value};
+use std::path::Path;
 
 #[derive(Debug, Subcommand)]
 pub enum DoctorCmd {
+    /// Check Vault-local wikilinks with the same resolver used by the desktop app.
+    Wiki {
+        /// Optional Vault-relative Markdown file or directory.
+        #[arg(value_hint = ValueHint::AnyPath)]
+        source: Option<String>,
+    },
     /// Apply one explicitly selected class of safe repairs.
     Fix {
         #[command(subcommand)]
@@ -35,6 +45,7 @@ pub enum DoctorFixCmd {
 pub fn run(cmd: Option<DoctorCmd>, globals: &GlobalOpts) -> Result<Value, CliError> {
     match cmd {
         None => check(globals),
+        Some(DoctorCmd::Wiki { source }) => check_wiki(source.as_deref(), globals),
         Some(DoctorCmd::Fix {
             cmd: DoctorFixCmd::Aliases,
         }) => fix_aliases(globals),
@@ -299,4 +310,100 @@ fn report_value(report: &DoctorReport) -> Result<Value, CliError> {
         );
     }
     Ok(value)
+}
+
+fn check_wiki(source: Option<&str>, globals: &GlobalOpts) -> Result<Value, CliError> {
+    let vault = resolve_vault(globals)?;
+    let scope = source.map(validate_wiki_scope).transpose()?;
+    if let Some(rel) = scope.as_deref() {
+        let path = vault.join(rel);
+        if !path.exists() {
+            return Err(CliError::message(format!("path not found: {rel}")));
+        }
+        if path.is_file() && !is_markdown(&path) {
+            return Err(CliError::usage(
+                "doctor wiki source must be a Markdown file or directory",
+            ));
+        }
+    }
+
+    let vault_str = vault.to_string_lossy();
+    let mut index = WikiIndex::default();
+    index.rebuild(&vault_str).map_err(|error| {
+        CliError::with_details(
+            "wiki_index_failed",
+            "could not build Wiki index",
+            json!({ "cause": error }),
+            ExitCode::Business,
+        )
+    })?;
+    let report = index.check_links(&vault_str, scope.as_deref());
+    let mut value = to_value(&report)?;
+
+    if !report.issues.is_empty() {
+        if let Some(object) = value.as_object_mut() {
+            object.insert("lines".into(), json!(wiki_issue_lines(&report.issues)));
+        }
+        return Err(CliError::with_details(
+            "wikilink_check_failed",
+            "wikilink check found unresolved or invalid links",
+            value,
+            ExitCode::Business,
+        ));
+    }
+
+    if let Some(object) = value.as_object_mut() {
+        object.insert(
+            "lines".into(),
+            json!([format!(
+                "ok: {} Markdown file(s), {} resolved link(s)",
+                report.checked_files, report.counts.resolved
+            )]),
+        );
+    }
+    Ok(value)
+}
+
+fn validate_wiki_scope(raw: &str) -> Result<String, CliError> {
+    if Path::new(raw).is_absolute() {
+        return Err(CliError::usage("doctor wiki source must be Vault-relative"));
+    }
+    sanitize_vault_rel(raw).map_err(CliError::usage)
+}
+
+fn is_markdown(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            matches!(
+                extension.to_ascii_lowercase().as_str(),
+                "md" | "mdx" | "markdown"
+            )
+        })
+}
+
+fn wiki_issue_lines(
+    issues: &[agentero_core::features::wiki::models::WikiCheckIssue],
+) -> Vec<String> {
+    issues
+        .iter()
+        .map(|issue| {
+            format!(
+                "{}: {}:{} -> {}",
+                wiki_status_label(&issue.status),
+                issue.source,
+                issue.line,
+                issue.target_raw
+            )
+        })
+        .collect()
+}
+
+fn wiki_status_label(status: &LinkResolutionStatus) -> &'static str {
+    match status {
+        LinkResolutionStatus::Resolved => "resolved",
+        LinkResolutionStatus::Missing => "missing",
+        LinkResolutionStatus::Ambiguous => "ambiguous",
+        LinkResolutionStatus::InvalidFragment => "invalidFragment",
+    }
 }

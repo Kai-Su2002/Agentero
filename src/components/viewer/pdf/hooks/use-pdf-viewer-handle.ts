@@ -32,7 +32,11 @@ import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import { deletePdfAskThread, type PdfAskThread } from "@/lib/pdf/ask";
 import { isHighlightObject } from "@/lib/pdf/highlight/annotation-store";
 import type { PdfHighlight } from "@/lib/pdf/highlight/types";
-import { setFocusedLayoutRegion } from "@/lib/pdf/layout";
+import {
+	expandFocusBboxForOverlay,
+	layoutKindFromRegionId,
+	setFocusedLayoutRegion,
+} from "@/lib/pdf/layout";
 import type { ActiveSelectionCard } from "@/lib/pdf/selection";
 
 /** Longest edge of a figure-rail thumbnail crop (px). */
@@ -75,6 +79,8 @@ export type UsePdfViewerHandleOptions = {
 	openCard: (card: ActiveSelectionCard) => void;
 	deleteVisualTraceById: (id: string) => void;
 	toggleRegionSelect: () => void;
+	/** Dual-pane-aware full-text translate toggle; parent callback — kept in a ref. */
+	toggleLayoutTranslate: () => void;
 };
 
 export function usePdfViewerHandle({
@@ -96,9 +102,14 @@ export function usePdfViewerHandle({
 	openCard,
 	deleteVisualTraceById,
 	toggleRegionSelect,
+	toggleLayoutTranslate,
 }: UsePdfViewerHandleOptions): void {
 	const onHandleRef = useRef(onHandle);
 	onHandleRef.current = onHandle;
+	// Dual-pane deps (translation-tab callback) churn per render; mirror the
+	// latest callback so the handle object never needs re-registering.
+	const toggleLayoutTranslateRef = useRef(toggleLayoutTranslate);
+	toggleLayoutTranslateRef.current = toggleLayoutTranslate;
 
 	// biome-ignore lint/correctness/useExhaustiveDependencies: the injected refs and setters are stable identities; depending on them would re-register the handle on every mark change.
 	useEffect(() => {
@@ -153,6 +164,7 @@ export function usePdfViewerHandle({
 				deleteVisualTraceById(id);
 			},
 			toggleVisualAnnotation: toggleRegionSelect,
+			toggleLayoutTranslate: () => toggleLayoutTranslateRef.current(),
 			analyzeLayout: () => {
 				// Prefer source/layout.json → merge → sidebar. Full ONNX (PDF→JSON)
 				// only when there is no sidecar (or force is set elsewhere).
@@ -165,11 +177,34 @@ export function usePdfViewerHandle({
 				});
 			},
 			scrollToLayoutRegion: (region) => {
+				const kind = region.kind ?? layoutKindFromRegionId(region.id);
+				const bbox = expandFocusBboxForOverlay(region.bbox, kind);
+				const page =
+					docCapRef.current?.getDocument(docId)?.pages[region.pageIndex];
+				const pageSize = page?.size;
+				const pageCoordinates = pageSize
+					? {
+							x: bbox.x * pageSize.width,
+							y: bbox.y * pageSize.height,
+						}
+					: undefined;
 				scrollRef.current?.scrollToPage({
 					pageNumber: region.pageIndex + 1,
 					behavior: "instant",
+					...(pageCoordinates
+						? { pageCoordinates, alignX: 0, alignY: 18 }
+						: {}),
 				});
-				setFocusedLayoutRegion(docId, region.id);
+				setFocusedLayoutRegion(
+					docId,
+					region.id,
+					{
+						pageIndex: region.pageIndex,
+						bbox,
+						kind,
+					},
+					{ flash: true },
+				);
 			},
 			renderRegion: async ({ pageIndex, bbox, maxEdgePx }) => {
 				const eng = engineRef.current;

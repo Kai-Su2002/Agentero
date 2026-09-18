@@ -1,4 +1,4 @@
-import { MoveHorizontal, MoveVertical, Palette } from "lucide-react";
+import { Palette } from "lucide-react";
 import type { RefObject } from "react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -22,6 +22,11 @@ import {
 	PDF_PAPER_TONES,
 	type PdfPaperTone,
 } from "@/lib/pdf/page-theme";
+import {
+	formatPdfZoomPercentage,
+	PDF_ZOOM_MAX,
+	PDF_ZOOM_MIN,
+} from "@/lib/pdf/zoom";
 
 type PdfBottomBarProps = {
 	/** Hidden until the document reports its page count. */
@@ -34,15 +39,15 @@ type PdfBottomBarProps = {
 	onCommitPageField: () => void;
 	pdfTone: PdfPaperTone;
 	onSetPdfTone: (tone: PdfPaperTone) => void;
-	/** Request the fit-width zoom mode. */
-	onFitWidth: () => void;
-	/** Request the fit-page zoom mode. */
-	onFitPage: () => void;
+	/** Current zoom scale (1 = 100%). */
+	zoomLevel: number;
+	/** Apply a zoom scale from the bottom slider. */
+	onZoomChange: (zoom: number) => void;
 	/** True for remote arXiv papers with no local sidecar. */
 	isRemotePaper?: boolean;
 };
 
-/** Bottom bar: page nav + PDF paper tone. */
+/** Bottom bar: page nav + zoom slider + PDF paper tone. */
 export function PdfBottomBar({
 	totalPages,
 	pageField,
@@ -51,8 +56,8 @@ export function PdfBottomBar({
 	onCommitPageField,
 	pdfTone,
 	onSetPdfTone,
-	onFitWidth,
-	onFitPage,
+	zoomLevel,
+	onZoomChange,
 	isRemotePaper = false,
 }: PdfBottomBarProps) {
 	const { t } = useTranslation("viewer");
@@ -61,6 +66,9 @@ export function PdfBottomBar({
 	if (totalPages <= 0) return null;
 
 	const pageDigits = Math.max(2, String(totalPages).length, pageField.length);
+	const zoomPercent = Math.round(zoomLevel * 100);
+	const zoomMinPercent = Math.round(PDF_ZOOM_MIN * 100);
+	const zoomMaxPercent = Math.round(PDF_ZOOM_MAX * 100);
 
 	return (
 		<div className="pointer-events-none absolute bottom-3 left-1/2 z-20 max-w-[calc(100%-1rem)] -translate-x-1/2">
@@ -125,6 +133,29 @@ export function PdfBottomBar({
 						</span>
 					</div>
 					<span aria-hidden className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
+					<div className="flex shrink-0 items-center gap-1.5 px-1">
+						<input
+							type="range"
+							min={zoomMinPercent}
+							max={zoomMaxPercent}
+							step={1}
+							value={zoomPercent}
+							aria-label={t("pdf.zoomPercentage")}
+							aria-valuemin={zoomMinPercent}
+							aria-valuemax={zoomMaxPercent}
+							aria-valuenow={zoomPercent}
+							aria-valuetext={`${formatPdfZoomPercentage(zoomLevel)}%`}
+							className="pdf-zoom-slider"
+							onChange={(e) => onZoomChange(Number(e.target.value) / 100)}
+						/>
+						<span
+							aria-hidden
+							className="min-w-[3.25ch] text-right text-muted-foreground text-xs tabular-nums"
+						>
+							{formatPdfZoomPercentage(zoomLevel)}%
+						</span>
+					</div>
+					<span aria-hidden className="mx-0.5 h-3.5 w-px shrink-0 bg-border" />
 					<Popover open={tonePickerOpen} onOpenChange={setTonePickerOpen}>
 						<Tooltip>
 							<TooltipTrigger asChild>
@@ -173,34 +204,6 @@ export function PdfBottomBar({
 							})}
 						</PopoverContent>
 					</Popover>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								size="icon-xs"
-								variant="ghost"
-								aria-label={t("pdf.zoomFit")}
-								onClick={onFitWidth}
-							>
-								<MoveHorizontal className="size-3.5" />
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="top">{t("pdf.zoomFit")}</TooltipContent>
-					</Tooltip>
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								size="icon-xs"
-								variant="ghost"
-								aria-label={t("pdf.zoomFitPage")}
-								onClick={onFitPage}
-							>
-								<MoveVertical className="size-3.5" />
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="top">{t("pdf.zoomFitPage")}</TooltipContent>
-					</Tooltip>
 				</div>
 			</TooltipProvider>
 		</div>

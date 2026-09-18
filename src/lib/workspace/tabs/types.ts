@@ -29,14 +29,26 @@ export type DocTab = {
 	notesSeed: string;
 	/** Seed content for a plain-file Markdown editor. */
 	markdownSeed: string;
+	/** Seed content for an Excalidraw whiteboard file. */
+	excalidrawSeed: string;
+	/** Seed content for the plain-text (CodeMirror) editor. */
+	textSeed: string;
 	markdownDirty: boolean;
 	notesDirty: boolean;
+	excalidrawDirty: boolean;
+	textDirty: boolean;
 	/** Bump to reload the center Markdown editor's content in place from `markdownSeed`. */
 	seedKey: number;
+	/** Bump to reload the Excalidraw editor's content in place from `excalidrawSeed`. */
+	excalidrawKey: number;
+	/** Bump to reload the plain-text editor's content in place from `textSeed`. */
+	textKey: number;
 	/** Bump to reload the NOTES editor's content in place from `notesSeed`. */
 	notesKey: number;
 	/** One-shot, monotonic intent consumed by the mounted Markdown editor. */
 	navigationIntent?: { id: number; fragment: LinkFragment };
+	/** Transient: compiled-PDF pane is waiting on a running LaTeX compile. */
+	texCompiling?: boolean;
 	loaded: boolean;
 };
 
@@ -70,6 +82,8 @@ export type TabResources = {
 	notesPath: string | null;
 	notesSeed: string;
 	markdownSeed: string;
+	excalidrawSeed?: string;
+	textSeed?: string;
 	loaded: true;
 	/** Non-fatal message to surface (e.g. unpreviewable file). */
 	error?: string;
