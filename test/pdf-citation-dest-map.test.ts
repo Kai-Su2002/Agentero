@@ -15,6 +15,7 @@ function citeMaps(entries: [string, string][]): PdfDestMaps {
 		crossrefLinks: [],
 		citationLinks: [],
 		pageOrigins: [],
+		otherNamedLinks: [],
 	};
 }
 

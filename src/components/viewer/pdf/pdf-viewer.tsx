@@ -113,6 +113,7 @@ import type {
 	PdfViewerInnerProps,
 	PdfViewerProps,
 	RailEditState,
+	ScreenPoint,
 	SelectionCommentDraft,
 	SelectionMenuState,
 } from "@/components/viewer/pdf/types";
@@ -893,6 +894,7 @@ function PdfViewerInner({
 		clearCitationPreview,
 		handleCitationLinkActivate,
 		handleCitationLinkHover,
+		hasCitationMatch,
 		citationImport,
 	} = usePdfCitations({
 		docId,
@@ -916,10 +918,10 @@ function PdfViewerInner({
 		},
 	});
 
-	// Cross-reference (\ref) hover: preview the figure/table/equation crop.
-	// Reuses the same dest-map parse (cached per PDF); a link coordinate is
-	// either a cite.* or a cross-ref destination, so both hover handlers run
-	// on every link and at most one card shows.
+	// Cross-reference (\ref) hover: preview the figure/table/equation crop,
+	// or fallback destination crop for unmapped citations / internal links.
+	// When structured metadata exists for a citation, hasCitationMatch suppresses
+	// this preview in favor of the rich metadata card.
 	const {
 		crossrefPreview,
 		scheduleCrossrefHide,
@@ -935,6 +937,7 @@ function PdfViewerInner({
 		engineRef,
 		docCapRef,
 		onPreviewShow: () => clearCitationPreviewRef.current(),
+		hasCitationMatch,
 	});
 
 	clearCitationPreviewRef.current = clearCitationPreview;
@@ -1253,14 +1256,14 @@ function PdfViewerInner({
 	}, [suppressLinkPreviews, clearCitationPreview, clearCrossrefPreview]);
 
 	const handleLinkHover = useCallback(
-		(link: PdfLinkAnnoObject | null) => {
+		(link: PdfLinkAnnoObject | null, clientPoint?: ScreenPoint | null) => {
 			if (suppressLinkPreviews) {
 				clearCitationPreview();
 				clearCrossrefPreview();
 				return;
 			}
-			handleCitationLinkHover(link);
-			handleCrossrefLinkHover(link);
+			handleCitationLinkHover(link, clientPoint);
+			handleCrossrefLinkHover(link, clientPoint);
 		},
 		[
 			suppressLinkPreviews,

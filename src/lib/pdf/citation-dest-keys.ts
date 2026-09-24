@@ -63,7 +63,7 @@ export function linkRectKey(
 /** Max centre-point distance (pt) when matching a hovered link to a parsed one. */
 const LINK_RECT_MATCH_TOLERANCE_PT = 3;
 
-type LinkRectLike = {
+export type LinkRectLike = {
 	pageIndex: number;
 	x: number;
 	y: number;
@@ -135,27 +135,58 @@ export function matchCitationLinkKey(
 	return matchLinkByRect(links, pageIndex, rect)?.key ?? null;
 }
 
+/** Whether the hovered link names a destination that is not a cite / float. */
+export function isOtherNamedLink(
+	links: readonly LinkRectLike[] | null | undefined,
+	pageIndex: number,
+	rect: HoverRect,
+): boolean {
+	return matchLinkByRect(links, pageIndex, rect) != null;
+}
+
 /**
  * Candidate sidecar ids / rawKeys for a PDF destination name. Hyperref
- * `cite.<key>` passes through; ACS `mk:refN` also tries `ref-N` / `refN`
- * (S2-parsed sidecars use `id: "ref-N"` without a `rawKey`).
+ * `cite.<key>` passes through; ACS `mk:refN` and Springer `ch<N>CR<N>` / `CR<N>`
+ * also try `ref-N` / `refN` / `N` (S2 / crossref parses use `id: "ref-N"`).
  */
 export function citationSidecarKeysForDest(destKey: string): string[] {
 	const keys = [destKey];
 	const mk = /^mk:ref(\d+)$/i.exec(destKey);
 	if (mk) {
-		const n = mk[1];
+		const n = mk[1] ?? "";
 		keys.push(`ref-${n}`, `ref${n}`);
+	}
+	const cr = /^(?:ch\d*)?cr(\d+)$/i.exec(destKey);
+	if (cr) {
+		const n = cr[1] ?? "";
+		keys.push(`ref-${n}`, `ref${n}`, n);
+	}
+	const bib = /^bib(\d{3,})$/i.exec(destKey);
+	if (bib) {
+		const n = String(Number.parseInt(bib[1] ?? "", 10));
+		keys.push(`ref-${n}`, `ref${n}`, n);
 	}
 	return keys;
 }
 
-/** Parse the numeric bibliography index from an ACS `mk:refN` key. */
+/** Parse the numeric bibliography index from an ACS `mk:refN`, Springer `ch<N>CR<N>`, or ACM `Bib0001` key. */
 export function citationRefNumber(destKey: string): number | null {
 	const mk = /^mk:ref(\d+)$/i.exec(destKey);
-	if (!mk) return null;
-	const n = Number.parseInt(mk[1] ?? "", 10);
-	return Number.isNaN(n) ? null : n;
+	if (mk) {
+		const n = Number.parseInt(mk[1] ?? "", 10);
+		return Number.isNaN(n) ? null : n;
+	}
+	const cr = /^(?:ch\d*)?cr(\d+)$/i.exec(destKey);
+	if (cr) {
+		const n = Number.parseInt(cr[1] ?? "", 10);
+		return Number.isNaN(n) ? null : n;
+	}
+	const bib = /^bib(\d{3,})$/i.exec(destKey);
+	if (bib) {
+		const n = Number.parseInt(bib[1] ?? "", 10);
+		return Number.isNaN(n) ? null : n;
+	}
+	return null;
 }
 
 /** Build an ACS-style dest key for bibliography index N. */
@@ -277,7 +308,12 @@ export function expandCitationLinkCluster(
 export type CitationDestKeyMap = ReadonlyMap<string, string>;
 
 /** Kind of numbered object a cross-reference points at. */
-export type CrossrefKind = "figure" | "table" | "equation" | "algorithm";
+export type CrossrefKind =
+	| "figure"
+	| "table"
+	| "equation"
+	| "algorithm"
+	| "reference";
 
 /** `pageIndex:pdfY` → kind of the numbered object at that destination. */
 export type CrossrefDestMap = ReadonlyMap<string, CrossrefKind>;
@@ -381,6 +417,13 @@ export type PdfDestMaps = {
 	 * {@link destinationInPageBox}.
 	 */
 	pageOrigins: readonly PageOrigin[];
+	/**
+	 * Links whose own named destination is neither a citation nor a numbered
+	 * float (sections, theorems, footnotes, …). Their target coordinate may
+	 * coincide with a float or bibliography anchor, so coordinate lookups must
+	 * not claim them.
+	 */
+	otherNamedLinks: readonly LinkRectLike[];
 };
 
 /** Lower-left corner of a page's visible box in PDF user space. */
@@ -516,10 +559,39 @@ export const acsCrossrefParser: CrossrefNameParser = (name) => {
 	return null;
 };
 
+/**
+ * Springer / LNCS and related publisher destinations. Emits `ch<N>Fig<M>` / `Fig<M>`,
+ * `ch<N>Tab<M>` / `Tab<M>`, `ch<N>Eq<M>` / `Eq<M>`, `ch<N>Alg<M>` / `Alg<M>`.
+ */
+export const springerCrossrefParser: CrossrefNameParser = (name) => {
+	const fig = /^(?:ch\d*)?fig(\d+)[a-z]?$/i.exec(name);
+	if (fig) {
+		const n = Number.parseInt(fig[1] ?? "", 10);
+		return Number.isNaN(n) ? null : { kind: "figure", number: n };
+	}
+	const tbl = /^(?:ch\d*)?tab(\d+)[a-z]?$/i.exec(name);
+	if (tbl) {
+		const n = Number.parseInt(tbl[1] ?? "", 10);
+		return Number.isNaN(n) ? null : { kind: "table", number: n };
+	}
+	const eq = /^(?:ch\d*)?eq(\d+)[a-z]?$/i.exec(name);
+	if (eq) {
+		const n = Number.parseInt(eq[1] ?? "", 10);
+		return Number.isNaN(n) ? null : { kind: "equation", number: n };
+	}
+	const alg = /^(?:ch\d*)?alg(\d+)[a-z]?$/i.exec(name);
+	if (alg) {
+		const n = Number.parseInt(alg[1] ?? "", 10);
+		return Number.isNaN(n) ? null : { kind: "algorithm", number: n };
+	}
+	return null;
+};
+
 /** Built-in cross-reference name parsers, tried in order. */
 export const defaultCrossrefNameParsers: CrossrefNameParser[] = [
 	hyperrefCrossrefParser,
 	acsCrossrefParser,
+	springerCrossrefParser,
 ];
 
 /** Standard hyperref citation name: `cite.<bibtexKey>`. */
@@ -538,10 +610,21 @@ export const acsCitationParser: CitationNameParser = (name) => {
 	return null;
 };
 
+/**
+ * Springer / LNCS citation names: `ch<N>CR<M>` or `CR<M>`. Also handles
+ * ACM numbered bibliography destinations like `Bib0001`.
+ */
+export const springerCitationParser: CitationNameParser = (name) => {
+	if (/^(?:ch\d*)?cr\d+$/i.test(name)) return name;
+	if (/^bib\d{3,}$/i.test(name)) return name;
+	return null;
+};
+
 /** Built-in citation name parsers, tried in order. */
 export const defaultCitationNameParsers: CitationNameParser[] = [
 	hyperrefCitationParser,
 	acsCitationParser,
+	springerCitationParser,
 ];
 
 // ---- Pluggable destination-coordinate resolvers ----
@@ -765,6 +848,7 @@ export async function buildPdfDestMaps(
 		crossrefLinks: [],
 		citationLinks: [],
 		pageOrigins: [],
+		otherNamedLinks: [],
 	};
 	const doc = await PDFDocument.load(bytes, { updateMetadata: false });
 	const context = doc.context;
@@ -786,6 +870,7 @@ export async function buildPdfDestMaps(
 	const crossLabelsByCoord = new Map<string, CrossrefDestLabel[]>();
 	const crossrefLinks: CrossrefLinkLabel[] = [];
 	const citationLinks: CitationLinkKey[] = [];
+	const otherNamedLinks: LinkRectLike[] = [];
 
 	const crossrefParsers = options.crossrefParsers ?? defaultCrossrefNameParsers;
 	const citationParsers = options.citationParsers ?? defaultCitationNameParsers;
@@ -884,7 +969,7 @@ export async function buildPdfDestMaps(
 
 			const citationKey = parseCitationKey(destName);
 			const crossMatch = citationKey ? null : parseCrossref(destName);
-			if (!citationKey && (!crossMatch || crossMatch.number == null)) continue;
+			if (crossMatch && crossMatch.number == null) continue;
 
 			const rect = context.lookup(annot.get(PDFName.of("Rect")));
 			if (!(rect instanceof PDFArray) || rect.asArray().length < 4) continue;
@@ -921,6 +1006,14 @@ export async function buildPdfDestMaps(
 					h: device.h,
 					label: { kind: crossMatch.kind, number: crossMatch.number },
 				});
+			} else {
+				otherNamedLinks.push({
+					pageIndex,
+					x: device.x,
+					y: device.y,
+					w: device.w,
+					h: device.h,
+				});
 			}
 		}
 	}
@@ -936,6 +1029,7 @@ export async function buildPdfDestMaps(
 			const box = visiblePageBox(page);
 			return { x: box.x, y: box.y };
 		}),
+		otherNamedLinks,
 	};
 }
 

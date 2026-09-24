@@ -11,15 +11,19 @@ import {
 	buildCitationDestKeyMap,
 	buildPdfDestMaps,
 	citationDestKey,
+	citationRefNumber,
 	citationSidecarKeysForDest,
 	destinationInPageBox,
 	expandCitationLinkCluster,
 	fitHCoordResolver,
 	fitRCoordResolver,
 	hyperrefCrossrefParser,
+	isOtherNamedLink,
 	linkRectKey,
 	matchCitationLinkKey,
 	matchCrossrefLinkLabel,
+	springerCitationParser,
+	springerCrossrefParser,
 	xyzCoordResolver,
 } from "@/lib/pdf/citation-dest-keys";
 import {
@@ -372,9 +376,16 @@ describe("buildPdfDestMaps with mixed conventions", () => {
 			Rect: [100.0, 200.0, 112.0, 210.0],
 			A: { S: "GoTo", D: PDFString.of("mk:ref1") },
 		});
+		// A section link whose target coordinate coincides with table.1.
+		const sectionLink = context.obj({
+			Type: "Annot",
+			Subtype: "Link",
+			Rect: [200.0, 300.0, 212.0, 310.0],
+			A: { S: "GoTo", D: PDFString.of("subsection.5.1") },
+		});
 		page.node.set(
 			PDFName.of("Annots"),
-			context.obj([tblLink, figLink, refLink]),
+			context.obj([tblLink, figLink, refLink, sectionLink]),
 		);
 
 		return { bytes: await doc.save(), page };
@@ -474,6 +485,27 @@ describe("buildPdfDestMaps with mixed conventions", () => {
 				size: { width: 12.0, height: 10.0 },
 			}),
 		).toBe("mk:ref1");
+	});
+
+	it("indexes links whose dest name is neither a cite nor a float", async () => {
+		const { bytes } = await buildMixedPdf();
+		const maps = await buildPdfDestMaps(bytes);
+
+		// PDF Rect [200, 300, 212, 310] → device y = 792 - 310 = 482.
+		expect(maps.otherNamedLinks).toHaveLength(1);
+		expect(
+			isOtherNamedLink(maps.otherNamedLinks, 0, {
+				origin: { x: 200.0, y: 482.0 },
+				size: { width: 12.0, height: 10.0 },
+			}),
+		).toBe(true);
+		// Cite / float links are not "other".
+		expect(
+			isOtherNamedLink(maps.otherNamedLinks, 0, {
+				origin: { x: 100.0, y: 582.0 },
+				size: { width: 12.0, height: 10.0 },
+			}),
+		).toBe(false);
 	});
 });
 
@@ -598,6 +630,83 @@ describe("citationSidecarKeysForDest", () => {
 			"ref-12",
 			"ref12",
 		]);
+	});
+
+	it("maps Springer and ACM citation dests to candidate ids", () => {
+		expect(citationSidecarKeysForDest("ch3CR2")).toEqual([
+			"ch3CR2",
+			"ref-2",
+			"ref2",
+			"2",
+		]);
+		expect(citationSidecarKeysForDest("CR5")).toEqual([
+			"CR5",
+			"ref-5",
+			"ref5",
+			"5",
+		]);
+		expect(citationSidecarKeysForDest("Bib0001")).toEqual([
+			"Bib0001",
+			"ref-1",
+			"ref1",
+			"1",
+		]);
+	});
+});
+
+describe("citationRefNumber", () => {
+	it("extracts numeric index from ACS, Springer, and ACM keys", () => {
+		expect(citationRefNumber("mk:ref12")).toBe(12);
+		expect(citationRefNumber("ch3CR2")).toBe(2);
+		expect(citationRefNumber("CR5")).toBe(5);
+		expect(citationRefNumber("Bib0004")).toBe(4);
+		expect(citationRefNumber("cite.smith2020")).toBeNull();
+		expect(citationRefNumber("bib1")).toBeNull();
+		expect(citationRefNumber("bib2")).toBeNull();
+	});
+
+	it("leaves short bibN names (not ACM Bib0001) unparsed in sidecar keys", () => {
+		expect(citationSidecarKeysForDest("bib1")).toEqual(["bib1"]);
+		expect(citationSidecarKeysForDest("bib2")).toEqual(["bib2"]);
+	});
+});
+
+describe("springerCrossrefParser", () => {
+	it("parses Springer float destinations", () => {
+		expect(springerCrossrefParser("ch3Fig1")).toEqual({
+			kind: "figure",
+			number: 1,
+		});
+		expect(springerCrossrefParser("Fig2")).toEqual({
+			kind: "figure",
+			number: 2,
+		});
+		expect(springerCrossrefParser("ch3Tab1")).toEqual({
+			kind: "table",
+			number: 1,
+		});
+		expect(springerCrossrefParser("Tab2")).toEqual({
+			kind: "table",
+			number: 2,
+		});
+		expect(springerCrossrefParser("ch3Eq3")).toEqual({
+			kind: "equation",
+			number: 3,
+		});
+		expect(springerCrossrefParser("Alg4")).toEqual({
+			kind: "algorithm",
+			number: 4,
+		});
+		expect(springerCrossrefParser("ch3Sec1")).toBeNull();
+	});
+});
+
+describe("springerCitationParser", () => {
+	it("parses Springer and ACM citation destinations", () => {
+		expect(springerCitationParser("ch3CR1")).toBe("ch3CR1");
+		expect(springerCitationParser("CR9")).toBe("CR9");
+		expect(springerCitationParser("Bib0001")).toBe("Bib0001");
+		expect(springerCitationParser("ch3Sec1")).toBeNull();
 	});
 });
 

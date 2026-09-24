@@ -6,7 +6,9 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { CitationImportPopover } from "@/components/viewer/citation-import-menu";
+import { PreviewArrow } from "@/components/viewer/pdf/cards/preview-arrow";
 import { PDF_FLOAT_CARD } from "@/components/viewer/pdf/chrome/pdf-chrome-surface";
+import { computePreviewPlacement } from "@/components/viewer/pdf/preview-placement";
 import type { ScreenPoint } from "@/components/viewer/pdf/types";
 import { openExternalUrl } from "@/lib/core/open-external";
 import { cn } from "@/lib/core/utils";
@@ -170,18 +172,21 @@ export function PdfCitationPreview({
 		typeof window === "undefined" ? 1200 : window.innerWidth;
 	const viewportHeight =
 		typeof window === "undefined" ? 800 : window.innerHeight;
-	const estimatedHeight =
+	const cardEstimatedHeight =
 		matched.length <= 1
 			? CARD_ESTIMATED_HEIGHT
 			: Math.min(LIST_MAX_HEIGHT, 28 + matched.length * 72);
-	const left = Math.min(
-		Math.max(12, screen.x),
-		viewportWidth - CARD_WIDTH - 12,
-	);
-	const top = Math.min(
-		Math.max(12, screen.y),
-		viewportHeight - estimatedHeight - 12,
-	);
+
+	const { placement, left, top, bottom, arrowLeft, maxContentHeight } =
+		computePreviewPlacement({
+			screen,
+			cardWidth: CARD_WIDTH,
+			cardEstimatedHeight,
+			viewportWidth,
+			viewportHeight,
+		});
+
+	const maxListHeight = Math.min(LIST_MAX_HEIGHT, maxContentHeight);
 
 	// Mount under an existing pointer skips pointerenter — re-arm sticky hover.
 	useEffect(() => {
@@ -205,17 +210,22 @@ export function PdfCitationPreview({
 			className={cn(
 				"fixed z-50 w-[300px] p-3",
 				PDF_FLOAT_CARD,
+				placement === "bottom" ? "origin-top" : "origin-bottom",
 				"motion-safe:animate-in motion-safe:fade-in-0 motion-safe:zoom-in-95 motion-safe:duration-150 motion-reduce:animate-none",
 			)}
-			style={{ left, top }}
+			style={{ left, top, bottom }}
 			onPointerEnter={onPointerEnter}
 			onPointerLeave={handlePointerLeave}
 		>
+			<PreviewArrow placement={placement} left={arrowLeft} />
 			<div
 				className={
 					matched.length > 1
-						? "flex max-h-[280px] flex-col gap-2.5 overflow-y-auto"
+						? "flex flex-col gap-2.5 overflow-y-auto"
 						: undefined
+				}
+				style={
+					matched.length > 1 ? { maxHeight: `${maxListHeight}px` } : undefined
 				}
 			>
 				{matched.map((citation, index) => (

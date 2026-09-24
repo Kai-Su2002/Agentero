@@ -20,6 +20,7 @@ import {
 	PdfZoomMode,
 } from "@embedpdf/models";
 import { memo } from "react";
+import type { ScreenPoint } from "@/components/viewer/pdf/types";
 import { normalizeArxivId } from "@/lib/paper/arxiv";
 
 export function isLinkObject(
@@ -135,7 +136,10 @@ export const CitationLinkLayer = memo(function CitationLinkLayer({
 	label: string;
 	onActivate: (link: PdfLinkAnnoObject) => void;
 	onTextActivate: (url: string) => void;
-	onHover: (link: PdfLinkAnnoObject | null) => void;
+	onHover: (
+		link: PdfLinkAnnoObject | null,
+		clientPoint?: ScreenPoint | null,
+	) => void;
 }) {
 	if (
 		(!links.length && !textLinks.length) ||
@@ -169,7 +173,13 @@ export const CitationLinkLayer = memo(function CitationLinkLayer({
 					// citations does not flash hover cards mid-gesture.
 					onPointerEnter={(e) => {
 						if ((e.buttons & 1) === 1) return;
-						onHover(link);
+						const box = e.currentTarget.getBoundingClientRect();
+						onHover(link, {
+							x: box.left + box.width / 2,
+							y: box.bottom,
+							top: box.top,
+							bottom: box.bottom,
+						});
 					}}
 					onPointerLeave={() => onHover(null)}
 				/>

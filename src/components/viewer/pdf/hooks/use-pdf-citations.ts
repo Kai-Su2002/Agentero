@@ -29,11 +29,17 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { pageElByIndex, rectRightScreen } from "@/components/viewer/pdf/coords";
+import {
+	pageElByIndex,
+	rectBottomCenterScreen,
+} from "@/components/viewer/pdf/coords";
 import { EPHEMERAL_PREVIEW_HIDE_MS } from "@/components/viewer/pdf/floating-hover";
 import { useStickyHoverHide } from "@/components/viewer/pdf/hooks/use-sticky-hover-hide";
 import { getLinkDestination } from "@/components/viewer/pdf/layers/citation-links";
-import type { CitationPreviewState } from "@/components/viewer/pdf/types";
+import type {
+	CitationPreviewState,
+	ScreenPoint,
+} from "@/components/viewer/pdf/types";
 import { useVaultStore } from "@/hooks/use-app-stores";
 import { useCitationImport } from "@/hooks/use-citation-import";
 import { usePaperRefsSidecar } from "@/hooks/use-paper-refs-sidecar";
@@ -119,7 +125,12 @@ export type PdfCitations = {
 	/** Drop the preview immediately (overlay exclusivity / suppress). */
 	clearCitationPreview: () => void;
 	handleCitationLinkActivate: (link: PdfLinkAnnoObject) => void;
-	handleCitationLinkHover: (link: PdfLinkAnnoObject | null) => void;
+	handleCitationLinkHover: (
+		link: PdfLinkAnnoObject | null,
+		clientPoint?: ScreenPoint | null,
+	) => void;
+	/** True when this link resolves to at least one known citation in the sidecar. */
+	hasCitationMatch: (link: PdfLinkAnnoObject) => boolean;
 	/** Library-import surface for the hover card; null when not a vault paper. */
 	citationImport: {
 		folders: string[];
@@ -418,8 +429,10 @@ export function usePdfCitations({
 	);
 
 	const handleCitationLinkHover = useCallback(
-		(link: PdfLinkAnnoObject | null) => {
+		(link: PdfLinkAnnoObject | null, clientPoint?: ScreenPoint | null) => {
 			if (!link) {
+				// Delay so the pointer can bridge into the card (import menu,
+				// external links, scrolling a multi-entry list).
 				scheduleCitationHide();
 				return;
 			}
@@ -440,8 +453,11 @@ export function usePdfCitations({
 			const pageEl = pageElByIndex(hostRef.current, link.pageIndex);
 			if (!pageEl) return;
 			onPreviewShowRef.current?.();
+			const zoom = zoomRef.current && zoomRef.current > 0 ? zoomRef.current : 1;
+			const screen =
+				clientPoint ?? rectBottomCenterScreen(pageEl, link.rect, zoom);
 			setCitationPreview({
-				screen: rectRightScreen(pageEl, link.rect, zoomRef.current),
+				screen,
 				matched,
 			});
 		},
@@ -452,6 +468,17 @@ export function usePdfCitations({
 			zoomRef,
 			citationHoverSurfaceRef,
 		],
+	);
+
+	const hasCitationMatch = useCallback(
+		(link: PdfLinkAnnoObject) =>
+			resolveCitations(
+				link,
+				destKeyMapRef.current,
+				citationLinksRef.current,
+				citationsRef.current,
+			).length > 0,
+		[],
 	);
 
 	// Clean up the citation preview hide timer when the document changes or unmounts.
@@ -471,6 +498,7 @@ export function usePdfCitations({
 		clearCitationPreview,
 		handleCitationLinkActivate,
 		handleCitationLinkHover,
+		hasCitationMatch,
 		citationImport,
 	};
 }

@@ -82,6 +82,7 @@ function ensureWorker(): Worker | null {
 				crossrefLinks: event.data.crossrefLinks ?? [],
 				citationLinks: event.data.citationLinks ?? [],
 				pageOrigins: event.data.pageOrigins ?? [],
+				otherNamedLinks: event.data.otherNamedLinks ?? [],
 			});
 		} else request.reject(new Error(event.data.error));
 	};

@@ -103,4 +103,65 @@ describe("PDF visual regions", () => {
 		expect(capturedRect?.size.width).toBeCloseTo(300);
 		expect(capturedRect?.size.height).toBeCloseTo(160);
 	});
+
+	it("uses explicit scaleFactor when supplied, capped by maxEdgePx", async () => {
+		let capturedOptions: { scaleFactor?: number } | undefined;
+		const page = {
+			index: 0,
+			size: { width: 600, height: 800 },
+			rotation: 0,
+			objectNumber: 1,
+		};
+		const engine = {
+			renderPageRect: (
+				_doc: unknown,
+				_pg: unknown,
+				_rect: unknown,
+				options?: { scaleFactor?: number },
+			) => {
+				capturedOptions = options;
+				return {
+					toPromise: async () =>
+						new Blob([new Uint8Array([1])], { type: "image/png" }),
+				};
+			},
+		};
+
+		await renderPdfRegionPromptImage({
+			engine: engine as never,
+			document: {
+				id: "doc",
+				pageCount: 1,
+				pages: [page],
+				isEncrypted: false,
+				isOwnerUnlocked: true,
+				permissions: 0,
+				normalizedRotation: true,
+			},
+			pageIndex: 0,
+			region: { x: 0.25, y: 0.1, w: 0.5, h: 0.2 },
+			scaleFactor: 3.5,
+		});
+
+		expect(capturedOptions?.scaleFactor).toBe(3.5);
+
+		// Still capped by maxEdgePx: 300 pt longest edge × 4 > 600 px.
+		await renderPdfRegionPromptImage({
+			engine: engine as never,
+			document: {
+				id: "doc",
+				pageCount: 1,
+				pages: [page],
+				isEncrypted: false,
+				isOwnerUnlocked: true,
+				permissions: 0,
+				normalizedRotation: true,
+			},
+			pageIndex: 0,
+			region: { x: 0.25, y: 0.1, w: 0.5, h: 0.2 },
+			scaleFactor: 4,
+			maxEdgePx: 600,
+		});
+		expect(capturedOptions?.scaleFactor).toBe(2);
+	});
 });
