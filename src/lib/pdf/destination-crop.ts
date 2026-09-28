@@ -3,15 +3,16 @@
  * `[N]` link jumps to — shown as an in-place preview when no structured
  * sidecar metadata is available.
  *
- * Prefers the destination page's text rects: cluster them into lines inside
- * the target column, find the line that opens entry N, and extend until the
- * next entry starts. Falls back to the layout region containing the anchor,
+ * Prefers the destination page's text rects: group adjacent text into line
+ * segments, find the line that opens entry N, and extend until the next entry
+ * starts. The entry's own lines set its width, independently of the rest of
+ * the page. Falls back to the layout region containing the anchor,
  * then to plain column geometry.
  */
 
 import { clamp01 } from "@/lib/core/math";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
-import type { PageTextRect } from "@/lib/pdf/link-text";
+import { groupLineSegments, type PageTextRect } from "@/lib/pdf/link-text";
 
 export type PickDestinationRegionOptions = {
 	pageIndex: number;
@@ -41,10 +42,12 @@ const DEFAULT_PAGE_HEIGHT_PT = 792;
 
 // Empirical thresholds (PDF points unless noted), tuned on IEEE / ACM /
 // USENIX / Springer bibliographies.
-/** Rect centres closer than this share a text line. */
+/** A detached entry label may start this far above / below its text. */
 const LINE_CLUSTER_TOLERANCE_PT = 4;
-/** Rects may start this far left of the column edge (hanging `[N]` labels). */
+/** Alignment tolerance for destinations just outside a hanging `[N]` label. */
 const COLUMN_EDGE_SLACK_PT = 6;
+/** PDF destinations may sit at the column margin, left of the entry label. */
+const ANCHOR_X_SLACK_PT = 16;
 /** Search radius around the destination y for the `[N]` / `N.` line. */
 const ENTRY_SEARCH_RADIUS_PT = 120;
 /** Without a marker, the nearest line must lie within this of the anchor. */
@@ -61,7 +64,6 @@ const CROP_PAD_X_PT = 6;
 const CROP_PAD_Y_PT = 5;
 
 // Normalized (0–1 of the page) limits.
-const CROP_MIN_W = 0.18;
 const CROP_MAX_W = 0.96;
 const CROP_MIN_H = 0.02;
 const CROP_MAX_H = 0.3;
@@ -79,6 +81,9 @@ const FALLBACK_H = 0.12;
  */
 const LABELLED_ENTRY_START_REGEX =
 	/^\s*(?:\[\s*\d+\s*\]|\[[A-Za-z+]*\d[A-Za-z0-9+]*\]|\d{1,3}\s?\.\s)/;
+/** A detached entry label may sit further from its text than an ordinary word. */
+const ENTRY_LABEL_ONLY_REGEX =
+	/^\s*(?:\[\s*\d+\s*\]|\[[A-Za-z+]*\d[A-Za-z0-9+]*\]|\d{1,3}\s?\.)\s*$/;
 /**
  * Author-year entry starts: "Author et al., 2024", "Writer (2025)". Only used
  * in bibliographies without labels — in a labelled one, continuation lines
@@ -118,36 +123,70 @@ type TextLine = {
 	text: string;
 };
 
-/** Cluster rects into lines, top to bottom. */
+/** Keep separate columns on the same baseline, joining detached entry labels. */
+function entrySegments(rects: readonly PageTextRect[]): TextLine[] {
+	const lines = groupLineSegments(rects)
+		.map((segment) => ({
+			minY: segment.coreTop,
+			maxY: segment.coreBottom,
+			minX: segment.left,
+			maxX: segment.right,
+			text: segment.glyphs.map((glyph) => glyph.ch).join(""),
+		}))
+		.sort((a, b) => a.minY - b.minY || a.minX - b.minX);
+	const joined = new Set<TextLine>();
+	for (const label of lines) {
+		if (!ENTRY_LABEL_ONLY_REGEX.test(label.text)) continue;
+		const next = lines
+			.filter(
+				(line) =>
+					!joined.has(line) &&
+					line.minX >= label.maxX &&
+					Math.abs(line.minY - label.minY) <= LINE_CLUSTER_TOLERANCE_PT,
+			)
+			.sort((a, b) => a.minX - b.minX)[0];
+		if (
+			!next ||
+			ENTRY_LABEL_ONLY_REGEX.test(next.text) ||
+			next.minX - label.maxX > (next.maxY - next.minY) * 4
+		) {
+			continue;
+		}
+		label.text += ` ${next.text}`;
+		label.minY = Math.min(label.minY, next.minY);
+		label.maxY = Math.max(label.maxY, next.maxY);
+		label.maxX = next.maxX;
+		joined.add(next);
+	}
+	return lines.filter((line) => !joined.has(line));
+}
+
+/** Once the column is known, join all runs on a row, including spaced URLs. */
 function clusterLines(rects: readonly PageTextRect[]): TextLine[] {
-	const sorted = [...rects].sort((a, b) => a.rect.origin.y - b.rect.origin.y);
 	const clusters: { yCenter: number; rects: PageTextRect[] }[] = [];
-	for (const r of sorted) {
-		const centre = r.rect.origin.y + r.rect.size.height / 2;
+	for (const r of [...rects].sort(
+		(a, b) => a.rect.origin.y - b.rect.origin.y,
+	)) {
+		const center = r.rect.origin.y + r.rect.size.height / 2;
 		const line = clusters.find(
-			(c) => Math.abs(c.yCenter - centre) <= LINE_CLUSTER_TOLERANCE_PT,
+			(c) => Math.abs(c.yCenter - center) <= LINE_CLUSTER_TOLERANCE_PT,
 		);
 		if (line) {
 			line.rects.push(r);
-			line.yCenter =
-				(line.yCenter * (line.rects.length - 1) + centre) / line.rects.length;
+			line.yCenter += (center - line.yCenter) / line.rects.length;
 		} else {
-			clusters.push({ yCenter: centre, rects: [r] });
+			clusters.push({ yCenter: center, rects: [r] });
 		}
 	}
 	return clusters
-		.map((line) => {
-			line.rects.sort((a, b) => a.rect.origin.x - b.rect.origin.x);
+		.map(({ rects: row }) => {
+			row.sort((a, b) => a.rect.origin.x - b.rect.origin.x);
 			return {
-				minY: Math.min(...line.rects.map((r) => r.rect.origin.y)),
-				maxY: Math.max(
-					...line.rects.map((r) => r.rect.origin.y + r.rect.size.height),
-				),
-				minX: Math.min(...line.rects.map((r) => r.rect.origin.x)),
-				maxX: Math.max(
-					...line.rects.map((r) => r.rect.origin.x + r.rect.size.width),
-				),
-				text: line.rects.map((r) => r.content).join(" "),
+				minY: Math.min(...row.map((r) => r.rect.origin.y)),
+				maxY: Math.max(...row.map((r) => r.rect.origin.y + r.rect.size.height)),
+				minX: Math.min(...row.map((r) => r.rect.origin.x)),
+				maxX: Math.max(...row.map((r) => r.rect.origin.x + r.rect.size.width)),
+				text: row.map((r) => r.content).join(" "),
 			};
 		})
 		.sort((a, b) => a.minY - b.minY);
@@ -184,50 +223,31 @@ function cropFromText(
 		hPt: number;
 		targetYPt: number;
 		normX: number | null;
-		regions?: readonly PdfLayoutRegion[];
 		entryIndex?: number | null;
 	},
 ): { bbox: DestinationCropRegion["bbox"]; entryMatched: boolean } | null {
-	const { wPt, hPt, targetYPt, normX, regions, entryIndex } = options;
-	// Detect whether this page has a multi-column (e.g. 2-column) layout.
-	const inBody = (r: PageTextRect) =>
-		r.rect.origin.y > 0.08 * hPt && r.rect.origin.y < 0.92 * hPt;
-	const hasRightColumnText = textRects.some(
-		(r) => inBody(r) && r.rect.origin.x >= 0.51 * wPt,
+	const { wPt, hPt, targetYPt, normX, entryIndex } = options;
+	// Rotated side watermarks span many rows and otherwise connect them all.
+	const validRects = textRects.filter(
+		(r) => r.content?.trim() && r.rect.size.height <= ENTRY_MAX_HEIGHT_PT,
 	);
-	const hasLeftColumnText = textRects.some(
-		(r) => inBody(r) && r.rect.origin.x < 0.45 * wPt,
-	);
-	const isTwoColumn =
-		(hasRightColumnText && hasLeftColumnText) || hasTwoColumnRegions(regions);
-
-	// Column bounds: in a two-column paper the page centre divides the columns.
-	let minColX = 0;
-	let maxColX = wPt;
-	if (isTwoColumn) {
-		if (normX != null && normX >= 0.48) minColX = 0.5 * wPt;
-		else maxColX = 0.5 * wPt;
-	}
-
-	// Keep only the target column, never spilling into the adjacent one. A
-	// right-column run must also cross the divide: left-column text that
-	// overhangs into the gutter (a trailing ",") starts inside the slack too.
-	const colRects = textRects.filter((r) => {
-		const x = r.rect.origin.x;
-		return (
-			r.content?.trim() &&
-			x >= minColX - COLUMN_EDGE_SLACK_PT &&
-			x <= maxColX &&
-			(minColX === 0 || x + r.rect.size.width > minColX)
-		);
-	});
-	if (colRects.length === 0) return null;
-	const lines = clusterLines(colRects);
-	const isEntryStart = entryStartTest(lines);
+	const allLines = entrySegments(validRects);
+	const anchorX = normX != null ? normX * wPt : null;
+	const anchorLines =
+		anchorX != null
+			? allLines.filter(
+					(line) =>
+						line.minX <= anchorX + ANCHOR_X_SLACK_PT &&
+						line.maxX >= anchorX - COLUMN_EDGE_SLACK_PT,
+				)
+			: allLines;
+	const candidates = anchorLines.length ? anchorLines : allLines;
+	if (candidates.length === 0) return null;
+	const isEntryStart = entryStartTest(candidates);
 
 	const marker = entryIndex != null ? entryMarkerRegex(entryIndex) : null;
 	const exactCandidates = marker
-		? lines.filter(
+		? allLines.filter(
 				(l) =>
 					marker.test(l.text) &&
 					Math.abs(l.minY - targetYPt) <= ENTRY_SEARCH_RADIUS_PT,
@@ -236,21 +256,77 @@ function cropFromText(
 	const entryMatched = exactCandidates.length > 0;
 
 	let startLine: TextLine;
-	if (entryMatched) {
+	if (exactCandidates.length > 0) {
 		startLine = nearestLine(exactCandidates, targetYPt);
 	} else {
-		const markerCandidates = lines.filter(
+		const markerCandidates = candidates.filter(
 			(l) =>
 				l.maxY >= targetYPt - ANCHOR_WINDOW_ABOVE_PT &&
 				l.minY <= targetYPt + ANCHOR_WINDOW_BELOW_PT &&
 				isEntryStart(l.text),
 		);
 		startLine = nearestLine(
-			markerCandidates.length > 0 ? markerCandidates : lines,
+			markerCandidates.length > 0 ? markerCandidates : candidates,
 			targetYPt,
 		);
 	}
 
+	// Nearby entry margins distinguish neighbouring columns. The first row may
+	// end early or split before a URL, so its width cannot bound wrapped rows.
+	const nearbyEntries = allLines.filter(
+		(line) =>
+			isEntryStart(line.text) &&
+			Math.abs(line.minY - startLine.minY) <= ENTRY_SEARCH_RADIUS_PT,
+	);
+	const columnEntries = nearbyEntries.filter(
+		(line) => Math.abs(line.minX - startLine.minX) <= ANCHOR_X_SLACK_PT,
+	);
+	const columnLeft = Math.min(
+		startLine.minX,
+		...columnEntries.map((line) => line.minX),
+	);
+	const columnExtent = Math.max(
+		startLine.maxX,
+		...columnEntries.map((line) => line.maxX),
+	);
+	// The other column may still contain prose or equations. Repeated margins
+	// there distinguish it from a detached URL run on this entry's first row.
+	const neighbours = allLines.filter(
+		(line) =>
+			Math.abs(line.minY - startLine.minY) <= ENTRY_SEARCH_RADIUS_PT &&
+			line.minX > columnExtent + COLUMN_EDGE_SLACK_PT,
+	);
+	const sharesEntryRow = (line: TextLine) =>
+		columnEntries.some(
+			(entry) => Math.abs(entry.minY - line.minY) <= LINE_CLUSTER_TOLERANCE_PT,
+		);
+	const columnRight = Math.min(
+		wPt,
+		...nearbyEntries
+			.filter((line) => line.minX > startLine.maxX + COLUMN_EDGE_SLACK_PT)
+			.map((line) => line.minX),
+		...neighbours
+			.filter((line) =>
+				neighbours.some(
+					(other) =>
+						other !== line &&
+						Math.abs(other.minX - line.minX) <= ANCHOR_X_SLACK_PT &&
+						Math.abs(other.minY - line.minY) > LINE_CLUSTER_TOLERANCE_PT &&
+						Math.abs(other.minY - line.minY) <= ENTRY_SEARCH_RADIUS_PT &&
+						(!sharesEntryRow(line) || !sharesEntryRow(other)),
+				),
+			)
+			.map((line) => line.minX),
+	);
+	const lines = clusterLines(
+		validRects.filter(
+			(r) =>
+				r.rect.origin.x >= columnLeft - COLUMN_EDGE_SLACK_PT &&
+				r.rect.origin.x < columnRight,
+		),
+	);
+	if (lines.length === 0) return null;
+	startLine = nearestLine(lines, startLine.minY);
 	const startIdx = lines.indexOf(startLine);
 	if (
 		startIdx < 0 ||
@@ -269,8 +345,7 @@ function cropFromText(
 		if (!prev || !curr) break;
 		// The next entry starts.
 		if (isEntryStart(curr.text)) break;
-		// Wrapped lines of one entry sit tight (≤ ~half a line apart); a gap
-		// over a full line ends the bibliography.
+		// A gap over a full line ends the bibliography.
 		if (curr.minY - prev.maxY > startLine.maxY - startLine.minY) break;
 		// Without a marker the entry uses a hanging indent; back at the
 		// margin means a new paragraph / entry.
@@ -281,9 +356,13 @@ function cropFromText(
 		) {
 			break;
 		}
-		// With a marker, continuation lines hang right of it; a line back at
-		// the marker column is the text after the bibliography.
-		if (startHasMarker && curr.minX <= baseLeftX + HANGING_INDENT_SLACK_PT) {
+		// With a marker, continuation lines hang right of it; a non-entry line
+		// back at the marker column is the text after the bibliography.
+		if (
+			startHasMarker &&
+			!isEntryStart(curr.text) &&
+			curr.minX <= baseLeftX + HANGING_INDENT_SLACK_PT
+		) {
 			break;
 		}
 		if (curr.maxY - startLine.minY > ENTRY_MAX_HEIGHT_PT) break;
@@ -308,13 +387,10 @@ function cropFromText(
 		nextLine != null
 			? Math.max(maxY, Math.min(nextLine.minY - 1, rawCropBottom))
 			: rawCropBottom;
-	const cropLeft = Math.max(minColX, minX - CROP_PAD_X_PT);
-	const cropRight = Math.min(maxColX, maxX + CROP_PAD_X_PT);
+	const cropLeft = Math.max(0, minX - CROP_PAD_X_PT);
+	const cropRight = Math.min(wPt, maxX + CROP_PAD_X_PT);
 
-	const w = Math.max(
-		CROP_MIN_W,
-		Math.min(CROP_MAX_W, (cropRight - cropLeft) / wPt),
-	);
+	const w = Math.min(CROP_MAX_W, (cropRight - cropLeft) / wPt);
 	// The minimum height must not reach into the next entry.
 	const maxBottom = nextLine != null ? nextLine.minY - 1 : hPt;
 	const h = Math.min(
@@ -349,10 +425,24 @@ function cropFromLayout(
 			: containing[0];
 	if (!region || region.bbox.w < 0.2) return null;
 
+	// Two columns only when a real right-hand column block exists (not a
+	// narrow caption / figure in a single-column paper).
+	const twoColumn =
+		(regions ?? []).some(
+			(r) =>
+				r.pageIndex === pageIndex &&
+				r !== region &&
+				r.bbox.x >= 0.48 &&
+				r.bbox.w >= 0.25 &&
+				r.bbox.h >= 0.1,
+		) ||
+		(regions ?? []).some(
+			(r) => r.bbox.x >= 0.48 && r.bbox.w >= 0.3 && r.bbox.h >= 0.15,
+		);
 	let x = region.bbox.x;
 	let w = region.bbox.w;
 	// A full-width region on a two-column page: keep the anchor's column only.
-	if (hasTwoColumnRegions(regions) && w > 0.52) {
+	if (twoColumn && w > 0.52) {
 		if (normX != null && normX >= 0.48) {
 			x = 0.5;
 			w = 0.46;
@@ -416,7 +506,6 @@ export function pickDestinationRegion({
 			hPt,
 			targetYPt,
 			normX,
-			regions,
 			entryIndex,
 		});
 		if (fromText) return { pageIndex, ...fromText };

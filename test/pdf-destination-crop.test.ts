@@ -24,6 +24,155 @@ function textRect(
 }
 
 describe("pickDestinationRegion", () => {
+	it.each([
+		19,
+		null,
+	])("finds a reference whose label is right of the destination margin (entryIndex=%s)", (entryIndex) => {
+		const result = pickDestinationRegion({
+			pageIndex: 31,
+			pdfX: 45.828,
+			pdfY: 720 - 590.689,
+			pageWidthPt: 486,
+			pageHeightPt: 720,
+			entryIndex,
+			textRects: [
+				textRect(45, 58, 395, 8, "Sample continuation."),
+				textRect(53, 593, 12, 8, "[19] "),
+				textRect(70, 593, 81, 8, "Sample continuation."),
+				textRect(153, 593, 189, 8, "Sample continuation."),
+				textRect(344, 593, 29, 8, "Sample continuation."),
+				textRect(53, 603, 12, 8, "[20] "),
+				textRect(70, 603, 292, 8, "Sample continuation."),
+			],
+		});
+		expect(result.entryMatched).toBe(entryIndex != null);
+		expect(result.bbox.y * 720).toBeLessThanOrEqual(593);
+		expect((result.bbox.y + result.bbox.h) * 720).toBeLessThan(603);
+		expect((result.bbox.x + result.bbox.w) * 486).toBeGreaterThanOrEqual(373);
+	});
+
+	it("includes a spaced URL and its small punctuation without joining the other column", () => {
+		const result = pickDestinationRegion({
+			pageIndex: 10,
+			pdfX: 311.978,
+			pdfY: 713.362,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			textRects: [
+				textRect(54, 81, 246, 8, "[1] Sample reference."),
+				textRect(313, 81, 12, 7, "[18] "),
+				textRect(331, 81, 70, 8, "Sample continuation."),
+				textRect(411, 81, 43, 8, "https://example.org/sample"),
+				textRect(455, 85, 1, 1, "."),
+				textRect(456, 81, 107, 8, "Sample continuation."),
+				textRect(330, 89, 25, 8, "Sample continuation."),
+				textRect(356, 94, 1, 1, "."),
+				textRect(313, 99, 12, 7, "[19] "),
+				textRect(331, 99, 226, 8, "Sample continuation."),
+			],
+		});
+		expect(result.bbox.x * 612).toBeGreaterThanOrEqual(307);
+		expect((result.bbox.x + result.bbox.w) * 612).toBeGreaterThanOrEqual(563);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeGreaterThanOrEqual(97);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeLessThan(99);
+	});
+
+	it("does not treat repeated detached URLs on entry rows as a neighbouring column", () => {
+		const result = pickDestinationRegion({
+			pageIndex: 10,
+			pdfX: 50,
+			pdfY: 720,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			entryIndex: 1,
+			textRects: [
+				textRect(50, 72, 70, 9, "[1] Sample reference."),
+				textRect(200, 72, 200, 9, "https://example.org/sample"),
+				textRect(50, 100, 70, 9, "[2] Sample reference."),
+				textRect(200, 100, 200, 9, "https://example.org/sample"),
+			],
+		});
+		expect((result.bbox.x + result.bbox.w) * 612).toBeGreaterThanOrEqual(400);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeLessThan(100);
+	});
+
+	it("keeps a left reference separate from right prose beneath a full-width page header", () => {
+		const result = pickDestinationRegion({
+			pageIndex: 14,
+			pdfX: 53.798,
+			pdfY: 792 - 165.38,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			textRects: [
+				textRect(54, 62, 504, 7, "Sample continuation."),
+				textRect(55, 168, 10, 7, "[50] "),
+				textRect(69, 168, 226, 7, "Sample continuation."),
+				textRect(69, 176, 225, 7, "Sample continuation."),
+				textRect(69, 184, 226, 7, "Sample continuation."),
+				textRect(70, 192, 33, 7, "Sample continuation."),
+				textRect(102, 192, 193, 7, "Sample continuation."),
+				textRect(55, 200, 10, 7, "[51] "),
+				textRect(69, 200, 226, 7, "Sample continuation."),
+				textRect(318, 170, 240, 9, "Sample continuation."),
+				textRect(318, 181, 172, 9, "Sample continuation."),
+			],
+		});
+		expect((result.bbox.x + result.bbox.w) * 612).toBeLessThan(318);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeGreaterThan(198.99);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeLessThan(200);
+	});
+
+	it("keeps sparse appendix headings in the neighbouring column out of the reference", () => {
+		const result = pickDestinationRegion({
+			pageIndex: 18,
+			pdfX: 54,
+			pdfY: 343.207,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			textRects: [
+				textRect(55, 457, 15, 9, "[56] "),
+				textRect(76, 457, 219, 9, "Sample continuation."),
+				textRect(75, 469, 220, 9, "Sample continuation."),
+				textRect(76, 481, 219, 9, "Sample continuation."),
+				textRect(76, 493, 220, 9, "Sample continuation."),
+				textRect(76, 505, 68, 9, "Sample continuation."),
+				textRect(55, 526, 15, 9, "[57] "),
+				textRect(76, 526, 220, 9, "Sample continuation."),
+				textRect(318, 463, 59, 11, "Appendices"),
+				textRect(318, 503, 203, 11, "Sample continuation."),
+			],
+		});
+		expect((result.bbox.x + result.bbox.w) * 612).toBeLessThan(318);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeGreaterThanOrEqual(514);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeLessThan(526);
+	});
+
+	it("ignores a vertical watermark overlapping several reference rows", () => {
+		const result = pickDestinationRegion({
+			pageIndex: 4,
+			pdfX: 53.945,
+			pdfY: 326.614,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			textRects: [
+				textRect(5, 302, 19, 188, "Sample continuation."),
+				textRect(49, 425, 251, 8, "Sample continuation."),
+				textRect(55, 471, 10, 9, "[9] "),
+				textRect(71, 471, 229, 9, "Sample continuation."),
+				textRect(71, 482, 230, 9, "Sample continuation."),
+				textRect(71, 494, 229, 9, "Sample continuation."),
+				textRect(71, 506, 134, 10, "Sample continuation."),
+				textRect(50, 518, 15, 9, "[10] "),
+				textRect(71, 518, 229, 9, "Sample continuation."),
+			],
+		});
+		expect(result.bbox.x * 612).toBeGreaterThanOrEqual(44);
+		expect(result.bbox.y * 792).toBeGreaterThan(460);
+		expect(result.bbox.y * 792).toBeLessThanOrEqual(471);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeGreaterThanOrEqual(516);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeLessThan(518);
+	});
+
 	it("isolates single reference entry from [N] marker until the next marker [N+1]", () => {
 		const textRects = [
 			textRect(50, 72, 240, 9, "[1] Sample reference."),
@@ -176,7 +325,7 @@ describe("pickDestinationRegion", () => {
 		).toBe(false);
 	});
 
-	it("keeps a minimum-width crop on the page instead of shrinking it at the right edge", () => {
+	it("crops a short single-line entry to its text width near the right page edge", () => {
 		const textRects = [textRect(560, 300, 30, 9, "[3] Sample reference.")];
 		const result = pickDestinationRegion({
 			pageIndex: 0,
@@ -187,8 +336,42 @@ describe("pickDestinationRegion", () => {
 			textRects,
 			entryIndex: 3,
 		});
-		expect(result.bbox.w).toBeGreaterThanOrEqual(0.18);
+		expect(result.bbox.w * 612).toBeCloseTo(42);
+		expect(result.bbox.x * 612).toBeCloseTo(554);
 		expect(result.bbox.x + result.bbox.w).toBeLessThanOrEqual(0.98 + 1e-9);
+	});
+
+	it("uses actual line bounds when the gutter is not at the page centre", () => {
+		const textRects = [
+			textRect(50, 72, 30, 9, "[1] Sample reference."),
+			textRect(370, 72, 190, 9, "[10] Sample reference."),
+			textRect(50, 84, 280, 9, "[2] Sample reference."),
+			textRect(65, 96, 265, 9, "Sample continuation."),
+			textRect(370, 84, 190, 9, "[11] Sample reference."),
+			textRect(50, 108, 280, 9, "[3] Sample reference."),
+		];
+		const base = {
+			pageIndex: 0,
+			pdfX: 50,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			textRects,
+		};
+		const short = pickDestinationRegion({
+			...base,
+			pdfY: 792 - 72,
+			entryIndex: 1,
+		});
+		expect(short.bbox.w * 612).toBeCloseTo(42);
+		const wrapped = pickDestinationRegion({
+			...base,
+			pdfY: 792 - 84,
+			entryIndex: 2,
+		});
+		const right = (wrapped.bbox.x + wrapped.bbox.w) * 612;
+		expect(right).toBeCloseTo(336);
+		expect((wrapped.bbox.y + wrapped.bbox.h) * 792).toBeGreaterThanOrEqual(105);
+		expect((wrapped.bbox.y + wrapped.bbox.h) * 792).toBeLessThan(108);
 	});
 
 	it("does not read a labelled entry's continuation line as an author-year start", () => {
@@ -262,6 +445,39 @@ describe("pickDestinationRegion", () => {
 
 		const eleven = pickDestinationRegion({ ...base, pdfY: 792 - 534 });
 		expect((eleven.bbox.y + eleven.bbox.h) * 792).toBeGreaterThan(550);
+	});
+
+	it("keeps a full-width bibliography below equations and isolated right-side fragments", () => {
+		const textRects = [
+			textRect(167, 97, 392, 10, "Sample continuation."),
+			textRect(188, 271, 373, 10, "Sample continuation."),
+			textRect(166, 296, 393, 10, "Sample continuation."),
+			textRect(299, 148, 71, 10, "Sample continuation."),
+			textRect(434, 322, 4, 10, "Sample continuation."),
+			textRect(540, 539, 19, 10, "Sample continuation."),
+			textRect(36, 666, 50, 10, "References"),
+			textRect(36, 681, 6, 10, "1. "),
+			textRect(57, 681, 444, 10, "Sample continuation."),
+			textRect(36, 693, 6, 10, "2. "),
+			textRect(57, 693, 417, 10, "Sample continuation."),
+			textRect(36, 704, 6, 10, "3. "),
+			textRect(57, 704, 502, 10, "Sample continuation."),
+		];
+		const result = pickDestinationRegion({
+			pageIndex: 27,
+			pdfX: 35.716,
+			pdfY: 165.009,
+			pageWidthPt: 595.276,
+			pageHeightPt: 841.89,
+			textRects,
+			entryIndex: 1,
+		});
+		expect(result.entryMatched).toBe(true);
+		const right = (result.bbox.x + result.bbox.w) * 595.276;
+		expect(right).toBeGreaterThanOrEqual(501);
+		expect(right).toBeLessThanOrEqual(507);
+		expect(result.bbox.y * 841.89).toBeLessThanOrEqual(681);
+		expect((result.bbox.y + result.bbox.h) * 841.89).toBeLessThan(693);
 	});
 
 	it("stops the last entry at the appendix heading after it", () => {

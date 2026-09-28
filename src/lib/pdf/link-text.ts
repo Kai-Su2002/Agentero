@@ -64,7 +64,7 @@ const WRAP_LINE_REACH = 2.5;
 type Glyph = { ch: string; x0: number; x1: number };
 
 /** One line of text within one column: horizontally adjacent rects. */
-type Segment = {
+export type LineSegment = {
 	glyphs: Glyph[];
 	left: number;
 	right: number;
@@ -106,7 +106,9 @@ function glyphsOf(rect: PageTextRect): Glyph[] {
  * overlap) and sit next to each other (no column-sized gap). Joining on both
  * keeps two columns with staggered baselines apart.
  */
-function groupSegments(textRects: readonly PageTextRect[]): Segment[] {
+export function groupLineSegments(
+	textRects: readonly PageTextRect[],
+): LineSegment[] {
 	const rects = textRects
 		.filter((r) => r.content.length > 0)
 		.sort((a, b) => a.rect.origin.y - b.rect.origin.y);
@@ -193,12 +195,12 @@ function groupSegments(textRects: readonly PageTextRect[]): Segment[] {
  * the same column.
  */
 function adjacentSegment(
-	segments: readonly Segment[],
-	current: Segment,
+	segments: readonly LineSegment[],
+	current: LineSegment,
 	dir: -1 | 1,
-): Segment | null {
+): LineSegment | null {
 	const reach = WRAP_LINE_REACH * current.height;
-	let best: Segment | null = null;
+	let best: LineSegment | null = null;
 	let bestDistance = Number.POSITIVE_INFINITY;
 	for (const segment of segments) {
 		if (segment === current || overlapX(current, segment) <= 0) continue;
@@ -240,16 +242,16 @@ function linkedDigitIndex(
 
 /** The line segment under a link whose body band it overlaps most. */
 function linkSegment(
-	segments: readonly Segment[],
+	segments: readonly LineSegment[],
 	linkRect: TextRectLike,
-): Segment | null {
+): LineSegment | null {
 	const link = {
 		left: linkRect.origin.x,
 		right: linkRect.origin.x + linkRect.size.width,
 	};
 	const top = linkRect.origin.y;
 	const bottom = top + linkRect.size.height;
-	let segment: Segment | null = null;
+	let segment: LineSegment | null = null;
 	let best = 0;
 	for (const candidate of segments) {
 		if (overlapX(link, candidate) < -0.5) continue;
@@ -275,7 +277,7 @@ export function linkLabelText(
 	textRects: readonly PageTextRect[],
 	linkRect: TextRectLike,
 ): string {
-	const segment = linkSegment(groupSegments(textRects), linkRect);
+	const segment = linkSegment(groupLineSegments(textRects), linkRect);
 	if (!segment) return "";
 	const left = linkRect.origin.x;
 	const right = left + linkRect.size.width;
@@ -306,7 +308,7 @@ export function parseBracketCitation(
 	textRects: readonly PageTextRect[],
 	linkRect: TextRectLike,
 ): BracketCitation | null {
-	const segments = groupSegments(textRects);
+	const segments = groupLineSegments(textRects);
 	const segment = linkSegment(segments, linkRect);
 	if (!segment) return null;
 	const glyphs = segment.glyphs;
