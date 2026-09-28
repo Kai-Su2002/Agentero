@@ -24,7 +24,12 @@
  * the same link and at most one card appears.
  */
 
-import type { PdfEngine, PdfLinkAnnoObject } from "@embedpdf/models";
+import type {
+	PdfDocumentObject,
+	PdfEngine,
+	PdfLinkAnnoObject,
+	PdfPageObject,
+} from "@embedpdf/models";
 import type { useDocumentManagerCapability } from "@embedpdf/plugin-document-manager/react";
 import {
 	type RefObject,
@@ -45,6 +50,8 @@ import type {
 	CrossrefPreviewState,
 	ScreenPoint,
 } from "@/components/viewer/pdf/types";
+import type { PromptImage } from "@/lib/agent/api";
+import { LruCache } from "@/lib/core/lru-cache";
 import {
 	type CitationDestKeyMap,
 	type CitationLinkKeyList,
@@ -85,6 +92,15 @@ import {
 const PREVIEW_CROP_MIN_SCALE = 2;
 const PREVIEW_CROP_MAX_SCALE = 4;
 const PREVIEW_CROP_MAX_EDGE_PX = 1600;
+
+/**
+ * Hover previews re-read the same pages and re-render the same crops as the
+ * pointer moves across a citation list. Keep the last few per document.
+ */
+const TEXT_RECTS_CACHE_PAGES = 8;
+const CROP_CACHE_ENTRIES = 24;
+
+type PageTextRects = readonly PageTextRect[];
 
 type DocumentManagerCapability = ReturnType<
 	typeof useDocumentManagerCapability
@@ -188,6 +204,46 @@ export function usePdfCrossrefPreview({
 	/** Monotonic token so a stale crop never lands over a newer hover. */
 	const renderTokenRef = useRef(0);
 	const activeLinkRef = useRef<PdfLinkAnnoObject | null>(null);
+	/** Page text / rendered crops of `cachedDocRef`'s document. */
+	const cachedDocRef = useRef<PdfDocumentObject | null>(null);
+	const textRectsCacheRef = useRef(
+		new LruCache<number, Promise<PageTextRects>>(TEXT_RECTS_CACHE_PAGES),
+	);
+	const cropCacheRef = useRef(
+		new LruCache<string, PromptImage>(CROP_CACHE_ENTRIES),
+	);
+
+	/** Drop cached page data when the viewer swaps to another document object. */
+	const cachesFor = useCallback((document: PdfDocumentObject) => {
+		if (cachedDocRef.current !== document) {
+			cachedDocRef.current = document;
+			textRectsCacheRef.current.clear();
+			cropCacheRef.current.clear();
+		}
+		return {
+			textRects: textRectsCacheRef.current,
+			crops: cropCacheRef.current,
+		};
+	}, []);
+
+	/** `getPageTextRects`, shared across hovers of the same page. */
+	const pageTextRects = useCallback(
+		(
+			engine: PdfEngine,
+			document: PdfDocumentObject,
+			page: PdfPageObject,
+		): Promise<PageTextRects> => {
+			const cache = cachesFor(document).textRects;
+			const cached = cache.get(page.index);
+			if (cached) return cached;
+			const pending = engine.getPageTextRects(document, page).toPromise();
+			cache.set(page.index, pending);
+			// Failed reads must not stick.
+			pending.catch(() => cache.delete(page.index));
+			return pending;
+		},
+		[cachesFor],
+	);
 
 	const sourceBytesRef = useRef<ArrayBuffer | null>(sourceBytes);
 	sourceBytesRef.current = sourceBytes;
@@ -223,6 +279,9 @@ export function usePdfCrossrefPreview({
 	// biome-ignore lint/correctness/useExhaustiveDependencies: docId is the effect trigger, not a value read inside the effect.
 	useEffect(() => {
 		activeLinkRef.current = null;
+		cachedDocRef.current = null;
+		textRectsCacheRef.current.clear();
+		cropCacheRef.current.clear();
 		crossrefHoverSurfaceRef.current = false;
 		setCrossrefPreview(null);
 	}, [docId]);
@@ -262,13 +321,25 @@ export function usePdfCrossrefPreview({
 			const targetHeight = Math.round(region.bbox.h * pageHeightPt * zoom);
 			const screen =
 				clientPoint ?? rectBottomCenterScreen(pageEl, link.rect, zoom);
+			const dpr =
+				typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+			const cropScale = Math.min(
+				PREVIEW_CROP_MAX_SCALE,
+				Math.max(PREVIEW_CROP_MIN_SCALE, zoom * dpr),
+			);
+			const { x, y, w, h } = region.bbox;
+			const cropKey = [region.pageIndex, x, y, w, h, cropScale]
+				.map((n) => Math.round(n * 1e4))
+				.join(":");
+			const crops = document ? cachesFor(document).crops : null;
+			const cachedImage = crops?.get(cropKey) ?? null;
 
 			setCrossrefPreview({
 				screen,
 				kind,
 				page: region.pageIndex + 1,
 				region: region.bbox,
-				image: null,
+				image: cachedImage,
 				targetSize: { width: targetWidth, height: targetHeight },
 			});
 
@@ -276,13 +347,7 @@ export function usePdfCrossrefPreview({
 			// (or a document close) superseded it.
 			const token = ++renderTokenRef.current;
 			const engine = engineRef.current;
-			if (!engine || !document) return;
-			const dpr =
-				typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
-			const cropScale = Math.min(
-				PREVIEW_CROP_MAX_SCALE,
-				Math.max(PREVIEW_CROP_MIN_SCALE, zoom * dpr),
-			);
+			if (cachedImage || !engine || !document || !crops) return;
 			void renderPdfRegionPromptImage({
 				engine,
 				document,
@@ -292,6 +357,7 @@ export function usePdfCrossrefPreview({
 				maxEdgePx: PREVIEW_CROP_MAX_EDGE_PX,
 			})
 				.then((image) => {
+					crops.set(cropKey, image);
 					if (renderTokenRef.current !== token) return;
 					setCrossrefPreview((prev) =>
 						prev && prev.image === null ? { ...prev, image } : prev,
@@ -307,6 +373,7 @@ export function usePdfCrossrefPreview({
 			docCapRef,
 			cancelCrossrefHide,
 			crossrefHoverSurfaceRef,
+			cachesFor,
 		],
 	);
 
@@ -359,9 +426,7 @@ export function usePdfCrossrefPreview({
 			}
 			cancelCrossrefHide();
 			const token = ++renderTokenRef.current;
-			void engine
-				.getPageTextRects(document, targetPage)
-				.toPromise()
+			void pageTextRects(engine, document, targetPage)
 				.then((textRects) => {
 					if (renderTokenRef.current === token) show(textRects);
 				})
@@ -376,6 +441,7 @@ export function usePdfCrossrefPreview({
 			cancelCrossrefHide,
 			clearCrossrefPreview,
 			showPreview,
+			pageTextRects,
 		],
 	);
 
@@ -511,9 +577,7 @@ export function usePdfCrossrefPreview({
 			if (engine && document && page) {
 				cancelCrossrefHide();
 				const token = ++renderTokenRef.current;
-				void engine
-					.getPageTextRects(document, page)
-					.toPromise()
+				void pageTextRects(engine, document, page)
 					.then((rects) => {
 						if (renderTokenRef.current !== token) return;
 						const label = extractCrossrefLabel(linkLabelText(rects, link.rect));
@@ -617,6 +681,7 @@ export function usePdfCrossrefPreview({
 			clearCrossrefPreview,
 			showPreview,
 			showDestinationCrop,
+			pageTextRects,
 		],
 	);
 
