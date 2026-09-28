@@ -49,8 +49,10 @@ import {
 	citationDestKey,
 	citationRefNumber,
 	citationSidecarKeysForDest,
+	destinationInPageBox,
 	expandCitationLinkCluster,
 	matchCitationLinkKey,
+	type PageOrigin,
 } from "@/lib/pdf/citation-dest-keys";
 import { schedulePdfDestMapsBuild } from "@/lib/pdf/citation-dest-map";
 
@@ -97,7 +99,10 @@ export type UsePdfCitationsOptions = {
 	 * commit, so external opens do not pollute the origin stack.
 	 */
 	onBeforeInternalJump?: () => void;
-	/** Fired with the destination anchor when a link actually navigated. */
+	/**
+	 * Fired with the destination anchor when a link actually navigated, in
+	 * page-box space (see `destinationInPageBox`).
+	 */
 	onInternalJump?: (target: {
 		pageIndex: number;
 		pdfX: number | null;
@@ -332,12 +337,15 @@ export function usePdfCitations({
 	 * bibliography destinations collide and the coord map is empty.
 	 */
 	const citationLinksRef = useRef<CitationLinkKeyList | null>(null);
+	/** Visible page box origins; the jump flash is drawn in page space. */
+	const pageOriginsRef = useRef<readonly PageOrigin[] | null>(null);
 	/** Mirrored so a late bytes prop never re-triggers the build effect. */
 	const sourceBytesRef = useRef<ArrayBuffer | null>(sourceBytes);
 	sourceBytesRef.current = sourceBytes;
 	useEffect(() => {
 		destKeyMapRef.current = null;
 		citationLinksRef.current = null;
+		pageOriginsRef.current = null;
 		const canBuildLocal = Boolean(paperAbsPath);
 		const canBuildRemote = isRemotePaper && sourceBytesRef.current;
 		if (!canBuildLocal && !canBuildRemote) return;
@@ -352,6 +360,7 @@ export function usePdfCitations({
 			onMaps: (maps) => {
 				destKeyMapRef.current = maps.cites;
 				citationLinksRef.current = maps.citationLinks;
+				pageOriginsRef.current = maps.pageOrigins;
 				if (isRemotePaper) {
 					citationsRef.current = buildRemoteCitations(
 						maps.cites,
@@ -397,7 +406,9 @@ export function usePdfCitations({
 						// here or it lingers over the destination (#528).
 						clearCitationPreview();
 						if (destination) {
-							onInternalJumpRef.current?.(destination);
+							onInternalJumpRef.current?.(
+								destinationInPageBox(destination, pageOriginsRef.current),
+							);
 						}
 					}
 				})

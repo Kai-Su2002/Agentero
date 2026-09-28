@@ -1,4 +1,9 @@
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { PdfiumNative } from "@embedpdf/engines/pdfium";
+import type { PdfLinkAnnoObject } from "@embedpdf/models";
+import { PdfAnnotationSubtype } from "@embedpdf/models";
+import { init } from "@embedpdf/pdfium";
 import type { PDFArray, PDFContext } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import {
@@ -7,6 +12,7 @@ import {
 	buildPdfDestMaps,
 	citationDestKey,
 	citationSidecarKeysForDest,
+	destinationInPageBox,
 	expandCitationLinkCluster,
 	fitHCoordResolver,
 	fitRCoordResolver,
@@ -468,6 +474,116 @@ describe("buildPdfDestMaps with mixed conventions", () => {
 				size: { width: 12.0, height: 10.0 },
 			}),
 		).toBe("mk:ref1");
+	});
+});
+
+/** A generated PDF whose visible page box has a nonzero origin. */
+async function offsetBoxCitationPdf(): Promise<Uint8Array> {
+	const { PDFDocument, PDFName, PDFNumber, PDFString } = await import(
+		"pdf-lib"
+	);
+	const doc = await PDFDocument.create();
+	const page = doc.addPage([595, 842]);
+	page.setMediaBox(82.5, 90, 430, 660);
+	page.setCropBox(0, 0, 595, 842);
+	const context = doc.context;
+	const dest = context.obj([
+		page.ref,
+		PDFName.of("XYZ"),
+		PDFNumber.of(134),
+		PDFNumber.of(707),
+		PDFNumber.of(0),
+	]);
+	doc.catalog.set(
+		PDFName.of("Names"),
+		context.obj({
+			Dests: context.obj({
+				Names: context.obj([PDFString.of("cite.sample"), dest]),
+			}),
+		}),
+	);
+	const link = context.obj({
+		Type: "Annot",
+		Subtype: "Link",
+		Rect: [182.5, 700, 194.5, 710],
+		A: { S: "GoTo", D: PDFString.of("cite.sample") },
+	});
+	page.node.set(PDFName.of("Annots"), context.obj([link]));
+	return doc.save();
+}
+
+describe("page boxes not at the origin", () => {
+	it("measures link rects and destinations from the visible box", async () => {
+		const maps = await buildPdfDestMaps(await offsetBoxCitationPdf());
+
+		expect(maps.pageOrigins).toEqual([{ x: 82.5, y: 90 }]);
+		// Device rect relative to the visible box: x = 182.5 − 82.5,
+		// y = (90 + 660) − 710.
+		expect(
+			matchCitationLinkKey(maps.citationLinks, 0, {
+				origin: { x: 100, y: 40 },
+				size: { width: 12, height: 10 },
+			}),
+		).toBe("sample");
+		// Map keys stay in raw user space; geometry shifts into the box.
+		expect(maps.cites.get(citationDestKey(0, 707))).toBe("sample");
+		expect(
+			destinationInPageBox(
+				{ pageIndex: 0, pdfX: 134, pdfY: 707 },
+				maps.pageOrigins,
+			),
+		).toEqual({ pageIndex: 0, pdfX: 51.5, pdfY: 617 });
+	});
+
+	it("matches the link rects EmbedPDF reports", async () => {
+		const bytes = await offsetBoxCitationPdf();
+		const maps = await buildPdfDestMaps(bytes);
+		const pdf = new PdfiumNative(
+			await init({
+				wasmBinary: readFileSync(
+					fileURLToPath(import.meta.resolve("@embedpdf/pdfium/pdfium.wasm")),
+				),
+			}),
+			{ fontFallback: null },
+		);
+		const doc = await pdf
+			.openDocumentBuffer({
+				id: "offset-box-citation",
+				content: bytes.buffer.slice(
+					bytes.byteOffset,
+					bytes.byteOffset + bytes.byteLength,
+				) as ArrayBuffer,
+			})
+			.toPromise();
+		const annotations = await pdf
+			.getPageAnnotations(doc, doc.pages[0])
+			.toPromise();
+		const links = annotations.filter(
+			(a): a is PdfLinkAnnoObject => a.type === PdfAnnotationSubtype.LINK,
+		);
+		expect(links).toHaveLength(1);
+		// The viewer hovers EmbedPDF's rect, so ours must be in the same space.
+		expect(matchCitationLinkKey(maps.citationLinks, 0, links[0].rect)).toBe(
+			"sample",
+		);
+		await pdf.closeDocument(doc).toPromise();
+	});
+
+	it("leaves destinations alone for boxes at (0, 0) or unknown origins", () => {
+		const dest = { pageIndex: 1, pdfX: 50, pdfY: 400 };
+		expect(
+			destinationInPageBox(dest, [
+				{ x: 0, y: 0 },
+				{ x: 0, y: 0 },
+			]),
+		).toBe(dest);
+		expect(destinationInPageBox(dest, null)).toBe(dest);
+		expect(
+			destinationInPageBox({ ...dest, pdfX: null }, [
+				{ x: 0, y: 0 },
+				{ x: 10, y: 20 },
+			]),
+		).toEqual({ pageIndex: 1, pdfX: null, pdfY: 380 });
 	});
 });
 

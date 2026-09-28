@@ -36,6 +36,7 @@ import {
 	PDFHexString,
 	PDFName,
 	PDFNumber,
+	type PDFPage,
 	PDFString,
 } from "pdf-lib";
 
@@ -372,7 +373,36 @@ export type PdfDestMaps = {
 	 * every bibliography entry on a page shares one `/FitR` coordinate.
 	 */
 	citationLinks: CitationLinkKeyList;
+	/**
+	 * Lower-left corner of each page's visible box (CropBox ∩ MediaBox), in
+	 * PDF user space. Destinations and annotation rects are in user space;
+	 * EmbedPDF page sizes and text rects are relative to this box, so a page
+	 * whose box does not start at (0, 0) needs the shift — see
+	 * {@link destinationInPageBox}.
+	 */
+	pageOrigins: readonly PageOrigin[];
 };
+
+/** Lower-left corner of a page's visible box in PDF user space. */
+export type PageOrigin = { x: number; y: number };
+
+/**
+ * Shift a PDF destination (user space, as PDFium reports it) into its page's
+ * visible box, the space EmbedPDF page sizes, text rects and layout regions
+ * use. Identity for the usual box at (0, 0) and when origins are unknown.
+ * Coordinate map keys (`citationDestKey`) stay in raw user space.
+ */
+export function destinationInPageBox<
+	T extends { pageIndex: number; pdfX: number | null; pdfY: number },
+>(destination: T, origins: readonly PageOrigin[] | null | undefined): T {
+	const origin = origins?.[destination.pageIndex];
+	if (!origin || (origin.x === 0 && origin.y === 0)) return destination;
+	return {
+		...destination,
+		pdfX: destination.pdfX != null ? destination.pdfX - origin.x : null,
+		pdfY: destination.pdfY - origin.y,
+	};
+}
 
 // ---- Pluggable destination-name parsers ----
 
@@ -734,6 +764,7 @@ export async function buildPdfDestMaps(
 		crossrefLabels: new Map(),
 		crossrefLinks: [],
 		citationLinks: [],
+		pageOrigins: [],
 	};
 	const doc = await PDFDocument.load(bytes, { updateMetadata: false });
 	const context = doc.context;
@@ -832,20 +863,10 @@ export async function buildPdfDestMaps(
 	for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
 		const page = pages[pageIndex];
 		if (!page) continue;
-		const pageHeight = page.getHeight();
-		// EmbedPDF uses CropBox origin when present (else MediaBox / 0,0).
-		const cropBox = page.node.CropBox();
-		const mediaBox = page.node.MediaBox();
-		const boxArr = (cropBox ?? mediaBox)?.asArray() ?? [];
-		const boxNum = (index: number): number => {
-			const raw = boxArr[index];
-			if (raw == null) return 0;
-			const looked = context.lookup(raw);
-			if (looked instanceof PDFNumber) return looked.asNumber();
-			return 0;
-		};
-		const boxOriginX = boxNum(0);
-		const boxOriginY = boxNum(1);
+		const box = visiblePageBox(page);
+		const pageHeight = box.height;
+		const boxOriginX = box.x;
+		const boxOriginY = box.y;
 
 		const annotsRef = page.node.get(PDFName.of("Annots"));
 		if (!annotsRef) continue;
@@ -911,7 +932,32 @@ export async function buildPdfDestMaps(
 		crossrefLabels: crossLabelsByCoord,
 		crossrefLinks,
 		citationLinks,
+		pageOrigins: pages.map((page) => {
+			const box = visiblePageBox(page);
+			return { x: box.x, y: box.y };
+		}),
 	};
+}
+
+/**
+ * The box PDFium renders and EmbedPDF measures: CropBox clipped to MediaBox
+ * (pdf-lib's `getCropBox` alone may report a CropBox larger than, and offset
+ * from, the MediaBox).
+ */
+function visiblePageBox(page: PDFPage): {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+} {
+	const media = page.getMediaBox();
+	const crop = page.getCropBox();
+	const x = Math.max(media.x, crop.x);
+	const y = Math.max(media.y, crop.y);
+	const right = Math.min(media.x + media.width, crop.x + crop.width);
+	const top = Math.min(media.y + media.height, crop.y + crop.height);
+	if (right <= x || top <= y) return media;
+	return { x, y, width: right - x, height: top - y };
 }
 
 /**

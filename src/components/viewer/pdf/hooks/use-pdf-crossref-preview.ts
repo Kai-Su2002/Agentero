@@ -46,7 +46,9 @@ import {
 	type CrossrefKindMap,
 	type CrossrefLinkLabelList,
 	citationDestKey,
+	destinationInPageBox,
 	matchCrossrefLinkLabel,
+	type PageOrigin,
 } from "@/lib/pdf/citation-dest-keys";
 import { schedulePdfDestMapsBuild } from "@/lib/pdf/citation-dest-map";
 import {
@@ -190,6 +192,8 @@ export function usePdfCrossrefPreview({
 	 * own dest name (`mk:tbl1` / `mk:fig3`) still uniquely identifies the float.
 	 */
 	const crossrefLinksRef = useRef<CrossrefLinkLabelList | null>(null);
+	/** Visible page box origins, to map destinations into page space. */
+	const pageOriginsRef = useRef<readonly PageOrigin[] | null>(null);
 	/** Monotonic token so a stale crop never lands over a newer hover. */
 	const renderTokenRef = useRef(0);
 
@@ -201,6 +205,7 @@ export function usePdfCrossrefPreview({
 		crossrefKindsRef.current = null;
 		crossrefLabelsRef.current = null;
 		crossrefLinksRef.current = null;
+		pageOriginsRef.current = null;
 		if (!paperAbsPath) return;
 		return schedulePdfDestMapsBuild({
 			paperAbsPath,
@@ -211,6 +216,7 @@ export function usePdfCrossrefPreview({
 				crossrefKindsRef.current = maps.crossrefKinds;
 				crossrefLabelsRef.current = maps.crossrefLabels;
 				crossrefLinksRef.current = maps.crossrefLinks;
+				pageOriginsRef.current = maps.pageOrigins;
 			},
 		});
 	}, [paperAbsPath]);
@@ -292,13 +298,21 @@ export function usePdfCrossrefPreview({
 				scheduleCrossrefHide();
 				return;
 			}
-			const destination = getLinkDestination(link.target);
-			if (!destination) {
+			const rawDestination = getLinkDestination(link.target);
+			if (!rawDestination) {
 				scheduleCrossrefHide();
 				return;
 			}
 
-			const coord = citationDestKey(destination.pageIndex, destination.pdfY);
+			// Map keys use raw user-space coordinates; geometry uses page space.
+			const coord = citationDestKey(
+				rawDestination.pageIndex,
+				rawDestination.pdfY,
+			);
+			const destination = destinationInPageBox(
+				rawDestination,
+				pageOriginsRef.current,
+			);
 			const regions = getLayoutDocumentResult(docId)?.regions ?? [];
 			const document = docCapRef.current?.getDocument(docId) ?? null;
 			const pageHeightPt =
