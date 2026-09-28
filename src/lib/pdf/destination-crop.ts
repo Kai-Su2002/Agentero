@@ -24,14 +24,20 @@ export type PickDestinationRegionOptions = {
 	textRects?: readonly PageTextRect[];
 	/** Bibliography number the link cites, when known. */
 	entryIndex?: number | null;
+	/**
+	 * Last entry of a cited range (`[8–12]` → 12). The crop then spans from
+	 * `entryIndex` through this entry.
+	 */
+	endEntryIndex?: number | null;
 };
 
 export type DestinationCropRegion = {
 	pageIndex: number;
 	bbox: { x: number; y: number; w: number; h: number };
 	/**
-	 * True when a line opening entry `entryIndex` (`[N]` / `N.`) was found near
-	 * the destination — proof the link really lands on a bibliography entry.
+	 * True when a line opening entry `entryIndex` (`[N]` / `N.`) — or, for a
+	 * range, any entry inside it — was found near the destination: proof the
+	 * link really lands on a bibliography entry.
 	 */
 	entryMatched: boolean;
 };
@@ -55,8 +61,14 @@ const ANCHOR_LINE_RADIUS_PT = 60;
 /** Window above / below the anchor scanned for any entry-start line. */
 const ANCHOR_WINDOW_ABOVE_PT = 16;
 const ANCHOR_WINDOW_BELOW_PT = 24;
+/** A vertical gap larger than this before the next entry ends a range. */
+const RANGE_ENTRY_GAP_PT = 14;
 /** Hard cap on one entry's height (~12–14 lines). */
 const ENTRY_MAX_HEIGHT_PT = 160;
+/** Allow a taller crop for a range: a base plus a per-entry allowance, capped. */
+const RANGE_BASE_HEIGHT_PT = 200;
+const RANGE_PER_ENTRY_PT = 80;
+const RANGE_MAX_HEIGHT_PT = 650;
 /** Lines this close to the entry's first-line x count as "back at margin". */
 const HANGING_INDENT_SLACK_PT = 3;
 /** Padding around the entry's text bounds. */
@@ -67,6 +79,7 @@ const CROP_PAD_Y_PT = 5;
 const CROP_MAX_W = 0.96;
 const CROP_MIN_H = 0.02;
 const CROP_MAX_H = 0.3;
+const RANGE_CROP_MAX_H = 0.65;
 /** Crops stay inside this page margin. */
 const PAGE_EDGE = 0.98;
 /** Height of the geometry-only fallback crop. */
@@ -106,6 +119,12 @@ function entryStartTest(lines: readonly TextLine[]): (text: string) => boolean {
  */
 function entryMarkerRegex(n: number): RegExp {
 	return new RegExp(`^\\s*(?:\\[\\s*${n}\\s*[\\]:]|${n}\\s?\\.\\s)`);
+}
+
+/** Bibliography number an entry line opens with (`[12] …` / `12. …`). */
+function leadingEntryNumber(text: string): number | null {
+	const m = /^\s*\[?\s*(\d+)/.exec(text);
+	return m ? Number.parseInt(m[1] ?? "", 10) : null;
 }
 
 /** Whether layout regions show a narrow right-hand column. */
@@ -224,9 +243,16 @@ function cropFromText(
 		targetYPt: number;
 		normX: number | null;
 		entryIndex?: number | null;
+		endEntryIndex?: number | null;
 	},
 ): { bbox: DestinationCropRegion["bbox"]; entryMatched: boolean } | null {
 	const { wPt, hPt, targetYPt, normX, entryIndex } = options;
+	const range =
+		entryIndex != null &&
+		options.endEntryIndex != null &&
+		options.endEntryIndex > entryIndex
+			? { start: entryIndex, end: options.endEntryIndex }
+			: null;
 	// Rotated side watermarks span many rows and otherwise connect them all.
 	const validRects = textRects.filter(
 		(r) => r.content?.trim() && r.rect.size.height <= ENTRY_MAX_HEIGHT_PT,
@@ -246,18 +272,40 @@ function cropFromText(
 	const isEntryStart = entryStartTest(candidates);
 
 	const marker = entryIndex != null ? entryMarkerRegex(entryIndex) : null;
+	// A range's first entry sits at or above the anchor, anywhere on the page.
 	const exactCandidates = marker
 		? allLines.filter(
 				(l) =>
 					marker.test(l.text) &&
-					Math.abs(l.minY - targetYPt) <= ENTRY_SEARCH_RADIUS_PT,
+					(range
+						? l.minY <= targetYPt + ANCHOR_WINDOW_BELOW_PT &&
+							targetYPt - l.minY <= hPt
+						: Math.abs(l.minY - targetYPt) <= ENTRY_SEARCH_RADIUS_PT),
 			)
 		: [];
-	const entryMatched = exactCandidates.length > 0;
+	// The range's first entry is on an earlier page / column: start at the
+	// first entry of the range present here.
+	const inRangeCandidates =
+		range && exactCandidates.length === 0
+			? candidates.filter((l) => {
+					if (!isEntryStart(l.text)) return false;
+					const n = leadingEntryNumber(l.text);
+					return (
+						n != null &&
+						n >= range.start &&
+						n <= range.end &&
+						Math.abs(l.minY - targetYPt) <= hPt
+					);
+				})
+			: [];
+	const entryMatched =
+		exactCandidates.length > 0 || inRangeCandidates.length > 0;
 
 	let startLine: TextLine;
 	if (exactCandidates.length > 0) {
 		startLine = nearestLine(exactCandidates, targetYPt);
+	} else if (inRangeCandidates[0]) {
+		startLine = inRangeCandidates[0];
 	} else {
 		const markerCandidates = candidates.filter(
 			(l) =>
@@ -343,13 +391,22 @@ function cropFromText(
 		const prev = lines[i - 1];
 		const curr = lines[i];
 		if (!prev || !curr) break;
-		// The next entry starts.
-		if (isEntryStart(curr.text)) break;
-		// A gap over a full line ends the bibliography.
-		if (curr.minY - prev.maxY > startLine.maxY - startLine.minY) break;
+		// Wrapped lines of one entry sit tight (≤ ~half a line apart); a gap
+		// over a full line ends the bibliography. Entries of a range may sit
+		// further apart.
+		const gapLimit = isEntryStart(curr.text)
+			? RANGE_ENTRY_GAP_PT
+			: startLine.maxY - startLine.minY;
+		if (curr.minY - prev.maxY > gapLimit) break;
+		// The next entry starts — unless it is still inside the cited range.
+		if (isEntryStart(curr.text)) {
+			const n = range ? leadingEntryNumber(curr.text) : null;
+			if (n == null || !range || n < range.start || n > range.end) break;
+		}
 		// Without a marker the entry uses a hanging indent; back at the
 		// margin means a new paragraph / entry.
 		if (
+			!range &&
 			!startHasMarker &&
 			curr.minX <= baseLeftX + HANGING_INDENT_SLACK_PT &&
 			i > startIdx + 1
@@ -365,7 +422,13 @@ function cropFromText(
 		) {
 			break;
 		}
-		if (curr.maxY - startLine.minY > ENTRY_MAX_HEIGHT_PT) break;
+		const maxHeight = range
+			? Math.min(
+					RANGE_MAX_HEIGHT_PT,
+					RANGE_BASE_HEIGHT_PT + (range.end - range.start) * RANGE_PER_ENTRY_PT,
+				)
+			: ENTRY_MAX_HEIGHT_PT;
+		if (curr.maxY - startLine.minY > maxHeight) break;
 		entryLines.push(curr);
 	}
 
@@ -394,7 +457,13 @@ function cropFromText(
 	// The minimum height must not reach into the next entry.
 	const maxBottom = nextLine != null ? nextLine.minY - 1 : hPt;
 	const h = Math.min(
-		Math.max(CROP_MIN_H, Math.min(CROP_MAX_H, (cropBottom - cropTop) / hPt)),
+		Math.max(
+			CROP_MIN_H,
+			Math.min(
+				range ? RANGE_CROP_MAX_H : CROP_MAX_H,
+				(cropBottom - cropTop) / hPt,
+			),
+		),
 		Math.max(cropBottom, maxBottom) / hPt - cropTop / hPt,
 	);
 	return {
@@ -491,6 +560,7 @@ export function pickDestinationRegion({
 	regions,
 	textRects,
 	entryIndex,
+	endEntryIndex,
 }: PickDestinationRegionOptions): DestinationCropRegion {
 	const wPt = pageWidthPt > 0 ? pageWidthPt : DEFAULT_PAGE_WIDTH_PT;
 	const hPt = pageHeightPt > 0 ? pageHeightPt : DEFAULT_PAGE_HEIGHT_PT;
@@ -507,6 +577,7 @@ export function pickDestinationRegion({
 			targetYPt,
 			normX,
 			entryIndex,
+			endEntryIndex,
 		});
 		if (fromText) return { pageIndex, ...fromText };
 	}

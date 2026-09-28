@@ -7,7 +7,8 @@
  * rather than absolute points, so it holds for 8 pt footnotes and 12 pt body
  * text alike.
  *
- * `parseBracketCitation` recognizes a numeric in-text citation. It is used only
+ * `parseBracketCitation` recognizes a numeric in-text citation and the range
+ * it belongs to. It is used only
  * when the link's own destination name does not identify a bibliography entry
  * (explicit `/Dest` arrays, publisher-specific names), and is deliberately
  * strict so Theorem / Listing / line / section links never pass: the linked
@@ -29,9 +30,16 @@ export type PageTextRect = {
 	content: string;
 };
 
+export type CitationRange = { start: number; end: number };
+
 export type BracketCitation = {
 	/** Bibliography number under the hovered link. */
 	entry: number;
+	/**
+	 * The `a–b` range the linked number belongs to (`[8–12]`, the `28–30` of
+	 * `[14, 28–30]`), or null for a single entry.
+	 */
+	range: CitationRange | null;
 };
 
 const OPEN_BRACKETS = "[［";
@@ -41,6 +49,8 @@ const DASHES = "-‐‑‒–—−";
 const BODY_FILLER = new RegExp(`[\\s,${DASHES}]`);
 const DIGIT = /\d/;
 const NUMBER_OR_RANGE = `\\d+(?:\\s*[${DASHES}]\\s*\\d+)?`;
+/** Wider "ranges" (`[1–2000]`) are not bibliography spans. */
+const MAX_RANGE_SPAN = 30;
 const BRACKET_BODY = new RegExp(
 	`^\\s*${NUMBER_OR_RANGE}(?:\\s*,\\s*${NUMBER_OR_RANGE})*\\s*$`,
 );
@@ -366,5 +376,20 @@ export function parseBracketCitation(
 	const lead = /\d*$/.exec(before)?.[0] ?? "";
 	const tail = /^\d+/.exec(after)?.[0] ?? "";
 	const entry = Number.parseInt(lead + tail, 10);
-	return Number.isNaN(entry) ? null : { entry };
+	if (Number.isNaN(entry)) return null;
+	return { entry, range: rangeAt(body, before.length) };
+}
+
+/** The `a–b` token of a bracket body covering `offset`, if it is a range. */
+function rangeAt(body: string, offset: number): CitationRange | null {
+	for (const match of body.matchAll(new RegExp(NUMBER_OR_RANGE, "g"))) {
+		const start = match.index ?? 0;
+		if (offset < start || offset >= start + match[0].length) continue;
+		const [from, to] = match[0].split(new RegExp(`\\s*[${DASHES}]\\s*`));
+		if (to == null) return null;
+		const a = Number.parseInt(from ?? "", 10);
+		const b = Number.parseInt(to, 10);
+		return b > a && b - a <= MAX_RANGE_SPAN ? { start: a, end: b } : null;
+	}
+	return null;
 }

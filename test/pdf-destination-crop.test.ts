@@ -96,6 +96,30 @@ describe("pickDestinationRegion", () => {
 		expect((result.bbox.y + result.bbox.h) * 792).toBeLessThan(100);
 	});
 
+	it("finds the start of a range when fewer digits indent its marker beyond the anchor", () => {
+		const result = pickDestinationRegion({
+			pageIndex: 14,
+			pdfX: 317.88,
+			pdfY: 281.876,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			entryIndex: 8,
+			endEntryIndex: 12,
+			textRects: [
+				textRect(324, 283, 236, 9, "[8] Sample reference."),
+				textRect(324, 306, 236, 9, "[9] Sample reference."),
+				textRect(319, 329, 241, 9, "[10] Sample reference."),
+				textRect(319, 352, 241, 9, "[11] Sample reference."),
+				textRect(319, 375, 241, 9, "[12] Sample reference."),
+				textRect(319, 398, 241, 9, "[13] Sample reference."),
+			],
+		});
+		expect(result.entryMatched).toBe(true);
+		expect(result.bbox.y * 792).toBeLessThanOrEqual(283);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeGreaterThanOrEqual(384);
+		expect((result.bbox.y + result.bbox.h) * 792).toBeLessThan(398);
+	});
+
 	it("keeps a left reference separate from right prose beneath a full-width page header", () => {
 		const result = pickDestinationRegion({
 			pageIndex: 14,
@@ -478,6 +502,133 @@ describe("pickDestinationRegion", () => {
 		expect(right).toBeLessThanOrEqual(507);
 		expect(result.bbox.y * 841.89).toBeLessThanOrEqual(681);
 		expect((result.bbox.y + result.bbox.h) * 841.89).toBeLessThan(693);
+	});
+
+	it("crops full citation range from [8] through [12] even when destination anchor is at reference [12]", () => {
+		const textRects = [
+			textRect(50, 72, 240, 9, "[8] Sample reference."),
+			textRect(65, 82, 220, 9, "Sample continuation."),
+			textRect(50, 96, 240, 9, "[9] Sample reference."),
+			textRect(50, 110, 240, 9, "[10] Sample reference."),
+			textRect(50, 124, 240, 9, "[11] Sample reference."),
+			textRect(50, 138, 240, 9, "[12] Sample reference."),
+			textRect(65, 148, 220, 9, "Sample continuation."),
+			textRect(50, 162, 240, 9, "[13] Sample reference."),
+		];
+
+		const result = pickDestinationRegion({
+			pageIndex: 14,
+			pdfX: 50,
+			pdfY: 792 - 138,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			textRects,
+			entryIndex: 8,
+			endEntryIndex: 12,
+		});
+
+		expect(result.bbox.y * 792).toBeLessThanOrEqual(72);
+
+		const bottomPt = (result.bbox.y + result.bbox.h) * 792;
+		expect(bottomPt).toBeGreaterThan(148);
+
+		expect(bottomPt).toBeLessThan(162);
+	});
+
+	it("crops all entries on landing page belonging to range when start entry is on previous page (e.g. range [1-10] landing on [10] with [9] and [10] present)", () => {
+		const textRects = [
+			textRect(50, 70, 240, 9, "[9] Sample reference."),
+			textRect(65, 82, 220, 9, "Sample continuation."),
+
+			textRect(50, 96, 240, 9, "[10] Sample reference."),
+			textRect(65, 108, 220, 9, "Sample continuation."),
+
+			textRect(50, 122, 240, 9, "[11] Sample reference."),
+		];
+
+		const result = pickDestinationRegion({
+			pageIndex: 14,
+			pdfX: 50,
+			pdfY: 792 - 96,
+			pageWidthPt: 612,
+			pageHeightPt: 792,
+			textRects,
+			entryIndex: 1,
+			endEntryIndex: 10,
+		});
+
+		expect(result.bbox.y * 792).toBeLessThanOrEqual(70);
+
+		const bottomPt = (result.bbox.y + result.bbox.h) * 792;
+		expect(bottomPt).toBeGreaterThan(108);
+
+		expect(bottomPt).toBeLessThan(122);
+	});
+
+	it("stops before next entry for dot-numbered reference entries split into number and dot runs", () => {
+		const textRects = [
+			textRect(313, 95, 7, 6, "12"),
+			textRect(322, 95, 5, 6, "."),
+			textRect(330, 95, 230, 9, "Sample continuation."),
+			textRect(330, 106, 230, 9, "Sample continuation."),
+
+			textRect(313, 127, 7, 6, "13"),
+			textRect(322, 127, 5, 6, "."),
+			textRect(330, 127, 230, 9, "Sample continuation."),
+			textRect(330, 138, 230, 9, "Sample continuation."),
+
+			textRect(313, 148, 7, 6, "14"),
+			textRect(322, 148, 5, 6, "."),
+			textRect(330, 148, 230, 9, "Sample continuation."),
+		];
+
+		const result = pickDestinationRegion({
+			pageIndex: 11,
+			pdfX: 330,
+			pdfY: 802 - 127,
+			pageWidthPt: 612,
+			pageHeightPt: 802,
+			textRects,
+			entryIndex: 11,
+			endEntryIndex: 13,
+		});
+
+		const topPt = result.bbox.y * 802;
+		const bottomPt = (result.bbox.y + result.bbox.h) * 802;
+
+		expect(topPt).toBeLessThanOrEqual(95);
+
+		expect(bottomPt).toBeGreaterThan(138);
+
+		expect(bottomPt).toBeLessThan(148);
+	});
+
+	it("crops in-range entries even when destination anchor is at top of column above the entries", () => {
+		const textRects = [
+			textRect(50, 95, 200, 9, "[12] Sample reference."),
+			textRect(66, 106, 184, 9, "Sample continuation."),
+
+			textRect(50, 127, 200, 9, "[13] Sample reference."),
+
+			textRect(50, 148, 200, 9, "[14] Sample reference."),
+		];
+
+		const result = pickDestinationRegion({
+			pageIndex: 11,
+			pdfX: 50,
+			pdfY: 802 - 30,
+			pageWidthPt: 612,
+			pageHeightPt: 802,
+			textRects,
+			entryIndex: 11,
+			endEntryIndex: 13,
+		});
+
+		const topPt = result.bbox.y * 802;
+		const bottomPt = (result.bbox.y + result.bbox.h) * 802;
+		expect(topPt).toBeLessThanOrEqual(95);
+		expect(bottomPt).toBeGreaterThan(127);
+		expect(bottomPt).toBeLessThan(148);
 	});
 
 	it("stops the last entry at the appendix heading after it", () => {

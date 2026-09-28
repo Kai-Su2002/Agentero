@@ -311,16 +311,21 @@ export function usePdfCrossrefPreview({
 	);
 
 	/**
-	 * Crop the bibliography entry a citation link jumps to. `requireEntry`
-	 * (text-recognized citations) shows nothing unless the destination line
-	 * really opens entry `entryIndex`.
+	 * Crop the bibliography entry (or `[8–12]` range of entries) a citation
+	 * link jumps to. `requireEntry` (text-recognized citations) shows nothing
+	 * unless the destination really has entry `entryIndex` / an entry of the
+	 * range.
 	 */
 	const showDestinationCrop = useCallback(
 		(
 			link: PdfLinkAnnoObject,
 			destination: { pageIndex: number; pdfX: number | null; pdfY: number },
 			regions: readonly PdfLayoutRegion[],
-			target: { entryIndex: number | null; requireEntry: boolean },
+			target: {
+				entryIndex: number | null;
+				endEntryIndex?: number | null;
+				requireEntry: boolean;
+			},
 			clientPoint?: ScreenPoint | null,
 		) => {
 			const document = docCapRef.current?.getDocument(docId) ?? null;
@@ -339,6 +344,7 @@ export function usePdfCrossrefPreview({
 					regions,
 					textRects,
 					entryIndex: target.entryIndex,
+					endEntryIndex: target.endEntryIndex,
 				});
 				if (target.requireEntry && !region.entryMatched) {
 					clearCrossrefPreview();
@@ -491,7 +497,11 @@ export function usePdfCrossrefPreview({
 				) ??
 				(coord != null ? citesMapRef.current?.get(coord) : null) ??
 				null;
-			const citeEntry = {
+			const citeEntry: {
+				entryIndex: number | null;
+				endEntryIndex?: number | null;
+				requireEntry: boolean;
+			} = {
 				entryIndex: citeKey ? citationRefNumber(citeKey) : null,
 				requireEntry: false,
 			};
@@ -518,25 +528,42 @@ export function usePdfCrossrefPreview({
 								return;
 							}
 						}
+						const bracket = parseBracketCitation(rects, link.rect);
 						if (citeKey != null) {
+							// A `[8–12]` around the link widens the crop to the range
+							// (when it agrees with the dest name's own number).
+							const range = bracket?.range;
+							const named = citeEntry.entryIndex;
+							const useRange =
+								range &&
+								(named == null || (named >= range.start && named <= range.end));
 							showDestinationCrop(
 								link,
 								destination,
 								regions,
-								citeEntry,
+								useRange
+									? {
+											entryIndex: range.start,
+											endEntryIndex: range.end,
+											requireEntry: false,
+										}
+									: citeEntry,
 								clientPoint,
 							);
 							return;
 						}
 						// No citation dest name: only a `[…]` number group counts,
 						// and the destination must open that entry.
-						const bracket = parseBracketCitation(rects, link.rect);
 						if (bracket) {
 							showDestinationCrop(
 								link,
 								destination,
 								regions,
-								{ entryIndex: bracket.entry, requireEntry: true },
+								{
+									entryIndex: bracket.range?.start ?? bracket.entry,
+									endEntryIndex: bracket.range?.end ?? null,
+									requireEntry: true,
+								},
 								clientPoint,
 							);
 							return;
