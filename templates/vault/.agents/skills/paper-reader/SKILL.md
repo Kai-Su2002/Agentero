@@ -1,6 +1,6 @@
 ---
 name: paper-reader
-version: 8
+version: 9
 description: >-
   用中文清晰阅读和讲解科研论文。用于提炼核心贡献、深入解释方法、分析实验与局限，并在 NOTES.md 中写入中文讲义式笔记。
 ---
@@ -32,7 +32,11 @@ description: >-
   `[Section 2.3](papers/<id>/<id>.pdf#section=2.3)`,
   `[Figure 1](papers/<id>/<id>.pdf#figure=1)`,
   `[p.11](papers/<id>/<id>.pdf#page=11)`,
-  or notes `[[papers/<id>/NOTES]]` / `[[papers/<id>/NOTES|short title]]`.For web pages use `[domain](https://...)`.
+  or notes `[[papers/<id>/NOTES]]` / `[[papers/<id>/NOTES|short title]]`.
+  If a path segment contains a space, percent-encode it as `%20` (preferred) or wrap the destination in angle brackets. Do not leave a raw space outside `<>`.
+  `[p.4](papers/Quantum%20Error%20Correcting/<id>/<id>.pdf#page=4)`
+  `[p.4](<papers/Quantum Error Correcting/<id>/<id>.pdf#page=4>)`
+  For web pages use `[domain](https://...)`.
 
 ## Workflow (CoT)：按照以下流程进行信息提取
 

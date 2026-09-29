@@ -10,6 +10,7 @@ import { linkClassName } from "@/components/editor/nodes/inline/link-styles";
 import {
 	cleanCitationHref,
 	isAgentCitationHref,
+	isVaultPdfHref,
 } from "@/lib/agent/citation-href";
 import { cn } from "@/lib/core/utils";
 import {
@@ -36,7 +37,8 @@ export function LinkElement(props: PlateElementProps) {
 	const wiki = url.startsWith(WIKI_HREF_PREFIX) ? parseWikiHref(url) : null;
 	const wikiNav = useWikiNav();
 	const markdownDoc = useMarkdownDoc();
-	const citationJump = !wiki && isAgentCitationHref(url);
+	const citationJump =
+		!wiki && (isAgentCitationHref(url) || isVaultPdfHref(url));
 	const localMarkdown = !wiki && !citationJump && isVaultLocalMarkdownLink(url);
 
 	if (citationJump) {
