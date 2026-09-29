@@ -27,7 +27,7 @@ type PdfCardStackProps = {
 		onAsk: () => void;
 		onAddToChat: () => void;
 		onTranslate: () => void;
-		onCopy?: () => void;
+		onCopy?: () => Promise<boolean>;
 		/** Hide highlight / translate (no marks/ to persist into); keep Ask. */
 		showHighlight?: boolean;
 		showTranslate?: boolean;
@@ -77,6 +77,13 @@ type PdfCardStackProps = {
 	};
 };
 
+/** Stable across scroll re-place; changes when the selection itself changes. */
+function selectionMenuInstanceKey(state: SelectionMenuState): string {
+	const rect = state.anchor.rects[0];
+	if (!rect) return String(state.anchor.page);
+	return `${state.anchor.page}:${rect.x}:${rect.y}:${rect.w}:${rect.h}`;
+}
+
 /**
  * Floating cards of the viewer, portaled to `document.body` so page transforms
  * and the scroller's overflow never clip or scale them.
@@ -98,6 +105,7 @@ export function PdfCardStack({
 		<div>
 			{selectionMenu.state ? (
 				<SelectionMenu
+					key={selectionMenuInstanceKey(selectionMenu.state)}
 					screen={selectionMenu.state.screen}
 					onHighlight={selectionMenu.onHighlight}
 					onAsk={selectionMenu.onAsk}

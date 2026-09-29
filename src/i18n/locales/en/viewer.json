@@ -190,6 +190,7 @@
 		},
 		"copied": "Copied",
 		"copy": "Copy",
+		"copyFailed": "Could not copy the selection.",
 		"note": "Annotate",
 		"quickChat": "Quick chat",
 		"addToChat": "Add to chat",
