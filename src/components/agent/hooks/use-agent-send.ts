@@ -44,12 +44,14 @@ import {
 import {
 	type AgentOption,
 	applyToolToLines,
+	buildLocalTranscriptPrompt,
 	type ChatLine,
 	type ChatSessionHistoryItem,
 	errorChatLine,
 	errorText,
 	type PendingSessionEvent,
 	type PendingTerminalEvent,
+	shouldAttachLocalTranscript,
 	upsertChatSessionTurn,
 } from "@/lib/agent/chat-state";
 import {
@@ -680,6 +682,17 @@ export function useAgentSend({
 					plazaScratchByPath,
 					t,
 				});
+			const transcript =
+				!isAcpCommand &&
+				shouldAttachLocalTranscript({
+					resumeAllowed: target.resumeAllowed,
+					historyStatus: target.activeHistory?.status,
+				})
+					? buildLocalTranscriptPrompt(target.priorLines)
+					: "";
+			const promptWithHistory = transcript
+				? `${transcript}\n\n${prompt}`
+				: prompt;
 			const workflow = isAcpCommand ? undefined : options?.workflow;
 			const userLine: ChatLine = {
 				id: nextLineId("user"),
@@ -706,7 +719,7 @@ export function useAgentSend({
 				resumeSessionId: target.resumeAllowed
 					? (target.providerContinueId ?? undefined)
 					: undefined,
-				prompt,
+				prompt: promptWithHistory,
 				isAcpCommand,
 				images,
 				workflow,

@@ -185,6 +185,12 @@ Kimi Code ACP 会把 `Bash`/`Glob`/`Grep` 等工具实现为 `terminal/create`�
 声明 `loadSession: true`、**不**声明 `resume`；对 Grok 调用 `session/resume` 会
 `Method not found`，Host 应改走 `session/load`。
 
+暖连接上发 `session/prompt` 若得到 `connection is no longer running` /
+`failed to send outgoing request`，说明这一轮还没送到 Agent。Host 把这次失败
+当成 prompt 之前的错误：丢掉这条连接，换新进程，再用已有 provider session id
+走 `session/load` 重发同一条 prompt。下一轮如果没有可恢复的 provider session，
+或上一轮已经失败，前端会把屏幕上已有的对话附进 prompt，避免新会话丢掉上文。
+
 生成中取消时，只要 provider session 已创建或本轮正在恢复，取消结果仍携带 `providerSessionId`。前端保留该 ID，并写回视觉批注 mark，使下一条消息和重启后的 pin 续聊继续同一会话；在 `session/new` 返回前取消时尚无可恢复的 provider session。
 
 `session/load` 会把历史以 `SessionNotification` 回放。Host 在

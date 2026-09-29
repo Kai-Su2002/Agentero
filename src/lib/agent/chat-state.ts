@@ -201,6 +201,19 @@ export function upsertChatSessionTurn(
 	];
 }
 
+/**
+ * Attach the on-screen transcript when the provider session cannot be
+ * trusted: no resume id, or the previous turn failed before the agent saw it
+ * (dead ACP connection). A healthy resume omits this so history is not sent twice.
+ */
+export function shouldAttachLocalTranscript(input: {
+	resumeAllowed: boolean;
+	historyStatus?: string | null;
+}): boolean {
+	if (!input.resumeAllowed) return true;
+	return input.historyStatus === "failed";
+}
+
 /** Format prior user/agent turns for agents that cannot session/resume. */
 export function buildLocalTranscriptPrompt(
 	lines: ChatLine[],
