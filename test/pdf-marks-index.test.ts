@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { keepUnsavedVisualDrafts } from "@/components/viewer/pdf/hooks/use-pdf-marks-io";
 import { buildMarksIndex } from "@/components/viewer/pdf/marks-index";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 
@@ -42,8 +43,27 @@ function visualTrace(opts: {
 	};
 }
 
+describe("keepUnsavedVisualDrafts", () => {
+	it("keeps an in-memory crop that disk refresh has not written yet", () => {
+		const draft = visualTrace({ id: "draft", page: 1, y: 0.2, comment: "" });
+		const saved = visualTrace({ id: "saved", page: 1, y: 0.5 });
+		expect(keepUnsavedVisualDrafts([draft], [saved])).toEqual([draft, saved]);
+	});
+
+	it("does not resurrect a draft that disk already has", () => {
+		const draft = visualTrace({ id: "draft", page: 1, y: 0.2, comment: "" });
+		const fromDisk = visualTrace({
+			id: "draft",
+			page: 1,
+			y: 0.2,
+			comment: "kept",
+		});
+		expect(keepUnsavedVisualDrafts([draft], [fromDisk])).toEqual([fromDisk]);
+	});
+});
+
 describe("buildMarksIndex", () => {
-	it("keeps an uncommented crop reachable after the temporary editor closes", () => {
+	it("omits an uncommented crop until a note is saved", () => {
 		const index = buildMarksIndex({
 			highlights: [],
 			highlightAnchors: new Map(),
@@ -52,9 +72,8 @@ describe("buildMarksIndex", () => {
 			pageTextMap: new Map(),
 			paperTitle: undefined,
 		});
-		expect(index.commentsByPage.get(1)).toEqual([
-			expect.objectContaining({ id: "crop", kind: "visual", comment: "" }),
-		]);
+		expect(index.commentsByPage.get(1) ?? []).toHaveLength(0);
+		expect(index.pinsByPage.get(1) ?? []).toHaveLength(0);
 	});
 
 	it("omits messages for visual comments without an agent conversation", () => {

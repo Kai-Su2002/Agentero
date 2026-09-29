@@ -1090,7 +1090,18 @@ function PdfViewerInner({
 		if (!railEdit) return commentsByPageBase;
 		const page = railEdit.pageIndex + 1;
 		const existing = commentsByPageBase.get(page);
-		if (existing?.some((c) => c.id === railEdit.id)) return commentsByPageBase;
+		const alreadyListed = existing?.some((c) => c.id === railEdit.id);
+		if (alreadyListed && !railEdit.isNew) return commentsByPageBase;
+		if (alreadyListed && existing) {
+			const next = new Map(commentsByPageBase);
+			next.set(
+				page,
+				existing.map((comment) =>
+					comment.id === railEdit.id ? { ...comment, isNew: true } : comment,
+				),
+			);
+			return next;
+		}
 		const next = new Map(commentsByPageBase);
 		next.set(page, [
 			...(existing ?? []),

@@ -38,6 +38,26 @@ import type { PdfAskThread } from "@/lib/pdf/ask/types";
 import { marksDir } from "@/lib/pdf/selection";
 import { isRecentSelfWrite } from "@/lib/pdf/selection/marks-io";
 import { listPdfTranslates } from "@/lib/pdf/translate";
+
+/**
+ * Disk refresh replaces the trace list. A click-crop is held in memory until
+ * the user commits a note, so a refresh must not drop that unsaved draft.
+ */
+export function keepUnsavedVisualDrafts(
+	prev: PdfVisualSessionTrace[],
+	incoming: PdfVisualSessionTrace[],
+): PdfVisualSessionTrace[] {
+	if (prev.length === 0) return incoming;
+	const incomingIds = new Set(incoming.map((trace) => trace.id));
+	const pending = prev.filter(
+		(trace) =>
+			!incomingIds.has(trace.id) &&
+			Boolean(trace.image?.data) &&
+			!trace.image?.path,
+	);
+	return pending.length === 0 ? incoming : [...pending, ...incoming];
+}
+
 import type { PdfTranslateRecord } from "@/lib/pdf/translate/types";
 import { listenVaultFileChangedGated } from "@/lib/vault/file-change-gate";
 import { normalizePathKey } from "@/lib/vault/path";
@@ -132,7 +152,9 @@ export function usePdfMarksIo({
 			]);
 			if (ts.length) setThreads(ts);
 			if (trs.length) setTranslates(trs);
-			if (traces.length) setVisualTraces(traces);
+			if (traces.length) {
+				setVisualTraces((prev) => keepUnsavedVisualDrafts(prev, traces));
+			}
 		})();
 	}, [paperAbsPath]);
 
@@ -169,7 +191,7 @@ export function usePdfMarksIo({
 				}
 				lastMarksPollRef.current = fingerprint;
 				setThreads(asks);
-				setVisualTraces(traces);
+				setVisualTraces((prev) => keepUnsavedVisualDrafts(prev, traces));
 				setTranslates(translates);
 			});
 		};
