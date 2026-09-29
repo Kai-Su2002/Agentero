@@ -1,6 +1,10 @@
 import { useEffect, useRef } from "react";
 import { useNativeSelectAllGuard } from "@/hooks/use-native-select-all-guard";
-import { resolveShortcutId, type ShortcutId } from "@/lib/shell/shortcuts";
+import {
+	resolveShortcutId,
+	type ShortcutId,
+	shortcutBelongsToTextField,
+} from "@/lib/shell/shortcuts";
 
 /** One handler per global keyboard shortcut. */
 export type ShortcutHandlers = Record<ShortcutId, () => void>;
@@ -31,28 +35,7 @@ export function useAppShortcuts(
 			});
 			if (!id) return;
 
-			// Editor-native combos — only claim them outside text fields:
-			// ⌘⌫ delete-to-line-start; ⌘← / ⇧⌘← jump/select to line start (macOS);
-			// ⌘X / ⌘V should keep native cut/paste while editing text;
-			// ⌥A (layoutTranslate) types composed chars (å) inside text fields.
-			if (
-				id === "deleteTreeItem" ||
-				id === "collapseTreeCurrent" ||
-				id === "collapseTreeDefault" ||
-				id === "cutTreeItem" ||
-				id === "pasteTreeItem" ||
-				id === "layoutTranslate"
-			) {
-				const el = event.target;
-				if (
-					el instanceof HTMLElement &&
-					el.closest(
-						"input, textarea, select, [contenteditable='true'], [role='textbox']",
-					)
-				) {
-					return;
-				}
-			}
+			if (shortcutBelongsToTextField(id, event)) return;
 
 			event.preventDefault();
 			handlersRef.current[id]();

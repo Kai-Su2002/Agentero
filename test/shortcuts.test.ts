@@ -9,7 +9,11 @@ vi.mock("@/lib/core/tauri", async (importOriginal) => {
 });
 
 import { getPlatformOS } from "@/lib/core/tauri";
-import { formatShortcut, resolveShortcutId } from "@/lib/shell/shortcuts";
+import {
+	formatShortcut,
+	resolveShortcutId,
+	shortcutBelongsToTextField,
+} from "@/lib/shell/shortcuts";
 
 function keyEvent(init: {
 	key: string;
@@ -94,6 +98,36 @@ describe("shell shortcuts", () => {
 				settingsOpen: false,
 			}),
 		).toBe("toggleChat");
+	});
+
+	it("leaves the ⌘B sidebar alias to focused text fields", () => {
+		vi.mocked(getPlatformOS).mockReturnValue("windows");
+		expect(
+			resolveShortcutId(keyEvent({ key: "b", ctrlKey: true }), {
+				settingsOpen: false,
+			}),
+		).toBe("toggleSidebar");
+		const textarea = {
+			closest: () => ({}),
+		} as unknown as EventTarget;
+		expect(
+			shortcutBelongsToTextField("toggleSidebar", {
+				key: "b",
+				target: textarea,
+			}),
+		).toBe(true);
+		expect(
+			shortcutBelongsToTextField("toggleSidebar", {
+				key: "s",
+				target: textarea,
+			}),
+		).toBe(false);
+		expect(
+			shortcutBelongsToTextField("toggleSidebar", {
+				key: "b",
+				target: null,
+			}),
+		).toBe(false);
 	});
 
 	it("binds F11 to borderless fullscreen only on Windows", () => {

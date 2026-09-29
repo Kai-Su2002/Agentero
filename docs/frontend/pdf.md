@@ -53,6 +53,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 | 视觉批注 | `marks/<id>.json`（kind `visual` v2）：区域 + 用户批注 + 可选嵌套 `agent`；裁剪图 `marks/assets/<id>.png`。默认形态为纯批注（与文字「批注备注」同壳）；有 Agent 会话时仍保留页边针以便定位。旧版 `agent-trace` v1 仍可读，Doctor 可一键升 v2 | 框选或单击 layout 区域后裁剪直接落盘，并在页右缘评论列打开就地编辑。尚未关联 Agent 的裁剪即使备注为空，失焦后仍保留评论卡，避免「加入侧边栏对话」入口消失。评论卡 hover 工具栏含「加入侧边栏对话」图标，点击将裁剪送入 Agent sidebar composer；删除图标也在卡上。「加入」传递的是 mark id，而草稿 id 就是落盘后的 `marks/<id>.json`，因此同一 mark 在 composer 中至多一枚 chip：重复点击刷新该枚（备注 / 区域 / 裁剪图），不会堆出共享同一 id 的重复项（重复项会共用 React key，点掉一个即全部消失）。没有用户备注但已有 Agent 会话时，点击页边针在针旁打开浮动对话卡，展示已保存 transcript，并可隐藏或删除该视觉批注；其余续聊统一在右侧 Agent 面板进行。视口窄于 640px 时评论列回退为页边针。`marks/annotations.json` 读写会按 annotation id 去重，避免重复导入脏数据 |
 
 - 不改 PDF 二进制；不自动写入 `NOTES.md`。
+- 评论列中已保存批注和新选区批注的输入框支持 ⌘/Ctrl+B、⌘/Ctrl+I，将选中文字包成 Markdown 加粗或斜体标记；再次按相同快捷键可去掉标记。
 - 文字高亮与视觉区域批注的备注以原始 Markdown 字符串存储；PDF 评论卡在非编辑状态和笔记中的批注嵌入卡均渲染 Markdown，编辑时显示源码。
 - PDF 评论卡保留原有 224px 宽度；长备注悬停展开后可在卡内纵向滚动，超宽内容可横向滚动。
 - 提问 Agent 可与面板默认 Agent 分开配置。
