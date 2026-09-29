@@ -202,6 +202,8 @@
 		"translating": "Translating…",
 		"translateHide": "Close card",
 		"translateDelete": "Delete",
+		"translatePin": "Keep a marker at the source",
+		"translateUnpin": "Remove source marker",
 		"translatePinAria": "Open translation: {{preview}}",
 		"translateNoAgent": "No available Agent for translation. Configure one in Settings → Agent.",
 		"translateOpenSettings": "Open translation settings",

@@ -1,4 +1,4 @@
-import { Settings2Icon, Trash2Icon, X } from "lucide-react";
+import { Pin, PinOff, Settings2Icon, Trash2Icon, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -20,12 +20,16 @@ type TranslateCardProps = {
 	onHide: () => void;
 	/** Delete the persisted translate record. */
 	onDelete: () => void;
+	/** Whether this translation leaves a marker at its source text. */
+	pinned?: boolean;
+	/** Toggle the persistent source marker. */
+	onTogglePin?: () => void;
 	onPointerEnter?: () => void;
 	onPointerLeave?: () => void;
 };
 
 /**
- * PDF selection translation — shared SelectionCard shell with dismiss / delete.
+ * PDF selection translation — shared SelectionCard shell with dismiss / pin / delete.
  * Content-sized up to a generous cap so long paragraphs read in full; only
  * results that overflow the cap (or the viewport) scroll, with an always
  * visible scrollbar so the overflow is discoverable.
@@ -39,6 +43,8 @@ export function TranslateCard({
 	onOpenSettings,
 	onHide,
 	onDelete,
+	pinned = false,
+	onTogglePin,
 	onPointerEnter,
 	onPointerLeave,
 }: TranslateCardProps) {
@@ -79,6 +85,24 @@ export function TranslateCard({
 			onPointerEnter={onPointerEnter}
 			onPointerLeave={onPointerLeave}
 			actions={[
+				...(onTogglePin
+					? [
+							{
+								label: t(
+									pinned
+										? "selection.translateUnpin"
+										: "selection.translatePin",
+								),
+								onClick: onTogglePin,
+								icon: pinned ? (
+									<PinOff className="size-3.5" />
+								) : (
+									<Pin className="size-3.5" />
+								),
+								pressed: pinned,
+							},
+						]
+					: []),
 				{
 					label: t("selection.translateDelete"),
 					onClick: onDelete,

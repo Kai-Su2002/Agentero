@@ -89,6 +89,7 @@ import { usePdfTextSelection } from "@/components/viewer/pdf/hooks/use-pdf-text-
 import { usePdfViewerHandle } from "@/components/viewer/pdf/hooks/use-pdf-viewer-handle";
 import { usePdfVisualMarks } from "@/components/viewer/pdf/hooks/use-pdf-visual-marks";
 import { usePdfZoomControls } from "@/components/viewer/pdf/hooks/use-pdf-zoom-controls";
+import { useStableDerived } from "@/components/viewer/pdf/hooks/use-stable-derived";
 import { excludeOverlappingPdfTextLinks } from "@/components/viewer/pdf/layers/citation-links";
 import { COMMENT_RAIL_WIDTH_PX } from "@/components/viewer/pdf/layers/comment-cards-layer";
 import {
@@ -676,6 +677,7 @@ function PdfViewerInner({
 		translateStreaming,
 		translateError,
 		translateSelection,
+		toggleTranslatePin,
 		deleteTranslateCard,
 		openTranslateSettings,
 		clearTranslateError,
@@ -857,6 +859,19 @@ function PdfViewerInner({
 	clearCrossrefPreviewRef.current = clearCrossrefPreview;
 
 	const { askPinAnchors } = usePdfPinAnchors({ threads });
+	const pinnedTranslates = useStableDerived(
+		() => translates.filter((record) => record.pinned),
+		JSON.stringify(
+			translates
+				.filter((record) => record.pinned)
+				.map((record) => [
+					record.id,
+					record.page,
+					record.rects,
+					record.quote || record.result || "",
+				]),
+		),
+	);
 
 	/**
 	 * Gutter pins per page (1-based). Built once per mark/text change: pin
@@ -869,6 +884,7 @@ function PdfViewerInner({
 				highlights,
 				highlightAnchors,
 				askPinAnchors,
+				translates: pinnedTranslates,
 				visualTraces,
 				pageTextMap,
 				paperTitle,
@@ -877,6 +893,7 @@ function PdfViewerInner({
 			highlights,
 			highlightAnchors,
 			askPinAnchors,
+			pinnedTranslates,
 			visualTraces,
 			pageTextMap,
 			paperTitle,
@@ -1723,6 +1740,12 @@ function PdfViewerInner({
 						streaming: translateStreaming,
 						error: translateError,
 						onOpenSettings: openTranslateSettings,
+						onTogglePin:
+							paperAbsPath && activeTranslate?.rects.length
+								? () => {
+										if (activeTranslate) toggleTranslatePin(activeTranslate);
+									}
+								: undefined,
 						onHide: hideActiveCard,
 						onDelete: deleteTranslateCard,
 					}}

@@ -67,6 +67,7 @@ type PdfCardStackProps = {
 		streaming: boolean;
 		error: string | null;
 		onOpenSettings: () => void;
+		onTogglePin?: () => void;
 		onHide: () => void;
 		onDelete: () => void;
 	};
@@ -161,6 +162,8 @@ export function PdfCardStack({
 						result={translate.record.result ?? ""}
 						streaming={translate.streaming}
 						error={translate.error ?? translate.record.error ?? null}
+						pinned={translate.record.pinned}
+						onTogglePin={translate.onTogglePin}
 						onOpenSettings={translate.onOpenSettings}
 						onHide={translate.onHide}
 						onDelete={translate.onDelete}

@@ -59,7 +59,10 @@ export type UsePdfSelectionTranslateOptions = {
 	/** Persisted translate records; owned by {@link usePdfMarksIo}. */
 	translatesRef: RefObject<PdfTranslateRecord[]>;
 	setTranslates: Dispatch<SetStateAction<PdfTranslateRecord[]>>;
-	upsertTranslate: (rec: PdfTranslateRecord) => void;
+	upsertTranslate: (
+		rec: PdfTranslateRecord,
+		options?: { preservePinned?: boolean },
+	) => PdfTranslateRecord;
 	/** Cards cluster; owned by {@link usePdfCards}. */
 	openCard: (card: ActiveSelectionCard) => void;
 	hideActiveCard: () => void;
@@ -76,6 +79,8 @@ export type PdfSelectionTranslate = {
 	translateError: string | null;
 	/** Selection-menu action: create the record and start the run. */
 	translateSelection: (anchor: PdfAskAnchor) => void;
+	/** Toggle the saved source marker without affecting an in-flight run. */
+	toggleTranslatePin: (record: PdfTranslateRecord) => void;
 	/** Cancel the in-flight run; also wired into {@link usePdfCards}. */
 	stopTranslateSession: () => void;
 	/** Card header delete: drop the record from state + disk and close the card. */
@@ -110,8 +115,8 @@ export function usePdfSelectionTranslate({
 	const translateDisposedRef = useRef(false);
 	/** Invalidates callbacks after deletion or when a new selection starts. */
 	const translateGenerationRef = useRef(0);
-	/** A completed result may still be writing when its card is deleted. */
-	const pendingSavesRef = useRef(new Map<string, Promise<void>>());
+	/** Serialize writes per record so late pin toggles cannot overwrite newer state. */
+	const pendingWritesRef = useRef(new Map<string, Promise<void>>());
 
 	// Closing the viewer must not strand the run's IPC listeners (or the run
 	// itself): terminal events never arrive for a hung run, so teardown cannot
@@ -148,15 +153,39 @@ export function usePdfSelectionTranslate({
 	}, [onOpenSettings]);
 
 	const persistTranslate = useCallback(
-		async (rec: PdfTranslateRecord) => {
-			if (!paperAbsPath) return;
-			try {
-				await writePdfTranslate(paperAbsPath, rec);
-			} catch {
-				// keep UI responsive
-			}
+		(rec: PdfTranslateRecord): Promise<void> => {
+			if (!paperAbsPath) return Promise.resolve();
+			const previous = pendingWritesRef.current.get(rec.id);
+			const save = (previous ?? Promise.resolve())
+				.catch(() => undefined)
+				.then(() => writePdfTranslate(paperAbsPath, rec))
+				.catch(() => undefined);
+			pendingWritesRef.current.set(rec.id, save);
+			void save.then(() => {
+				if (pendingWritesRef.current.get(rec.id) === save) {
+					pendingWritesRef.current.delete(rec.id);
+				}
+			});
+			return save;
 		},
 		[paperAbsPath],
+	);
+
+	const toggleTranslatePin = useCallback(
+		(record: PdfTranslateRecord) => {
+			const current =
+				translatesRef.current.find((item) => item.id === record.id) ?? record;
+			const next = upsertTranslate(
+				{
+					...current,
+					pinned: !current.pinned,
+					updatedAt: new Date().toISOString(),
+				},
+				{ preservePinned: false },
+			);
+			void persistTranslate(next);
+		},
+		[translatesRef, upsertTranslate, persistTranslate],
 	);
 
 	const translateSelection = useCallback(
@@ -173,39 +202,24 @@ export function usePdfSelectionTranslate({
 				rects: anchor.rects,
 				quote,
 			});
-			upsertTranslate(rec);
+			let currentRecord = upsertTranslate(rec);
 			openCard({ kind: "translate", id: rec.id });
 			setTranslateStreaming(true);
 			setTranslateError(null);
-			let currentRecord = rec;
 			const isCurrentRun = () =>
 				translateGenerationRef.current === generation &&
 				!translateDisposedRef.current;
 			const commitResult = (result: string) => {
 				if (!isCurrentRun()) return false;
-				currentRecord = {
+				currentRecord = upsertTranslate({
 					...currentRecord,
 					result: result.trim(),
 					updatedAt: new Date().toISOString(),
 					error: undefined,
-				};
-				upsertTranslate(currentRecord);
+				});
 				setTranslateStreaming(false);
 				setTranslateError(null);
-				const save = persistTranslate(currentRecord);
-				pendingSavesRef.current.set(rec.id, save);
-				void save.then(
-					() => {
-						if (pendingSavesRef.current.get(rec.id) === save) {
-							pendingSavesRef.current.delete(rec.id);
-						}
-					},
-					() => {
-						if (pendingSavesRef.current.get(rec.id) === save) {
-							pendingSavesRef.current.delete(rec.id);
-						}
-					},
-				);
+				void persistTranslate(currentRecord);
 				return true;
 			};
 
@@ -222,25 +236,23 @@ export function usePdfSelectionTranslate({
 				activeSessionRef,
 				appendChunk: (chunk) => {
 					if (!isCurrentRun()) return;
-					currentRecord = {
+					currentRecord = upsertTranslate({
 						...currentRecord,
 						result: (currentRecord.result ?? "") + chunk,
 						updatedAt: new Date().toISOString(),
 						error: undefined,
-					};
-					upsertTranslate(currentRecord);
+					});
 				},
 				commitAgentResult: (ev) =>
 					commitResult(ev.content || currentRecord.result || ""),
 				commitProviderResult: commitResult,
 				markFailed: (message) => {
 					if (!isCurrentRun()) return;
-					currentRecord = {
+					currentRecord = upsertTranslate({
 						...currentRecord,
 						error: message,
 						updatedAt: new Date().toISOString(),
-					};
-					upsertTranslate(currentRecord);
+					});
 					setTranslateStreaming(false);
 					setTranslateError(message);
 				},
@@ -270,13 +282,13 @@ export function usePdfSelectionTranslate({
 		translateGenerationRef.current += 1;
 		stopTranslateSession();
 		if (id) {
-			const pendingSave = pendingSavesRef.current.get(id);
+			const pendingWrite = pendingWritesRef.current.get(id);
 			const remaining = translatesRef.current.filter((r) => r.id !== id);
 			translatesRef.current = remaining;
 			setTranslates(remaining);
 			if (paperAbsPath) {
 				// A completed result may still be writing; delete after that write.
-				void (pendingSave ?? Promise.resolve()).then(() =>
+				void (pendingWrite ?? Promise.resolve()).then(() =>
 					deletePdfTranslate(paperAbsPath, id),
 				);
 			}
@@ -295,6 +307,7 @@ export function usePdfSelectionTranslate({
 		translateStreaming,
 		translateError,
 		translateSelection,
+		toggleTranslatePin,
 		stopTranslateSession,
 		deleteTranslateCard,
 		openTranslateSettings,

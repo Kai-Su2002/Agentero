@@ -28,6 +28,8 @@ export type PdfTranslateRecord = {
 	quote?: string;
 	/** Translation body (persisted so the card can be reopened) */
 	result?: string;
+	/** Whether a page gutter marker keeps this result reachable after hiding. */
+	pinned: boolean;
 	/** Last error message if the run failed */
 	error?: string;
 };

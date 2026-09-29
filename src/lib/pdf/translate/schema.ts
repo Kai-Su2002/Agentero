@@ -25,6 +25,8 @@ export function parsePdfTranslateRecord(
 		createdAt: raw.createdAt,
 		page: Math.max(1, Math.floor(raw.page)),
 		rects: raw.rects as PdfTranslateRect[],
+		// Existing mark files predate pinning; missing means unpinned.
+		pinned: raw.pinned === true,
 	};
 	if (typeof raw.quote === "string") rec.quote = raw.quote;
 	if (typeof raw.updatedAt === "string") rec.updatedAt = raw.updatedAt;

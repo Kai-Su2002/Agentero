@@ -33,6 +33,8 @@ type SelectionCardAction = {
 	icon: ReactNode;
 	/** Destructive styling for the header icon button */
 	destructive?: boolean;
+	/** Pressed state for toggle actions such as pin / unpin. */
+	pressed?: boolean;
 };
 
 type PlaceSelectionCardOptions = {
@@ -347,15 +349,18 @@ export function SelectionCard({
 										<button
 											type="button"
 											aria-label={a.label}
+											aria-pressed={a.pressed}
 											// Native button (not ghost Button): avoid variant
 											// hover:text-foreground fighting the red icon color.
 											className={cn(
 												"inline-flex size-6 shrink-0 items-center justify-center rounded-md",
 												"text-muted-foreground transition-colors outline-none",
 												"focus-visible:ring-2 focus-visible:ring-ring/50",
-												a.destructive
-													? "hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-													: "hover:bg-muted hover:text-foreground",
+												a.pressed
+													? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
+													: a.destructive
+														? "hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+														: "hover:bg-muted hover:text-foreground",
 											)}
 											onClick={a.onClick}
 										>

@@ -70,7 +70,10 @@ export type PdfMarksIo = {
 	setVisualTraces: Dispatch<SetStateAction<PdfVisualSessionTrace[]>>;
 	/** Replace-or-prepend by id (newest first); no disk write. */
 	upsertThread: (thread: PdfAskThread) => void;
-	upsertTranslate: (rec: PdfTranslateRecord) => void;
+	upsertTranslate: (
+		rec: PdfTranslateRecord,
+		options?: { preservePinned?: boolean },
+	) => PdfTranslateRecord;
 	upsertVisualTrace: (trace: PdfVisualSessionTrace) => void;
 };
 
@@ -101,15 +104,28 @@ export function usePdfMarksIo({
 		});
 	}, []);
 
-	const upsertTranslate = useCallback((rec: PdfTranslateRecord) => {
-		setTranslates((prev) => {
+	const upsertTranslate = useCallback(
+		(
+			rec: PdfTranslateRecord,
+			{ preservePinned = true }: { preservePinned?: boolean } = {},
+		): PdfTranslateRecord => {
+			const prev = translatesRef.current;
 			const i = prev.findIndex((x) => x.id === rec.id);
-			if (i < 0) return [rec, ...prev];
-			const next = [...prev];
-			next[i] = rec;
-			return next;
-		});
-	}, []);
+			const existing = i >= 0 ? prev[i] : null;
+			const nextRecord = {
+				...rec,
+				pinned: preservePinned ? (existing?.pinned ?? rec.pinned) : rec.pinned,
+			};
+			const next =
+				i < 0
+					? [nextRecord, ...prev]
+					: prev.map((item, index) => (index === i ? nextRecord : item));
+			translatesRef.current = next;
+			setTranslates(next);
+			return nextRecord;
+		},
+		[],
+	);
 
 	const upsertVisualTrace = useCallback((trace: PdfVisualSessionTrace) => {
 		setVisualTraces((prev) => {
