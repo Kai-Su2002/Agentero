@@ -28,6 +28,7 @@ import {
 	captureTextAnchor,
 	resolveSelectionRange,
 } from "@/lib/agent/selection-source";
+import { applyMarkdownTextareaShortcut } from "@/lib/markdown/textarea-shortcuts";
 import { openRightTab } from "@/lib/shell/ui-window-actions";
 import { AnnotationBadges } from "./selection-annotation-badges";
 
@@ -316,6 +317,10 @@ function SelectionChatCard({ draft }: { draft: SelectionChatDraft }) {
 						onChange={(event) => updateSelectionChatComment(event.target.value)}
 						onKeyDown={(event) => {
 							event.stopPropagation();
+							if (
+								applyMarkdownTextareaShortcut(event, updateSelectionChatComment)
+							)
+								return;
 							if (
 								event.key === "Enter" &&
 								!event.shiftKey &&

@@ -31,6 +31,7 @@ import type {
 } from "@/components/viewer/pdf/types";
 import { useImeGuard } from "@/hooks/use-ime-guard";
 import { cn } from "@/lib/core/utils";
+import { applyMarkdownTextareaShortcut } from "@/lib/markdown/textarea-shortcuts";
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
 import {
 	DEFAULT_HIGHLIGHT_COLOR,
@@ -394,6 +395,13 @@ const CommentCard = memo(function CommentCard({
 							onClick={(e) => e.stopPropagation()}
 							onKeyDown={(e) => {
 								e.stopPropagation();
+								if (
+									applyMarkdownTextareaShortcut(e, (value) => {
+										draftRef.current = value;
+										autosizeTextarea(e.currentTarget);
+									})
+								)
+									return;
 								if (e.key === "Escape") {
 									e.preventDefault();
 									cancel();
@@ -763,6 +771,13 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 					onPointerDown={(e) => e.stopPropagation()}
 					onKeyDown={(e) => {
 						e.stopPropagation();
+						if (
+							applyMarkdownTextareaShortcut(e, (value) => {
+								draftTextRef.current = value;
+								autosizeTextarea(e.currentTarget);
+							})
+						)
+							return;
 						if (e.key === "Escape") {
 							e.preventDefault();
 							draftTextRef.current = "";
