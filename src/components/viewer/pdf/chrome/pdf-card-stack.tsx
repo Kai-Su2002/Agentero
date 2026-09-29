@@ -69,7 +69,6 @@ type PdfCardStackProps = {
 		onOpenSettings: () => void;
 		onTogglePin?: () => void;
 		onHide: () => void;
-		onDelete: () => void;
 	};
 	visual: {
 		trace: PdfVisualSessionTrace | null;
@@ -166,7 +165,6 @@ export function PdfCardStack({
 						onTogglePin={translate.onTogglePin}
 						onOpenSettings={translate.onOpenSettings}
 						onHide={translate.onHide}
-						onDelete={translate.onDelete}
 						onPointerEnter={onCardHoverEnter}
 						onPointerLeave={onCardHoverLeave}
 					/>

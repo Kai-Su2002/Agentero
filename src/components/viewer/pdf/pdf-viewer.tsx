@@ -618,11 +618,14 @@ function PdfViewerInner({
 
 	/**
 	 * `usePdfCards` must be declared before the ask and translate clusters (both
-	 * open and hide cards), but cards also reset per-kind card chrome and cancel a
-	 * running translate. Those edges go through refs assigned right after each
-	 * hook, so `openCard` / `hideActiveCard` keep their identity.
+	 * open and hide cards), but cards also reset per-kind chrome, discard temporary
+	 * translations, and cancel a replaced translate. Those edges go through refs
+	 * assigned right after each hook, so card lifecycle callbacks stay stable.
 	 */
 	const stopTranslateSessionRef = useRef<() => void>(() => undefined);
+	const discardUnpinnedTranslateOnCloseRef = useRef<(id: string) => void>(
+		() => undefined,
+	);
 	const clearTranslateErrorRef = useRef<() => void>(() => undefined);
 	const clearAskErrorRef = useRef<() => void>(() => undefined);
 	const closeAskChromeRef = useRef<(threadId: string) => void>(() => undefined);
@@ -641,7 +644,10 @@ function PdfViewerInner({
 	const resetChromeForClosedCard = useCallback(
 		(card: ActiveSelectionCard | null) => {
 			if (card?.kind === "ask") closeAskChromeRef.current(card.id);
-			if (card?.kind === "translate") clearTranslateErrorRef.current();
+			if (card?.kind === "translate") {
+				clearTranslateErrorRef.current();
+				discardUnpinnedTranslateOnCloseRef.current(card.id);
+			}
 			closeEditorRef.current();
 		},
 		[],
@@ -678,7 +684,7 @@ function PdfViewerInner({
 		translateError,
 		translateSelection,
 		toggleTranslatePin,
-		deleteTranslateCard,
+		discardUnpinnedTranslateOnClose,
 		openTranslateSettings,
 		clearTranslateError,
 		stopTranslateSession: stopTranslateSessionImpl,
@@ -691,11 +697,10 @@ function PdfViewerInner({
 		setTranslates,
 		upsertTranslate,
 		openCard,
-		hideActiveCard,
-		activeCardRef,
 		activeSessionRef,
 	});
 	stopTranslateSessionRef.current = stopTranslateSessionImpl;
+	discardUnpinnedTranslateOnCloseRef.current = discardUnpinnedTranslateOnClose;
 	clearTranslateErrorRef.current = clearTranslateError;
 
 	// ---- Ask threads (AI Q&A on a selection, marks/<id>.json) ----
@@ -1747,7 +1752,6 @@ function PdfViewerInner({
 									}
 								: undefined,
 						onHide: hideActiveCard,
-						onDelete: deleteTranslateCard,
 					}}
 					visual={{
 						trace: activeVisualTrace,

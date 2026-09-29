@@ -1,4 +1,4 @@
-import { Pin, PinOff, Settings2Icon, Trash2Icon, X } from "lucide-react";
+import { Pin, PinOff, Settings2Icon, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -16,20 +16,18 @@ type TranslateCardProps = {
 	error: string | null;
 	/** Open Translate settings from an API failure state. */
 	onOpenSettings: () => void;
-	/** Hide the card without deleting its saved translation. */
+	/** Dismiss the card; unpinned results are discarded on dismissal. */
 	onHide: () => void;
-	/** Delete the persisted translate record. */
-	onDelete: () => void;
-	/** Whether this translation leaves a marker at its source text. */
+	/** Whether this result and its source marker survive card dismissal. */
 	pinned?: boolean;
-	/** Toggle the persistent source marker. */
+	/** Toggle whether the result is kept with a persistent source marker. */
 	onTogglePin?: () => void;
 	onPointerEnter?: () => void;
 	onPointerLeave?: () => void;
 };
 
 /**
- * PDF selection translation — shared SelectionCard shell with dismiss / pin / delete.
+ * PDF selection translation — shared SelectionCard shell with dismiss / pin.
  * Content-sized up to a generous cap so long paragraphs read in full; only
  * results that overflow the cap (or the viewport) scroll, with an always
  * visible scrollbar so the overflow is discoverable.
@@ -42,7 +40,6 @@ export function TranslateCard({
 	error,
 	onOpenSettings,
 	onHide,
-	onDelete,
 	pinned = false,
 	onTogglePin,
 	onPointerEnter,
@@ -103,12 +100,6 @@ export function TranslateCard({
 							},
 						]
 					: []),
-				{
-					label: t("selection.translateDelete"),
-					onClick: onDelete,
-					icon: <Trash2Icon className="size-3.5" />,
-					destructive: true,
-				},
 				{
 					label: t("selection.translateHide"),
 					onClick: onHide,

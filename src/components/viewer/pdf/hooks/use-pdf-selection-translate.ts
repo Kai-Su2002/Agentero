@@ -1,8 +1,8 @@
 /**
  * Selection → 翻译 workflow for the EmbedPDF viewer: the one ephemeral mark kind.
  * A translate card is created straight from the selection menu and streams into
- * the open card. It never auto-closes — the reader dismisses it explicitly
- * (hide / delete), so this cluster owns the whole run lifecycle
+ * the open card. It never auto-closes — the reader dismisses it explicitly,
+ * so this cluster owns the whole run lifecycle
  * (`translateStreaming`, its cancel token, its error chrome) plus the record
  * write to `marks/<id>.json`.
  *
@@ -65,8 +65,6 @@ export type UsePdfSelectionTranslateOptions = {
 	) => PdfTranslateRecord;
 	/** Cards cluster; owned by {@link usePdfCards}. */
 	openCard: (card: ActiveSelectionCard) => void;
-	hideActiveCard: () => void;
-	activeCardRef: RefObject<ActiveSelectionCard | null>;
 	/**
 	 * Single in-flight PDF agent run, shared with the ask cluster. Parent-owned so
 	 * either cluster can cancel the other's session token.
@@ -79,12 +77,12 @@ export type PdfSelectionTranslate = {
 	translateError: string | null;
 	/** Selection-menu action: create the record and start the run. */
 	translateSelection: (anchor: PdfAskAnchor) => void;
-	/** Toggle the saved source marker without affecting an in-flight run. */
+	/** Toggle whether the result survives dismissal, without affecting the run. */
 	toggleTranslatePin: (record: PdfTranslateRecord) => void;
+	/** Discard an unpinned result when its card is dismissed. */
+	discardUnpinnedTranslateOnClose: (id: string) => void;
 	/** Cancel the in-flight run; also wired into {@link usePdfCards}. */
 	stopTranslateSession: () => void;
-	/** Card header delete: drop the record from state + disk and close the card. */
-	deleteTranslateCard: () => void;
 	/** Error card action: open Translate settings. */
 	openTranslateSettings: () => void;
 	/** Per-kind chrome reset for card open / close (wired into `usePdfCards`). */
@@ -100,8 +98,6 @@ export function usePdfSelectionTranslate({
 	setTranslates,
 	upsertTranslate,
 	openCard,
-	hideActiveCard,
-	activeCardRef,
 	activeSessionRef,
 }: UsePdfSelectionTranslateOptions): PdfSelectionTranslate {
 	const { t } = useTranslation("viewer");
@@ -113,26 +109,14 @@ export function usePdfSelectionTranslate({
 	const translateUnsubsRef = useRef<UnlistenFn[] | null>(null);
 	/** True once the viewer unmounts; guards runs accepted after teardown. */
 	const translateDisposedRef = useRef(false);
-	/** Invalidates callbacks after deletion or when a new selection starts. */
+	/** Invalidates callbacks after a temporary result is dismissed or replaced. */
 	const translateGenerationRef = useRef(0);
-	/** Serialize writes per record so late pin toggles cannot overwrite newer state. */
+	/** The run id lets dismissal cancel only the result attached to that card. */
+	const translateRunIdRef = useRef<string | null>(null);
+	/** Unpinned results are temporary and are cleaned up if the viewer unmounts. */
+	const temporaryTranslateIdsRef = useRef(new Set<string>());
+	/** Serialize writes and removals so late pin toggles cannot win races. */
 	const pendingWritesRef = useRef(new Map<string, Promise<void>>());
-
-	// Closing the viewer must not strand the run's IPC listeners (or the run
-	// itself): terminal events never arrive for a hung run, so teardown cannot
-	// rely on the completed/failed handlers alone.
-	useEffect(() => {
-		translateDisposedRef.current = false;
-		return () => {
-			translateGenerationRef.current += 1;
-			disposeAgentRun({
-				disposedRef: translateDisposedRef,
-				unsubsRef: translateUnsubsRef,
-				sessionRef: translateSessionRef,
-				activeSessionRef,
-			});
-		};
-	}, [activeSessionRef]);
 
 	const stopTranslateSession = useCallback(() => {
 		const sid = translateSessionRef.current;
@@ -171,6 +155,43 @@ export function usePdfSelectionTranslate({
 		[paperAbsPath],
 	);
 
+	const removePersistedTranslate = useCallback(
+		(id: string): Promise<void> => {
+			if (!paperAbsPath) return Promise.resolve();
+			const previous = pendingWritesRef.current.get(id);
+			const remove = (previous ?? Promise.resolve())
+				.catch(() => undefined)
+				.then(() => deletePdfTranslate(paperAbsPath, id))
+				.catch(() => undefined);
+			pendingWritesRef.current.set(id, remove);
+			void remove.then(() => {
+				if (pendingWritesRef.current.get(id) === remove) {
+					pendingWritesRef.current.delete(id);
+				}
+			});
+			return remove;
+		},
+		[paperAbsPath],
+	);
+
+	// Closing the viewer must not strand the run's IPC listeners (or the run
+	// itself). Unpinned results are temporary, so remove their sidecars on teardown.
+	useEffect(() => {
+		translateDisposedRef.current = false;
+		return () => {
+			translateGenerationRef.current += 1;
+			disposeAgentRun({
+				disposedRef: translateDisposedRef,
+				unsubsRef: translateUnsubsRef,
+				sessionRef: translateSessionRef,
+				activeSessionRef,
+			});
+			const temporaryIds = [...temporaryTranslateIdsRef.current];
+			temporaryTranslateIdsRef.current.clear();
+			for (const id of temporaryIds) void removePersistedTranslate(id);
+		};
+	}, [activeSessionRef, removePersistedTranslate]);
+
 	const toggleTranslatePin = useCallback(
 		(record: PdfTranslateRecord) => {
 			const current =
@@ -183,9 +204,36 @@ export function usePdfSelectionTranslate({
 				},
 				{ preservePinned: false },
 			);
+			if (next.pinned) temporaryTranslateIdsRef.current.delete(next.id);
+			else temporaryTranslateIdsRef.current.add(next.id);
 			void persistTranslate(next);
 		},
 		[translatesRef, upsertTranslate, persistTranslate],
+	);
+
+	const discardUnpinnedTranslateOnClose = useCallback(
+		(id: string) => {
+			const record = translatesRef.current.find((item) => item.id === id);
+			if (record?.pinned) return;
+
+			temporaryTranslateIdsRef.current.delete(id);
+			if (translateRunIdRef.current === id) {
+				translateGenerationRef.current += 1;
+				translateRunIdRef.current = null;
+				stopTranslateSession();
+			}
+
+			const remaining = translatesRef.current.filter((item) => item.id !== id);
+			translatesRef.current = remaining;
+			setTranslates(remaining);
+			void removePersistedTranslate(id);
+		},
+		[
+			removePersistedTranslate,
+			setTranslates,
+			stopTranslateSession,
+			translatesRef,
+		],
 	);
 
 	const translateSelection = useCallback(
@@ -203,6 +251,8 @@ export function usePdfSelectionTranslate({
 				quote,
 			});
 			let currentRecord = upsertTranslate(rec);
+			temporaryTranslateIdsRef.current.add(rec.id);
+			translateRunIdRef.current = rec.id;
 			openCard({ kind: "translate", id: rec.id });
 			setTranslateStreaming(true);
 			setTranslateError(null);
@@ -219,6 +269,9 @@ export function usePdfSelectionTranslate({
 				});
 				setTranslateStreaming(false);
 				setTranslateError(null);
+				if (translateRunIdRef.current === rec.id) {
+					translateRunIdRef.current = null;
+				}
 				void persistTranslate(currentRecord);
 				return true;
 			};
@@ -255,6 +308,9 @@ export function usePdfSelectionTranslate({
 					});
 					setTranslateStreaming(false);
 					setTranslateError(message);
+					if (translateRunIdRef.current === rec.id) {
+						translateRunIdRef.current = null;
+					}
 				},
 				stopStreaming: () => {
 					if (isCurrentRun()) setTranslateStreaming(false);
@@ -274,42 +330,13 @@ export function usePdfSelectionTranslate({
 		],
 	);
 
-	const deleteTranslateCard = useCallback(() => {
-		const id =
-			activeCardRef.current?.kind === "translate"
-				? activeCardRef.current.id
-				: null;
-		translateGenerationRef.current += 1;
-		stopTranslateSession();
-		if (id) {
-			const pendingWrite = pendingWritesRef.current.get(id);
-			const remaining = translatesRef.current.filter((r) => r.id !== id);
-			translatesRef.current = remaining;
-			setTranslates(remaining);
-			if (paperAbsPath) {
-				// A completed result may still be writing; delete after that write.
-				void (pendingWrite ?? Promise.resolve()).then(() =>
-					deletePdfTranslate(paperAbsPath, id),
-				);
-			}
-		}
-		hideActiveCard();
-	}, [
-		paperAbsPath,
-		stopTranslateSession,
-		hideActiveCard,
-		activeCardRef,
-		setTranslates,
-		translatesRef,
-	]);
-
 	return {
 		translateStreaming,
 		translateError,
 		translateSelection,
 		toggleTranslatePin,
+		discardUnpinnedTranslateOnClose,
 		stopTranslateSession,
-		deleteTranslateCard,
 		openTranslateSettings,
 		clearTranslateError,
 	};

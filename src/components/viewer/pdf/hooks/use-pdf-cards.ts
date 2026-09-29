@@ -56,8 +56,8 @@ export type UsePdfCardsOptions = {
 	/** Cluster-owned chrome reset for the card being opened (ask / translate errors). */
 	onCardOpen: (card: ActiveSelectionCard) => void;
 	/**
-	 * Cluster-owned chrome reset for the card being closed: discard an empty ask
-	 * draft, clear per-kind errors, close the note editor.
+	 * Cluster-owned cleanup for the card being closed: discard an empty ask draft
+	 * or an unpinned translate, clear per-kind errors, close the note editor.
 	 */
 	onCardClose: (card: ActiveSelectionCard | null) => void;
 	/** Cancel an in-flight translate run when its card is replaced. */
@@ -261,10 +261,12 @@ export function usePdfCards({
 			cancelHoverHide();
 			cardHoverSurfaceRef.current = true;
 			scrollTravelRef.current = 0;
+			const previousCard = activeCardRef.current;
 			if (
-				activeCardRef.current?.kind === "translate" &&
-				(card.kind !== "translate" || card.id !== activeCardRef.current.id)
+				previousCard?.kind === "translate" &&
+				(card.kind !== "translate" || card.id !== previousCard.id)
 			) {
+				onCardClose(previousCard);
 				stopTranslateSession();
 			}
 			setActiveCard(card);
@@ -281,6 +283,7 @@ export function usePdfCards({
 		[
 			cancelHoverHide,
 			cardHoverSurfaceRef,
+			onCardClose,
 			onCardOpen,
 			placeActiveCard,
 			placeActiveCardWithRetry,
