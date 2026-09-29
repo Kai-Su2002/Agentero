@@ -2,8 +2,9 @@
   <img src="docs/assets/hero.png" alt="Agentero" width="100%" />
 </p>
 
+<h3 align="center">为人与 Agent 协作而生的一站式科研工作台</h3>
+
 <p align="center">
-  <strong>面向 Agent 协同的本地优先科研工作台</strong><br/>
   保留人类舒适的 PDF 阅读习惯，为模型提供纯净的结构化上下文；文献、笔记与交互记录统一沉淀于本地。
 </p>
 

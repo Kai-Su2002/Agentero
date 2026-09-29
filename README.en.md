@@ -2,10 +2,9 @@
   <img src="docs/assets/hero.png" alt="Agentero" width="100%" />
 </p>
 
-<h1 align="center">Agentero</h1>
+<h3 align="center">An All-in-One Research Workbench Built for Human–Agent Collaboration</h3>
 
 <p align="center">
-  <strong>A Local-First Research Workbench for Human–Agent Collaboration</strong><br/>
   Keep the PDF reading experience humans love, while giving models clean, structured context; papers, notes, and interaction records all stay on your local machine.
 </p>
 
