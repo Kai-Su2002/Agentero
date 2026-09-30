@@ -30,7 +30,7 @@
 | 目标语言 | 只映射可达值：`zh-CN` → Chinese，`en` → English，防御性 `ui` → English，未知/`auto`/空 → English。上限由 `TR_TARGETS` 决定，模型侧的 37 语言见 [builtin-provider.md](builtin-provider.md) §支持语言 |
 | 无 key | `commands.rs` 在任何 `.await` 前返回 `AppError::domain(ERR_NO_BUILTIN_KEY)`（`translate.no_builtin_key`），不放一个无法认证的请求出去 |
 | 列表归属 | `"agentero"` 既不在 Rust `FREE_PROVIDERS`（CLI 用它门控 `--provider` 且以 `api_key: None` 调用）也不在 `COMMERCIAL_PROVIDERS`（驱动 WebView 凭证卡片）。**但前端 `FreeTranslateProviderId` / `FREE_MT_PROVIDER_IDS` 含它**——借此复用无 key 管线且不渲染凭证卡片；两份清单刻意相反，改一份要想到另一份 |
-| 探测 | `probeFreeMtProviders` 显式过滤掉 `agentero`（探测它会真发一次翻译请求）；可用性只来自 `builtin_provider_status` |
+| 探测 | `probeFreeMtProviders` 现已含 `agentero`（探测会真的发一次 "Hi" 翻译请求，顺带验证网关连通）；`translate-pane.tsx` 在 `builtin_provider_status` 报不可用时跳过它——那时探测只会确定性复现 no-key 错误 |
 
 实现：`crates/agentero-core/src/features/translate/sources/hunyuan_mt.rs`；凭证解析 `src-tauri/src/features/translate/commands.rs` + `src-tauri/src/features/system/builtin/`。限制与未决项见 [builtin-provider.md](builtin-provider.md) §限制与后续。
 
