@@ -75,6 +75,7 @@ const KIND_ICONS: Partial<Record<BackgroundTaskKind, BackgroundTaskIcon>> = {
 	recognizeMetadata: "scan",
 	latexCompile: "fileCode",
 	paperRead: "read",
+	nodeInstall: "download",
 };
 
 function taskIcon(task: BackgroundTask | undefined): BackgroundTaskIcon {

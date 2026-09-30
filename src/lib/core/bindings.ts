@@ -66,8 +66,11 @@ export const commands = {
 	/**
 	 *  One-click install of Node.js via the host package manager (winget / brew),
 	 *  then re-probe. Can take several minutes while the installer downloads.
+	 * 
+	 *  `taskId` opts into background progress (`agent-lifecycle:progress`) and
+	 *  cooperative cancel via `agent_lifecycle_cancel`.
 	 */
-	doctorInstallNode: () => typedError<ApiResult<NodeInstallResult_Serialize>, string>(__TAURI_INVOKE("doctor_install_node")),
+	doctorInstallNode: (taskId: string | null) => typedError<ApiResult<NodeInstallResult_Serialize>, string>(__TAURI_INVOKE("doctor_install_node", { taskId })),
 	/**
 	 *  Re-probe every registered Agent over ACP and return classified failures.
 	 *  Can take up to ~30s per slow agent (probes run with limited concurrency).

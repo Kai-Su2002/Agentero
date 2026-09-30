@@ -45,7 +45,7 @@
 
 知识库诊断页调用 Host 的只读 Doctor 报告。检查项各自作为小标题（带一行检测说明），标题行右侧显示 icon + 问题数；模块间用非通栏次要分隔线。列表过长时（双链 / 别名 / 视觉批注）`max-h` 内滚动。视觉批注一节可将旧版 `agent-trace` mark 一键升级为 `visual` v2。
 
-- **主机运行环境**（`doctor_check_host`）：提示性检查 Node.js / npm 可用性（路径与版本）；不依赖 Vault，未打开 Vault 时也显示。不再展示 Codex 登录状态。检查失败时错误写在该分区卡片内，不弹 Toast。
+- **主机运行环境**（`doctor_check_host`）：提示性检查 Node.js / npm 可用性（路径与版本）；不依赖 Vault，未打开 Vault 时也显示。不再展示 Codex 登录状态。检查失败时错误写在该分区卡片内，不弹 Toast。node 或 npm 任一不可用时显示「一键安装 Node.js」（`doctor_install_node`），点击后作为后台任务运行（进度 / 取消在任务面板），安装成功自动重新检测。
 - **网络连通性**（`doctor_check_network`）：按当前全局代理设置并行探测 Baidu / Google / Google Scholar / GitHub / arXiv / Semantic Scholar；一行一个端点，左侧状态点，右侧显示耗时或失败原因；失败时在行内展示原始错误与修复提示。不依赖 Vault，未打开 Vault 时也显示。独立加载，探测期间刷新按钮禁用。
 - **Agent ACP 连通性**（`doctor_check_agents`）：探测前先 `scan_catalog` 自动注册 PATH 上已装的目录 Agent（不必先打开设置 → Agent）；再对每个已注册 Agent 执行 ACP initialize 并写回 registry（Agent 目录页同步刷新）。每个 Agent 以卡片展示：版本在上、路径在下（Agent / ACP / 登录）；失败按原因分类并给出 hint；错误写在卡片内不弹 Toast。探测中显示 shimmer。最长约 30s/Agent，独立加载；探测期间刷新按钮禁用。
 

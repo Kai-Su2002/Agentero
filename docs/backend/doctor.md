@@ -92,6 +92,12 @@ Doctor 聚合本地 Vault 的只读完整性检查，并为论文别名、双链
 
 Codex 登录状态不再放在主机运行环境；改由 Agent 卡片第三行展示（见下）。
 
+`node` 或 `npm` 任一不可用时，该分区显示「一键安装 Node.js」按钮（`doctor_install_node`）：Windows 走 `winget install OpenJS.NodeJS.LTS --silent`，macOS 走 `brew install node`（npm 随 Node 一起装，没有独立的 npm 安装包）；Linux 无单一包管理器且需要 sudo，返回 `no-package-manager`，UI 提示手动安装。
+
+- **后台任务**：安装走与 Agent lifecycle 同一套进度/取消通道——调用方传入 `taskId` 后，Host 通过 `agent-lifecycle:progress` 事件报告进度，取消复用 `agent_lifecycle_cancel`（协作式取消，kill `kill_on_drop` 的安装子进程）。前端 `src/lib/doctor/install-node.ts` 把它包成后台任务行（`kind: nodeInstall`），多分钟的下载不再阻塞调用方 UI。
+- **安装后 PATH**：Windows 安装后合并注册表中的机器 + 用户 PATH 重新探测；`core::process::discover` 的 `WIN_ABS_BIN_DIRS` 额外列出 `C:\Program Files\nodejs`，使已运行的应用无需重启即可解析到新装的 npm。
+- **错误恢复**：Agent 安装/更新因 npm 不在 PATH 失败时（Windows `'npm' is not recognized...` / Unix `command not found` / Host 的 `npm is not available on PATH`），Toast 附带同一「安装 Node.js」动作按钮。
+
 ### Agent ACP 连通性（`doctor_check_agents`）
 
 `agent/doctor_agents.rs` `diagnose_agents`：对 registry 中**每个已注册 Agent**（含 custom）重新执行 ACP initialize 探测（不发 prompt），并分类失败原因。每个诊断额外收集卡片三行字段：

@@ -30,12 +30,21 @@ pub async fn doctor_check_host(
 
 /// One-click install of Node.js via the host package manager (winget / brew),
 /// then re-probe. Can take several minutes while the installer downloads.
+///
+/// `taskId` opts into background progress (`agent-lifecycle:progress`) and
+/// cooperative cancel via `agent_lifecycle_cancel`.
 #[tauri::command]
 #[specta::specta]
 pub async fn doctor_install_node(
+    app: AppHandle,
     registry: State<'_, AgentRegistry>,
+    task_id: Option<String>,
 ) -> Result<ApiResult<NodeInstallResult>, String> {
-    Ok(match install_node(registry.inner()).await {
+    let result = install_node(registry.inner(), Some(&app), task_id.as_deref()).await;
+    if let Some(task_id) = task_id.as_deref() {
+        crate::features::agent::registry::lifecycle::clear_lifecycle_cancel(task_id);
+    }
+    Ok(match result {
         Ok(result) => ApiResult::ok(result),
         Err(error) => map_err(error),
     })

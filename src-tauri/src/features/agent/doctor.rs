@@ -3,11 +3,15 @@ use crate::features::agent::acp::client::{
     effective_local_agent_env, resolve_command_in_agent_env,
 };
 use crate::features::agent::models::{AgentDescriptor, AgentTemplate};
+use crate::features::agent::registry::lifecycle::{
+    emit_lifecycle_progress, lifecycle_cancel_requested,
+};
 use crate::features::agent::registry::{template_info, AgentRegistry};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tauri::AppHandle;
 use tokio::process::Command;
 
 const HOST_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -199,6 +203,68 @@ async fn run_command_with_timeout(
         stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
     })
+}
+
+/// Result of a cancellable package-manager run.
+enum CancellableOutcome {
+    Output(CommandOutput),
+    /// The caller asked to cancel the background task.
+    Cancelled,
+}
+
+/// Run a package manager with progress events and cooperative cancellation.
+///
+/// The child is owned by a spawned task with `kill_on_drop`, so aborting the
+/// task on cancel drops (and therefore kills) the installer process.
+async fn run_installer_cancellable(
+    path: &Path,
+    args: &[String],
+    environment: &HashMap<String, String>,
+    app: Option<&AppHandle>,
+    task_id: Option<&str>,
+    phase: &str,
+) -> Result<CancellableOutcome, String> {
+    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut command = diagnostic_command(path, &arg_refs);
+    command.env_clear().envs(environment).kill_on_drop(true);
+    let mut joined = tokio::spawn(async move { command.output().await });
+    let started = Instant::now();
+    let mut last_emit = Instant::now() - Duration::from_secs(1);
+    loop {
+        tokio::select! {
+            result = &mut joined => {
+                let output = result
+                    .map_err(|error| format!("installer task failed: {error}"))?
+                    .map_err(|error| format!("failed to start: {error}"))?;
+                return Ok(CancellableOutcome::Output(CommandOutput {
+                    success: output.status.success(),
+                    code: output.status.code(),
+                    stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
+                    stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+                }));
+            }
+            _ = tokio::time::sleep(Duration::from_millis(150)) => {
+                if task_id.is_some_and(lifecycle_cancel_requested) {
+                    joined.abort();
+                    return Ok(CancellableOutcome::Cancelled);
+                }
+                if started.elapsed() >= INSTALL_TIMEOUT {
+                    joined.abort();
+                    return Err(format!("timed out after {}s", INSTALL_TIMEOUT.as_secs()));
+                }
+                if last_emit.elapsed() >= Duration::from_millis(750) {
+                    let elapsed_secs = started.elapsed().as_secs().min(30) as u8;
+                    emit_lifecycle_progress(
+                        app,
+                        task_id,
+                        phase,
+                        Some((5 + elapsed_secs * 2).min(65)),
+                    );
+                    last_emit = Instant::now();
+                }
+            }
+        }
+    }
 }
 
 fn first_output_line(output: &CommandOutput) -> Option<String> {
@@ -512,7 +578,15 @@ fn refresh_path_from_registry(_environment: &mut HashMap<String, String>) {}
 /// a fresh host probe. Linux is intentionally excluded: it has no single
 /// package manager and installs need sudo, so the UI falls back to manual
 /// guidance there.
-pub async fn install_node(registry: &AgentRegistry) -> Result<NodeInstallResult, AppError> {
+///
+/// `app` / `task_id` surface progress and cooperative cancel
+/// (`agent_lifecycle_cancel`) through the shared Agent lifecycle channel; both
+/// the Doctor button and the npm-not-found toast use the background runner.
+pub async fn install_node(
+    registry: &AgentRegistry,
+    app: Option<&AppHandle>,
+    task_id: Option<&str>,
+) -> Result<NodeInstallResult, AppError> {
     let descriptor = codex_descriptor(registry)?;
     let mut environment = effective_local_agent_env(&descriptor);
 
@@ -531,17 +605,29 @@ pub async fn install_node(registry: &AgentRegistry) -> Result<NodeInstallResult,
             "resolved {installer} but failed to start it: {error}"
         ))
     })?;
-    let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-    let install_error =
-        match run_command_with_timeout(&path, &arg_refs, &environment, INSTALL_TIMEOUT).await {
-            Ok(output) if output.success => None,
-            Ok(output) => Some(format!(
-                "{} install failed: {}",
-                installer,
-                first_output_line(&output).unwrap_or_else(|| "no output".to_string())
-            )),
-            Err(detail) => Some(format!("{installer} install failed: {detail}")),
-        };
+    let install_error = match run_installer_cancellable(
+        &path,
+        &args,
+        &environment,
+        app,
+        task_id,
+        "agent-lifecycle-install",
+    )
+    .await
+    {
+        // Propagate user-initiated cancel as the stable cancel message so the
+        // UI suppresses the error toast and marks the task cancelled.
+        Ok(CancellableOutcome::Cancelled) => {
+            return Err(AppError::message("background task cancelled"));
+        }
+        Ok(CancellableOutcome::Output(output)) if output.success => None,
+        Ok(CancellableOutcome::Output(output)) => Some(format!(
+            "{} install failed: {}",
+            installer,
+            first_output_line(&output).unwrap_or_else(|| "no output".to_string())
+        )),
+        Err(detail) => Some(format!("{installer} install failed: {detail}")),
+    };
     let outcome = match install_error {
         Some(_) => NodeInstallOutcome::Failed,
         None => NodeInstallOutcome::Installed,
