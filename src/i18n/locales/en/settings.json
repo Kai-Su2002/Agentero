@@ -386,6 +386,7 @@
 			"label": "Default service",
 			"agentero": "Agentero built-in",
 			"deeplx": "DeepLX",
+			"cnki": "CNKI Translate",
 			"huoshanweb": "Volcengine Web",
 			"tencenttransmart": "Tencent Transmart",
 			"googleapi": "Google Translate (API)",
@@ -479,6 +480,8 @@
 		},
 		"providerConfig": {
 			"section": "Provider settings",
+			"sectionHint": "Paddle or MinerU is recommended. Other OpenAI-compatible services are collapsed under Other below.",
+			"other": "Other providers",
 			"providerName": {
 				"paddle": "Paddle",
 				"mineru": "MinerU",
@@ -579,7 +582,8 @@
 				"installing": "Installing…",
 				"tooltip": "Install the Node.js LTS through your system package manager (winget or Homebrew)",
 				"hint": "Some ACP Agents need Node.js and npm on PATH. Install the LTS via your system package manager, then re-detect.",
-				"noPackageManager": "No supported package manager found. Install Node.js manually from nodejs.org, then re-detect."
+				"noPackageManager": "No supported package manager found. Install Node.js manually from nodejs.org, then re-detect.",
+				"success": "Node.js installed. Retry the Agent install."
 			}
 		},
 		"network": {

@@ -386,6 +386,7 @@
 			"label": "默认服务",
 			"agentero": "Agentero 内置",
 			"deeplx": "DeepLX",
+			"cnki": "CNKI 翻译助手",
 			"huoshanweb": "火山翻译 Web",
 			"tencenttransmart": "腾讯交互翻译",
 			"googleapi": "Google 翻译（API）",
@@ -479,6 +480,8 @@
 		},
 		"providerConfig": {
 			"section": "服务商配置",
+			"sectionHint": "推荐优先配置 Paddle 或 MinerU；其他 OpenAI 兼容服务见下方「其他」。",
+			"other": "其他服务商",
 			"providerName": {
 				"paddle": "Paddle",
 				"mineru": "MinerU",
@@ -579,7 +582,8 @@
 				"installing": "正在安装…",
 				"tooltip": "通过系统包管理器（winget 或 Homebrew）安装 Node.js LTS",
 				"hint": "部分 ACP Agent 需要 PATH 中的 Node.js 与 npm。可通过系统包管理器安装 LTS 版本，安装完成后重新检测。",
-				"noPackageManager": "未找到受支持的系统包管理器，请前往 nodejs.org 手动安装 Node.js，然后重新检测。"
+				"noPackageManager": "未找到受支持的系统包管理器，请前往 nodejs.org 手动安装 Node.js，然后重新检测。",
+				"success": "Node.js 安装完成，请重试安装 Agent。"
 			}
 		},
 		"network": {

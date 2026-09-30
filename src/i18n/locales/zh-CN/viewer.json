@@ -25,11 +25,13 @@
 		"exportAnnotatedPdf": "导出带批注的 PDF",
 		"exportingAnnotatedPdf": "正在导出带批注的 PDF…",
 		"exportAnnotatedPdfFailed": "导出带批注的 PDF 失败",
+		"exportAnnotatedPdfSaved": "已导出带批注的 PDF",
 		"exportDesktopOnly": "导出功能仅在桌面端可用",
 		"layout": {
 			"unavailable": "版面分析尚未就绪。",
 			"preparingModel": "正在准备版面模型…",
-			"failed": "版面分析失败"
+			"failed": "版面分析失败",
+			"openSettings": "打开解析设置"
 		},
 		"layoutTranslate": {
 			"start": "全文翻译",
@@ -201,8 +203,10 @@
 		"editComment": "编辑批注",
 		"translateTitle": "翻译",
 		"translating": "翻译中…",
-		"translateHide": "收起",
-		"translateDelete": "删除",
+		"translateHide": "关闭卡片",
+		"translatePin": "钉住",
+		"translateUnpin": "取消钉住",
+		"translateUpdateFailed": "无法更新译文。",
 		"translatePinAria": "打开翻译：{{preview}}",
 		"translateNoAgent": "没有可用的 Agent 进行翻译，请先在设置 → Agent 中配置。",
 		"translateOpenSettings": "打开翻译设置",

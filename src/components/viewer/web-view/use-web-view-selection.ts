@@ -339,7 +339,6 @@ export function useWebViewSelection({
 		deleteAsk: askCtl.deleteAsk,
 		stopAskStreaming: askCtl.stopAskStreaming,
 		hideTranslate,
-		deleteTranslateCard: hideTranslate,
 		openTranslateSettings: () => openSettingsWindow("translate"),
 	};
 }

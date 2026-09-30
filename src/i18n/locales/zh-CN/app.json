@@ -234,6 +234,7 @@
 		"layoutAnalysis": "解析插图、表格、文字",
 		"pdfParse": "解析 PDF 正文",
 		"parseRefs": "解析参考文献",
+		"openLayoutSettings": "打开解析设置",
 		"latexCompile": "编译 LaTeX",
 		"downloadBytes": "{{phase}} · {{downloaded}} / {{total}}",
 		"downloadBytesUnknown": "{{phase}} · {{downloaded}}",
@@ -258,5 +259,18 @@
 		"connector": "正在保存 Connector 附件",
 		"connectorComplete": "Connector 附件已就绪",
 		"connectorFailed": "Connector 附件失败"
+	},
+	"reminders": {
+		"dismiss": "不再提醒",
+		"layoutLocalModel": {
+			"title": "版面分析使用本地模型",
+			"description": "插图、表格、公式由本机模型检测，会额外占用内存与 CPU，内存较小的机器可能变慢。可在设置中改用云端服务商。",
+			"openSettings": "打开版面解析设置"
+		},
+		"networkProxy": {
+			"title": "网络请求失败",
+			"description": "如果访问受限，可在设置中配置代理或 GitHub 镜像后重试。",
+			"openSettings": "打开网络设置"
+		}
 	}
 }

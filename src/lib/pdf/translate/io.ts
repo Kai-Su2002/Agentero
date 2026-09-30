@@ -40,6 +40,7 @@ export function createTranslateRecord(input: {
 		updatedAt: now,
 		page: Math.max(1, Math.floor(input.page)),
 		rects: input.rects,
+		pinned: false,
 	};
 	if (input.quote?.trim()) rec.quote = input.quote.trim();
 	if (input.result?.trim()) rec.result = input.result.trim();

@@ -63,6 +63,7 @@ describe("translate services registry", () => {
 		expect(isTranslateProviderId("deepl")).toBe(true);
 		expect(isCommercialTranslateProvider("deepl")).toBe(true);
 		expect(isFreeMtProvider("deeplx")).toBe(true);
+		expect(isFreeMtProvider("cnki")).toBe(true);
 		expect(isFreeMtProvider("agent")).toBe(false);
 		expect(isFreeMtProvider("deepl")).toBe(false);
 	});
@@ -73,6 +74,7 @@ describe("translate services registry", () => {
 		expect(ids).toContain("tencenttransmart");
 		expect(ids).toContain("huoshanweb");
 		expect(ids).toContain("deeplx");
+		expect(ids).toContain("cnki");
 		expect(ids).toContain("deepl");
 		expect(ids).toContain("azure");
 		expect(ids).toContain("googleCloud");

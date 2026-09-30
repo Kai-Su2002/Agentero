@@ -99,7 +99,7 @@
 - `finish_reason` 为 `length` / `max_tokens` / `content_filter` 时报「translation incomplete…retry with a smaller chunk」。
 - `"agentero"` 刻意**不在** Rust 的 `FREE_PROVIDERS` 里（CLI `cli/src/commands/translate.rs` 用它门控 `--provider`，随后以 `api_key: None` 调用，会让 CLI 接受一个无法认证的 provider），也**不在** `COMMERCIAL_PROVIDERS` 里（那个列表驱动 WebView 凭证卡片，内置 provider 不该渲染任何卡片）。
 - **两份「免费 provider」清单刻意不一致**：前端 `FreeTranslateProviderId` / `FREE_MT_PROVIDER_IDS`（`src/lib/translate/types.ts`）**含** `agentero`——这样它复用无 key 引擎的管线、且因为不是 `CommercialTranslateProviderId`，`translate-pane.tsx` 不会为它渲染凭证卡片，`COMMERCIAL_MT_DEFAULT_BASE_URLS` / `COMMERCIAL_MT_DOCS_URLS` 这两个 total Record 也不需要新条目。Rust 的 `FREE_PROVIDERS` **不含**它（理由见上条）。改任何一份清单时都要意识到另一份是反的。
-- 探测：`probeFreeMtProviders` 显式把 `agentero` 过滤掉（探测它会真的发一次翻译请求），可用性只来自 `builtin_provider_status`。
+- 探测：`probeFreeMtProviders` 现已含 `agentero`（探测会真的发一次 "Hi" 翻译请求，顺带验证网关连通）；`translate-pane.tsx` 在 `builtin_provider_status` 报不可用时跳过它——那时探测只会确定性复现 no-key 错误。
 
 ### 支持语言（Hunyuan-MT，37）
 

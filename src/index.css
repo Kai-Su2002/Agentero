@@ -1089,3 +1089,34 @@ body.agentero-dockview-dragging * {
 ::highlight(agentero-annotation-navigation) {
 	background-color: #3b82f650;
 }
+
+/*
+ * Config reminders (#658): Sonner lays action buttons out in the same flex row
+ * as the text, which squeezes a long description into a narrow column. Stack
+ * the content above a right-aligned button row for `cn-reminder-toast` toasts.
+ * Specificity is raised past Sonner's own rules so source order does not matter.
+ */
+[data-sonner-toast][data-styled="true"].cn-reminder-toast {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	align-items: center;
+	column-gap: 6px;
+	row-gap: 10px;
+	--toast-button-margin-start: 0;
+	--toast-button-margin-end: 0;
+}
+[data-sonner-toast][data-styled="true"].cn-reminder-toast [data-content] {
+	grid-column: 1 / -1;
+	grid-row: 1;
+}
+[data-sonner-toast][data-styled="true"].cn-reminder-toast [data-icon] {
+	display: none;
+}
+[data-sonner-toast][data-styled="true"].cn-reminder-toast [data-cancel] {
+	grid-column: 2;
+	grid-row: 2;
+}
+[data-sonner-toast][data-styled="true"].cn-reminder-toast [data-action] {
+	grid-column: 3;
+	grid-row: 2;
+}

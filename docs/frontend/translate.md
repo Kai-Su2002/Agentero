@@ -6,9 +6,10 @@
 
 Settings → **翻译**：
 
-- **默认服务** 下拉：内置 provider（构建里注入了 key 时）、免费 MT 与 Agent 始终可选；商用仅列出已配置者。打开下拉时对免费 MT 与已配置商用并行 probe。
-- **内置 provider**（id `agentero`）：凭证由构建期环境变量编入 Host，卡片**没有任何凭证字段**（无 key / baseUrl / model）。可用性来自 Host 命令 `builtin_provider_status` 的 `available`，**不参与 probe**（探测它会真的发一次翻译请求）；不可用时选项禁用或隐藏，当前已选中它时仍保留在列表里。构建里没有 key 时选中它会拿到 `translate.no_builtin_key` 标记，由 `displayTranslateError`（`src/lib/translate/errors.ts`，仿 `displayAgentError`：子串匹配标记 → `i18n.t(...)`，否则原样返回）在划词翻译与全文翻译的 `notifyError` 调用点转成文案，不裸露标记串。标记能到前端是因为 `invokeTranslateText`（`src/lib/translate/api.ts`）只对**已知**翻译标记逐字抛出 `error.code`，其余情况抛 Host 的人类可读 `message`——`AppError::code()` 还会返回 `io` / `json` / `sqlite` 等通用码，按"非 `message` 即标记"判断迟早会把裸码弹给用户。注入 key 的构建里它是新装默认服务——新装没有 `settings.json`，Host `read_file` 返回 `AppSettings::default()`，所以**首次安装的默认值由 Rust `default_translate_provider()` 决定**；前端 `DEFAULT_TRANSLATE_SETTINGS` 只在浏览器 dev（不可能有 key）里生效。
+- **默认服务** 下拉：内置 provider（构建里注入了 key 时）、免费 MT 与 Agent 始终可选；商用仅列出已配置者。打开下拉时对内置（可用时）、免费 MT 与已配置商用并行 probe。
+- **内置 provider**（id `agentero`）：凭证由构建期环境变量编入 Host，卡片**没有任何凭证字段**（无 key / baseUrl / model）。可见性来自 Host 命令 `builtin_provider_status` 的 `available`；可用时与其他免费引擎一样参与 probe（真的发一次 "Hi" 翻译请求，顺带验证网关连通），不可用（构建里没有 key）时不 probe、选项禁用或隐藏，当前已选中它时仍保留在列表里。构建里没有 key 时选中它会拿到 `translate.no_builtin_key` 标记，由 `displayTranslateError`（`src/lib/translate/errors.ts`，仿 `displayAgentError`：子串匹配标记 → `i18n.t(...)`，否则原样返回）在划词翻译与全文翻译的 `notifyError` 调用点转成文案，不裸露标记串。标记能到前端是因为 `invokeTranslateText`（`src/lib/translate/api.ts`）只对**已知**翻译标记逐字抛出 `error.code`，其余情况抛 Host 的人类可读 `message`——`AppError::code()` 还会返回 `io` / `json` / `sqlite` 等通用码，按"非 `message` 即标记"判断迟早会把裸码弹给用户。注入 key 的构建里它是新装默认服务——新装没有 `settings.json`，Host `read_file` 返回 `AppSettings::default()`，所以**首次安装的默认值由 Rust `default_translate_provider()` 决定**；前端 `DEFAULT_TRANSLATE_SETTINGS` 只在浏览器 dev（不可能有 key）里生效。
 - 目标语言、划词自动翻译；开启后，PDF 选区文本提取完成即自动启动翻译并打开结果卡，关闭时仍可从选区菜单手动翻译。
+- **CNKI 翻译助手**（免费引擎，id `cnki`）：知网 dict.cnki.net 逆向接口，学术术语翻译质量好、校园网可用，但仅**中英互译**；超过 800 字符自动按句切分串行翻译（块间约 2s 防风控，长文耗时相应拉长）；CNKI 边缘会随机直接断连（非 HTTP 错误），Host 复用带 cookie 的浏览器客户端（第一次成功响应后即持有 CNKI 的放行 cookie）并对每个请求自动退避重试、无需用户干预，仅连续失败才报错；触发验证码时按提示到 dict.cnki.net 手动过一次验证码后重试；海外 IP 通常不可用（404）。详见 [../backend/translate.md](../backend/translate.md)。
 - **商用 API** 卡片仅填写 key / endpoint / region / model；点「确定」后：
   - 将 API key 写入 Host `settings.json`（Unix 权限 `0600`）；WebView 只保留同长度 `*` 掩码，不再回显明文。
   - Host `settings_get` / `settings:changed` 对 key 按字符 redact 为 `*`；`settings_set` 收到纯 `*` 串时保留原密钥。
@@ -23,8 +24,10 @@ Settings → **翻译**：
 
 - PDF 划词菜单「翻译」（首要入口）。
   - 结果卡贴合选区锚点（`trackPin`），PDF 滚轮滚动时随页重定位。
-  - 删除翻译卡后，迟到的翻译结果不会重新写回；已经开始的保存完成后才删除对应文件。
-  - 翻译完成后若未悬停结果卡 / 原文黄高亮 / 页边针，约 700ms 后自动收起；流式输出期间保持可见。隐藏后仍可从页边针重新打开。原文浅黄高亮在卡片收起后保留。
+  - 通过卡片关闭按钮、`Esc` 或点击卡片外部可收起；选区锚点随滚动累计移动超过 200px 时也会收起卡片。关闭未钉住的卡片会丢弃译文；如果仍在生成，会尝试取消 Agent 任务并忽略迟到结果。已经开始的保存会先写完，再删除对应文件。已钉住的译文关闭卡片后仍会保留。原文浅黄高亮在卡片收起后保留。
+  - 有本地论文路径时，打开期间的结果和 `pinned` 状态写入 `{paper}/marks/<id>.json`；新译文默认未钉住，旧 JSON 缺少 `pinned` 时按已钉住读取，保留升级前的页边入口，不涉及 SQLite 迁移。
+  - 磁盘刷新保留正在生成、等待保存或删除的本地译文，避免焦点切换或外部文件更新覆盖当前结果；刷新期间发生的本地修改也优先保留。保存或删除失败通过 Toast 提示，并保留当前内存状态。
+  - 卡片在本地存储路径和选区定位都有效时显示钉住开关，提示为「钉住 / 取消钉住」。钉住会同时保留译文记录和页边重开入口；取消钉住会立即移除页边标记，但卡片仍保持打开，关闭后才丢弃译文。卡片关闭后没有单独的删除按钮。每次翻译建立独立记录，流式更新不会清掉当前钉住状态。同一位置的页边标记会纵向错开；多行选区的标记锚定在选区末行，空间不足时仍保持在页面内。
 - PDF **全文翻译**（工具栏 Languages，在视觉批注旁）：
   - 依赖版面分析 + PDF 文字层；翻译 `text` / `abstract` / `header` / `figure_title`（图题·表题）区域（score ≥ 30%）。
   - **不翻译**：算法框及其内部文字；`reference` / `reference_content` 文献条目；“References / Bibliography / 参考文献” 标题；侧栏 `aside_text`。
@@ -61,7 +64,7 @@ Settings → **翻译**：
 | 类型 | 路径 |
 |---|---|
 | 内置 provider | Host `translate_text`（`agentero` → Hunyuan-MT，构建期凭证，无凭证卡片） |
-| 免费 MT | Host `translate_text`（腾讯交互翻译 / 火山 Web / DeepLX / Google gtx） |
+| 免费 MT | Host `translate_text`（腾讯交互翻译 / 火山 Web / DeepLX / 知网 CNKI / Google gtx） |
 | 商用 BYOK | Host `translate_text`（DeepL / Azure / Google Cloud / OpenAI-compatible） |
 | Agent | `agent_run_once` + 翻译 prompt；同一篇文献的多次翻译复用同一个 ACP provider session |
 

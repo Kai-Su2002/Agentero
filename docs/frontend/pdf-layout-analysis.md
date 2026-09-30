@@ -109,6 +109,8 @@ LayoutAnalysisPluginPackage: {
 
 设置 →「版面解析」可选择检测后端（`settings.layout.backend`），选项由前端注册表 `LAYOUT_PROVIDERS`（`src/lib/pdf/layout/providers.ts`）驱动；下拉只列出本地 + 已配置（apiKey 非空）的 provider，可选项 ≤1 时保留 Select 外观但 disabled、不弹出菜单（正文解析引擎 `parserBackend` 同理，避免换成纯文本导致布局抖动）。**内置 provider（`agentero`）没有 apiKey，因此必须和 `local` 一样豁免这条过滤**，否则它会整个从 `parserBackend` 下拉里消失、用户根本选不到：它改由 Host 可用性（`useBuiltinProviderAvailable`）门控，不可用时**若已被选中仍留在列表里但渲染为 disabled**，而不是凭空消失。凭证卡片一侧由 `isProviderCardConfigurable` 过滤掉没有任何可编辑字段的卡片，所以内置 parser 不会渲染出空卡或只有一个 Confirm 的卡。配置卡里清空 API Key 会立即清除已存密钥（无需点确认）；若当前后端指向该 provider 则回退本地：
 
+凭证卡片区默认只平铺 Paddle / MinerU（推荐路径），OpenAI 兼容这类通用兜底卡片收进默认折叠的「其他服务商」，并用一行提示引导先配置 Paddle / MinerU（issue #656）。解析失败时给出可操作的排查入口：查看器内失败 toast 带「打开解析设置」动作（`use-pdf-layout-run.ts` 的 `notifyLayoutFailure` → `openSettingsWindow("layout")`，带动作时停留 20s）；headless / JobCenter 的 `layoutAnalyze` / `parseBody` / `parseRefs` 失败没有查看器 toast，由后台任务面板补同款 toast（`background-tasks-panel.tsx`，排除手动的 `layoutRun` 以免重复）；上述四类失败行本身也带一个设置跳转按钮。
+
 | 后端 | 值 | 说明 |
 |---|---|---|
 | 本地推理（默认） | `local` | 浏览器内 ONNX PP-DocLayoutV3，完全离线 |
@@ -314,7 +316,7 @@ type PdfLayoutRegion = {
 
 ## 限制与后续
 
-- 实验路径；大模型推理可能卡顿。
+- 实验路径；大模型推理可能卡顿。后端为本地模型时，主窗口每次启动都会弹一次右上角提醒（仅首次运行向导覆盖时暂停；提示本机模型的性能代价，可「打开版面解析设置」或「不再提醒」，见 [settings.md](settings.md) §低频配置提醒）。
 - 不改 PDF 二进制；只写可重建的 `{paper}/source/layout.json`。
 - `layout.json` 只缓存 raw layout，不等同于未来 `agentero-figures.json` / 缩略图资产 sidecar。
 - **模型级整面板误标仍会漏图**（merge 层无法救回，页上没有可用 image/chart 检测）：ViT 附录 Fig 14（注意力图网格被标 `header` 0.91，同框 `image` 仅 0.05）、Transformer 附录 Fig 4（注意力可视化被标 `table` 0.88）。四篇论文（resnet / vit / transformer / swin，单双栏混合）实测图题召回 28/30 ≈ 93%，在容忍范围内；后续如换更强检测模型可回归 `test/pdf-layout-arxiv.test.ts` 复核。

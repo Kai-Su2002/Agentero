@@ -814,7 +814,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
     text: string;
     sourceLang?: string;     // default "auto"
     targetLang: string;      // e.g. "zh-CN" | "en"
-    provider?: string;       // agentero (内置；注入 key 的构建里的默认) | tencenttransmart | huoshanweb | deeplx | googleapi | google | deepl | azure | googleCloud | openaiCompatible
+    provider?: string;       // agentero (内置；注入 key 的构建里的默认) | tencenttransmart | huoshanweb | deeplx | cnki | googleapi | google | deepl | azure | googleCloud | openaiCompatible
     apiKey?: string | null;  // 商用 BYOK；可省略或传同长度 "*" 掩码，Host 从 settings 注入真实密钥。provider 为 agentero 时被 Host 用构建期凭证**覆写**，调用方传什么都无效
     baseUrl?: string | null; // 商用 provider endpoint override（可选）；agentero 同样被覆写
     region?: string | null;  // azure 必填
@@ -824,7 +824,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
   ```
 
 - **返回**：`{ ok: true; data: { text: string; provider: string } }`
-- **约束**：单次约 ≤ 5000 字符（CNKI ≤800）；默认超时约 30s。免费引擎为非官方网页接口，会挂会限流；商用 BYOK 与内置 provider 需要各自的 key（前者用户填，后者构建期注入）。设置页打开默认服务下拉时，对全部免费引擎并行 probe（`timeoutMs=5000`，不含 Agent，也不含内置 provider）。
+- **约束**：单次约 ≤ 5000 字符（CNKI 超 800 字符由 Host 自动按句切分、串行翻译，块间隔约 2s 防风控；仅中英互译）；默认超时约 30s（逐请求计）。免费引擎为非官方网页接口，会挂会限流；商用 BYOK 与内置 provider 需要各自的 key（前者用户填，后者构建期注入）。设置页打开默认服务下拉时，对全部免费引擎并行 probe（`timeoutMs=5000`，不含 Agent；内置 provider 可用时一并探测，不可用即跳过）。
 - **结构化错误**：`translate.no_builtin_key` —— provider 为 `agentero` 但本次构建没有编译进 key（`AppError::domain`，在任何 `.await` 之前返回）。前端按标记转 i18n 文案，不裸露标记串。
 - 内置 provider 的模板、`[[n]]` Host 侧拆分与语言映射见 [builtin-provider.md](builtin-provider.md) §翻译：Hunyuan-MT。
 

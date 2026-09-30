@@ -66,8 +66,11 @@ export const commands = {
 	/**
 	 *  One-click install of Node.js via the host package manager (winget / brew),
 	 *  then re-probe. Can take several minutes while the installer downloads.
+	 * 
+	 *  `taskId` opts into background progress (`agent-lifecycle:progress`) and
+	 *  cooperative cancel via `agent_lifecycle_cancel`.
 	 */
-	doctorInstallNode: () => typedError<ApiResult<NodeInstallResult_Serialize>, string>(__TAURI_INVOKE("doctor_install_node")),
+	doctorInstallNode: (taskId: string | null) => typedError<ApiResult<NodeInstallResult_Serialize>, string>(__TAURI_INVOKE("doctor_install_node", { taskId })),
 	/**
 	 *  Re-probe every registered Agent over ACP and return classified failures.
 	 *  Can take up to ~30s per slow agent (probes run with limited concurrency).
@@ -1496,6 +1499,11 @@ export type AppSettings_Deserialize = {
 	onboardingDone?: boolean,
 	/**  Post-vault feature tour completed or skipped. Default false → auto-start once. */
 	featureTourDone?: boolean,
+	/**
+	 *  Config reminders the user dismissed with "don't remind me again"
+	 *  (`layout-local-model` | `network-proxy`). Unknown ids are dropped on save.
+	 */
+	dismissedReminders?: string[],
 };
 
 export type AppSettings_Serialize = {
@@ -1583,6 +1591,11 @@ export type AppSettings_Serialize = {
 	onboardingDone: boolean,
 	/**  Post-vault feature tour completed or skipped. Default false → auto-start once. */
 	featureTourDone: boolean,
+	/**
+	 *  Config reminders the user dismissed with "don't remind me again"
+	 *  (`layout-local-model` | `network-proxy`). Unknown ids are dropped on save.
+	 */
+	dismissedReminders: string[],
 };
 
 export type AskUserOptionDto = AskUserOptionDto_Serialize | AskUserOptionDto_Deserialize;

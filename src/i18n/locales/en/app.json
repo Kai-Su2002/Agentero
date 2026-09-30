@@ -234,6 +234,7 @@
 		"layoutAnalysis": "Parse figures, tables, and text",
 		"pdfParse": "Parse PDF body",
 		"parseRefs": "Parse references",
+		"openLayoutSettings": "Open analysis settings",
 		"latexCompile": "Compile LaTeX",
 		"downloadBytes": "{{phase}} · {{downloaded}} / {{total}}",
 		"downloadBytesUnknown": "{{phase}} · {{downloaded}}",
@@ -258,5 +259,18 @@
 		"connector": "Saving Connector attachment",
 		"connectorComplete": "Connector attachment ready",
 		"connectorFailed": "Connector attachment failed"
+	},
+	"reminders": {
+		"dismiss": "Don't remind me again",
+		"layoutLocalModel": {
+			"title": "Layout analysis runs a local model",
+			"description": "Figures, tables, and formulas are detected on this device with a local model, which uses extra memory and CPU. Low-memory machines may feel slow — switch to a cloud provider in settings if needed.",
+			"openSettings": "Open analysis settings"
+		},
+		"networkProxy": {
+			"title": "Network request failed",
+			"description": "If access is restricted, configure a proxy or GitHub mirror in settings and try again.",
+			"openSettings": "Open network settings"
+		}
 	}
 }

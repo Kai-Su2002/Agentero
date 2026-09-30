@@ -577,6 +577,7 @@ function PdfViewerInner({
 		setThreads,
 		translates,
 		translatesRef,
+		protectedTranslateIdsRef,
 		setTranslates,
 		visualTraces,
 		visualTracesRef,
@@ -654,11 +655,14 @@ function PdfViewerInner({
 
 	/**
 	 * `usePdfCards` must be declared before the ask and translate clusters (both
-	 * open and hide cards), but cards also reset per-kind card chrome and cancel a
-	 * running translate. Those edges go through refs assigned right after each
-	 * hook, so `openCard` / `hideActiveCard` keep their identity.
+	 * open and hide cards), but cards also reset per-kind chrome, discard temporary
+	 * translations, and cancel a replaced translate. Those edges go through refs
+	 * assigned right after each hook, so card lifecycle callbacks stay stable.
 	 */
 	const stopTranslateSessionRef = useRef<() => void>(() => undefined);
+	const discardUnpinnedTranslateOnCloseRef = useRef<(id: string) => void>(
+		() => undefined,
+	);
 	const clearTranslateErrorRef = useRef<() => void>(() => undefined);
 	const clearAskErrorRef = useRef<() => void>(() => undefined);
 	const closeAskChromeRef = useRef<(threadId: string) => void>(() => undefined);
@@ -677,7 +681,10 @@ function PdfViewerInner({
 	const resetChromeForClosedCard = useCallback(
 		(card: ActiveSelectionCard | null) => {
 			if (card?.kind === "ask") closeAskChromeRef.current(card.id);
-			if (card?.kind === "translate") clearTranslateErrorRef.current();
+			if (card?.kind === "translate") {
+				clearTranslateErrorRef.current();
+				discardUnpinnedTranslateOnCloseRef.current(card.id);
+			}
 			closeEditorRef.current();
 		},
 		[],
@@ -713,7 +720,8 @@ function PdfViewerInner({
 		translateStreaming,
 		translateError,
 		translateSelection,
-		deleteTranslateCard,
+		toggleTranslatePin,
+		discardUnpinnedTranslateOnClose,
 		openTranslateSettings,
 		clearTranslateError,
 		stopTranslateSession: stopTranslateSessionImpl,
@@ -723,14 +731,14 @@ function PdfViewerInner({
 		vaultPath,
 		onOpenSettings,
 		translatesRef,
+		protectedTranslateIdsRef,
 		setTranslates,
 		upsertTranslate,
 		openCard,
-		hideActiveCard,
-		activeCardRef,
 		activeSessionRef,
 	});
 	stopTranslateSessionRef.current = stopTranslateSessionImpl;
+	discardUnpinnedTranslateOnCloseRef.current = discardUnpinnedTranslateOnClose;
 	clearTranslateErrorRef.current = clearTranslateError;
 
 	// ---- Ask threads (AI Q&A on a selection, marks/<id>.json) ----
@@ -894,6 +902,19 @@ function PdfViewerInner({
 	clearCrossrefPreviewRef.current = clearCrossrefPreview;
 
 	const { askPinAnchors } = usePdfPinAnchors({ threads });
+	const pinnedTranslates = useStableDerived(
+		() => translates.filter((record) => record.pinned),
+		JSON.stringify(
+			translates
+				.filter((record) => record.pinned)
+				.map((record) => [
+					record.id,
+					record.page,
+					record.rects,
+					record.quote || record.result || "",
+				]),
+		),
+	);
 
 	/**
 	 * Gutter pins per page (1-based). Built once per mark/text change: pin
@@ -906,6 +927,7 @@ function PdfViewerInner({
 				highlights,
 				highlightAnchors,
 				askPinAnchors,
+				translates: pinnedTranslates,
 				visualTraces,
 				pageTextMap,
 				paperTitle,
@@ -914,6 +936,7 @@ function PdfViewerInner({
 			highlights,
 			highlightAnchors,
 			askPinAnchors,
+			pinnedTranslates,
 			visualTraces,
 			pageTextMap,
 			paperTitle,
@@ -1823,8 +1846,13 @@ function PdfViewerInner({
 						streaming: translateStreaming,
 						error: translateError,
 						onOpenSettings: openTranslateSettings,
+						onTogglePin:
+							paperAbsPath && activeTranslate?.rects.length
+								? () => {
+										if (activeTranslate) toggleTranslatePin(activeTranslate);
+									}
+								: undefined,
 						onHide: hideActiveCard,
-						onDelete: deleteTranslateCard,
 					}}
 					visual={{
 						trace: activeVisualTrace,

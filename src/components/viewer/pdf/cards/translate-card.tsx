@@ -1,4 +1,4 @@
-import { MinusIcon, Settings2Icon, Trash2Icon } from "lucide-react";
+import { Pin, PinOff, Settings2Icon, X } from "lucide-react";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { MessageResponse } from "@/components/ai-elements/message";
@@ -16,17 +16,18 @@ type TranslateCardProps = {
 	error: string | null;
 	/** Open Translate settings from an API failure state. */
 	onOpenSettings: () => void;
-	/** Hide card; pin remains for reopen */
+	/** Dismiss the card; unpinned results are discarded on dismissal. */
 	onHide: () => void;
-	/** Delete persisted translate record + pin */
-	onDelete: () => void;
+	/** Whether this result and its source marker survive card dismissal. */
+	pinned?: boolean;
+	/** Toggle whether the result is kept with a persistent source marker. */
+	onTogglePin?: () => void;
 	onPointerEnter?: () => void;
 	onPointerLeave?: () => void;
 };
 
 /**
- * PDF selection translation — shared SelectionCard shell with hide/delete
- * (same persistence model as ask: hide keeps pin, delete removes record).
+ * PDF selection translation — shared SelectionCard shell with dismiss / pin.
  * Content-sized up to a generous cap so long paragraphs read in full; only
  * results that overflow the cap (or the viewport) scroll, with an always
  * visible scrollbar so the overflow is discoverable.
@@ -39,7 +40,8 @@ export function TranslateCard({
 	error,
 	onOpenSettings,
 	onHide,
-	onDelete,
+	pinned = false,
+	onTogglePin,
 	onPointerEnter,
 	onPointerLeave,
 }: TranslateCardProps) {
@@ -76,19 +78,32 @@ export function TranslateCard({
 			preferRight={preferRight}
 			title={t("selection.translateTitle")}
 			ariaLive="polite"
+			onDismiss={onHide}
 			onPointerEnter={onPointerEnter}
 			onPointerLeave={onPointerLeave}
 			actions={[
-				{
-					label: t("selection.translateDelete"),
-					onClick: onDelete,
-					icon: <Trash2Icon className="size-3.5" />,
-					destructive: true,
-				},
+				...(onTogglePin
+					? [
+							{
+								label: t(
+									pinned
+										? "selection.translateUnpin"
+										: "selection.translatePin",
+								),
+								onClick: onTogglePin,
+								icon: pinned ? (
+									<PinOff className="size-3.5" />
+								) : (
+									<Pin className="size-3.5" />
+								),
+								pressed: pinned,
+							},
+						]
+					: []),
 				{
 					label: t("selection.translateHide"),
 					onClick: onHide,
-					icon: <MinusIcon className="size-3.5" />,
+					icon: <X className="size-3.5" />,
 				},
 			]}
 			// Body only constrains flex; the translation owns its own scrollport.

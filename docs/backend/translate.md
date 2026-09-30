@@ -13,8 +13,9 @@
 | OpenAI-compatible endpoint | 要求 Chat Completions 兼容：`POST {baseUrl}/chat/completions`，`Authorization: Bearer <key>`，请求体包含 `model`、两条 `messages` 与 `temperature`；解析 `choices[0].message.content`。设置里的 `baseUrl` 应是根地址（如 `https://api.openai.com/v1`），Host 会自动追加 `/chat/completions` |
 | OpenAI-compatible prompt | `openai_translate_messages`：学术译者 system prompt + 规则块（按意思重组语序、公式/符号/引用/`⟦n⟧` 占位符原样、术语一致、只输出译文、批量保留 `[[n]]`）；`temperature` 0.2。与前端 `buildTranslatePrompt` 保持同步。设置 `translate.customPrompt` 非空时（Host 在 `translate_text` 命令内注入 `custom_prompt`，WebView 调用方无感）替换 system message（`{{targetLang}}`/`{{sourceLang}}` 插值，映射与前端 `targetLangDisplayName` 一致）；`[[n]]` 批量规则与 `Text:` 原文仍由 Host 组装 |
 | 密钥存储 | BYOK：明文写在用户本机 `settings.json`（Unix `0600`）；`settings_get` / 广播按字符 redact 为 `*`；`settings_set` 对纯 `*` 串 merge 保留原值。内置 provider 的 key **不落 `settings.json`**，编译期编入二进制、只在 Host 进程内使用（见 [builtin-provider.md](builtin-provider.md) §密钥边界） |
+| 免费 CNKI（`cnki`） | 知网翻译助手 `dict.cnki.net/fyzs-front-api` 逆向接口（同 zotero-pdf-translate）：`words` 字段 AES-128-ECB 加密（key 内置）+ `Token` 头（4 分钟缓存，失败即失效重取）。仅**中英互译**（接口自动判向）；单请求 ≤ 800 字符，超限由 Host 按句切分串行翻译、块间约 2s 防风控。CNKI 边缘对**未携带其下发 `SF_cookie_97` 放行 cookie** 的请求会随机直接 RST（无 HTTP 状态，reqwest 侧表现为 `error sending request for url`，实测约半数）——这正是「探测是好的、真实翻译却报错」的原因：zotero 插件借 Firefox 自动带 cookie，裸 reqwest 不带。Host 改用**进程级共享、带 cookie jar 的浏览器 UA 客户端**（`cookie_store(true)`，getToken 与各翻译块共用），第一次成功响应后即持有该 cookie，之后稳定；每请求仍带线性退避重试（最多 4 次）兜底冷启动，最终失败的错误串会带上 reqwest 的完整 source chain 便于定位；`code 401` 视为 token 失效，清缓存后重取并重试该块；触发验证码（`data.isInputVerificationCode` 或 `code 1004`「检索过于频繁」）时报错引导用户到 dict.cnki.net 过验证码；海外 IP 常 404。**刻意不进 `ZH_RACE_PROVIDERS`**（竞速会打爆风控且分句路径慢）。实现 `crates/agentero-core/src/features/translate/sources/cnki.rs` |
 | 导入摘要 `free_mt_to_zh` | **并行竞速** 腾讯 / 火山 / DeepLX，取最先成功；单引擎 5s（`FREE_MT_ZH_TIMEOUT_MS`）；全失败则不写翻译。**内置 provider 不参与这条竞速**：`ZH_RACE_PROVIDERS` 只含免费引擎，导入摘要仍走非官方免费接口 |
-| 设置页探测 | 前端 5s / 引擎；内置 provider 不参与探测，可用性直接来自 `builtin_provider_status` |
+| 设置页探测 | 前端 5s / 引擎，不含 Agent；内置 provider 可用时一并探测（真发一次 "Hi" 翻译请求，顺带验证网关连通），不可用时跳过——那只会在下方确定性报 no-key 错误 |
 
 ## 内置 provider（Hunyuan-MT）
 
@@ -29,7 +30,7 @@
 | 目标语言 | 只映射可达值：`zh-CN` → Chinese，`en` → English，防御性 `ui` → English，未知/`auto`/空 → English。上限由 `TR_TARGETS` 决定，模型侧的 37 语言见 [builtin-provider.md](builtin-provider.md) §支持语言 |
 | 无 key | `commands.rs` 在任何 `.await` 前返回 `AppError::domain(ERR_NO_BUILTIN_KEY)`（`translate.no_builtin_key`），不放一个无法认证的请求出去 |
 | 列表归属 | `"agentero"` 既不在 Rust `FREE_PROVIDERS`（CLI 用它门控 `--provider` 且以 `api_key: None` 调用）也不在 `COMMERCIAL_PROVIDERS`（驱动 WebView 凭证卡片）。**但前端 `FreeTranslateProviderId` / `FREE_MT_PROVIDER_IDS` 含它**——借此复用无 key 管线且不渲染凭证卡片；两份清单刻意相反，改一份要想到另一份 |
-| 探测 | `probeFreeMtProviders` 显式过滤掉 `agentero`（探测它会真发一次翻译请求）；可用性只来自 `builtin_provider_status` |
+| 探测 | `probeFreeMtProviders` 现已含 `agentero`（探测会真的发一次 "Hi" 翻译请求，顺带验证网关连通）；`translate-pane.tsx` 在 `builtin_provider_status` 报不可用时跳过它——那时探测只会确定性复现 no-key 错误 |
 
 实现：`crates/agentero-core/src/features/translate/sources/hunyuan_mt.rs`；凭证解析 `src-tauri/src/features/translate/commands.rs` + `src-tauri/src/features/system/builtin/`。限制与未决项见 [builtin-provider.md](builtin-provider.md) §限制与后续。
 

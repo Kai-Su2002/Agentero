@@ -64,9 +64,13 @@ describe("built-in provider id", () => {
 		expect(paddle && isProviderCardConfigurable(paddle)).toBe(true);
 	});
 
-	it("is excluded from free-MT availability probes", async () => {
+	it("is included in free-MT availability probes (false without a Host key)", async () => {
 		const result = await probeFreeMtProviders();
-		expect("agentero" in result).toBe(false);
+		// Browser dev has no Host, so the built-in resolves to false without a
+		// request — but it still occupies its slot in the batch (the pane itself
+		// hides the dot when `builtin_provider_status` reports unavailable).
+		expect("agentero" in result).toBe(true);
+		expect(result.agentero).toBe(false);
 		expect(result.google).toBe(false);
 	});
 });

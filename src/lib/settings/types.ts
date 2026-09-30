@@ -300,7 +300,31 @@ export type AppSettings = {
 	translate: TranslateSettings;
 	/** PDF layout-analysis backend (local ONNX or remote PP-StructureV3). */
 	layout: LayoutSettings;
+	/**
+	 * Config reminders dismissed with "don't remind me again". Ids come from
+	 * {@link CONFIG_REMINDER_IDS}; unknown values are dropped on normalize.
+	 */
+	dismissedReminders: ConfigReminderId[];
 };
+
+/**
+ * Config reminders the app may surface once per session; "don't remind again"
+ * persists the id in {@link AppSettings.dismissedReminders}.
+ * - `layout-local-model`: local ONNX layout analysis costs memory / CPU.
+ * - `network-proxy`: a network request failed while no proxy is configured.
+ */
+export const CONFIG_REMINDER_IDS = [
+	"layout-local-model",
+	"network-proxy",
+] as const;
+export type ConfigReminderId = (typeof CONFIG_REMINDER_IDS)[number];
+
+export function isConfigReminderId(value: unknown): value is ConfigReminderId {
+	return (
+		typeof value === "string" &&
+		(CONFIG_REMINDER_IDS as readonly string[]).includes(value)
+	);
+}
 
 /** PDF selection Ask (question popover) agent/model prefs. */
 export type PdfAskSettings = {

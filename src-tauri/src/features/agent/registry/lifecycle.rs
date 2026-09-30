@@ -66,7 +66,7 @@ pub fn clear_lifecycle_cancel(task_id: &str) {
     }
 }
 
-fn lifecycle_cancel_requested(task_id: &str) -> bool {
+pub(crate) fn lifecycle_cancel_requested(task_id: &str) -> bool {
     lifecycle_cancel_set()
         .lock()
         .is_ok_and(|ids| ids.contains(task_id))
@@ -1327,7 +1327,7 @@ fn run_command_with_cancellation(
     }
 }
 
-fn emit_lifecycle_progress(
+pub(crate) fn emit_lifecycle_progress(
     app: Option<&AppHandle>,
     task_id: Option<&str>,
     phase: &str,

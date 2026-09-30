@@ -398,6 +398,9 @@ export const FileTree = memo(
 			<TooltipProvider delayDuration={300}>
 				<div
 					ref={containerRef}
+					// Scopes the global ⌘X / ⌘V tree shortcuts to this surface
+					// (see use-app-shortcuts) so viewers keep native cut/paste.
+					data-file-tree=""
 					className={cn(
 						"relative flex min-h-0 flex-1 flex-col select-none text-sm",
 						className,

@@ -8,12 +8,8 @@ import {
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/core/utils";
-import {
-	doctorInstallNode,
-	type HostDoctorReport,
-	type HostToolDiagnostic,
-	type NodeInstallResult,
-} from "@/lib/doctor/api";
+import type { HostDoctorReport, HostToolDiagnostic } from "@/lib/doctor/api";
+import { installNodeInBackground } from "@/lib/doctor/install-node";
 import { DoctorSection } from "./doctor-sections";
 
 function StatusIcon({ ok }: { ok: boolean }) {
@@ -75,12 +71,15 @@ export function DoctorHostRuntimeSection({
 	const [installNotice, setInstallNotice] = useState<string | null>(null);
 
 	const nodeMissing = report ? report.node.status !== "available" : false;
-	const showInstall = nodeMissing || installNotice !== null;
+	const npmMissing = report ? report.npm.status !== "available" : false;
+	const showInstall = nodeMissing || npmMissing || installNotice !== null;
 
 	const handleInstall = async () => {
 		setInstalling(true);
 		try {
-			const result: NodeInstallResult = await doctorInstallNode();
+			const result = await installNodeInBackground();
+			// null = not desktop / already running / cancelled: leave the row alone.
+			if (!result) return;
 			if (result.outcome === "no-package-manager") {
 				setInstallNotice(t("doctor.host.install.noPackageManager"));
 			} else if (result.error) {

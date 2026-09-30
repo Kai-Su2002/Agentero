@@ -83,8 +83,8 @@ export function doctorCheckHost(): Promise<HostDoctorReport> {
 }
 
 /** One-click install of Node.js via the host package manager, then re-probe. */
-export function doctorInstallNode(): Promise<NodeInstallResult> {
-	return callApiResult(() => commands.doctorInstallNode());
+export function doctorInstallNode(taskId?: string): Promise<NodeInstallResult> {
+	return callApiResult(() => commands.doctorInstallNode(taskId ?? null));
 }
 
 /** Re-probe every registered Agent over ACP; may take up to ~30s per agent. */

@@ -25,6 +25,9 @@ const PIN_GAP = 0.014;
 /** Pill size in page-normalized units (~24px on ~700px page). */
 const PIN_W = 0.04;
 const PIN_H = 0.032;
+/** Keep side-anchored pins fully visible inside the page. */
+const PIN_EDGE_MARGIN = 0.01;
+const PIN_RENDER_GAP = 0.003;
 /** Min fraction of the pin area that must cover glyphs to count as over text. */
 const MIN_TEXT_COVERAGE = 0.12;
 
@@ -63,9 +66,14 @@ function pinFootprint(pin: {
 }): NormalizedRect {
 	const y = pin.y - PIN_H / 2;
 	if (pin.side === "left") {
-		return { x: pin.x - PIN_W - 0.003, y, w: PIN_W, h: PIN_H };
+		return {
+			x: pin.x - PIN_W - PIN_RENDER_GAP,
+			y,
+			w: PIN_W,
+			h: PIN_H,
+		};
 	}
-	return { x: pin.x + 0.003, y, w: PIN_W, h: PIN_H };
+	return { x: pin.x + PIN_RENDER_GAP, y, w: PIN_W, h: PIN_H };
 }
 
 function overlapArea(a: NormalizedRect, b: NormalizedRect): number {
@@ -99,8 +107,9 @@ export function pinObscuresBodyText(
 }
 
 /**
- * Place a pin on the side of the selection.
- * Prefer right; if that side covers glyphs (and page text is known), try left.
+ * Place a pin beside the last selected line so a multi-line paragraph does not
+ * force its marker to the left edge of the whole text block. Prefer right; if
+ * that side covers glyphs (and page text is known), try left.
  */
 export function pinFromRects(
 	rects: NormalizedRect[],
@@ -108,12 +117,8 @@ export function pinFromRects(
 ): PinPlacement {
 	if (!rects.length) return { x: 0.5, y: 0.12, side: "right" };
 
-	let minX = 1;
-	let maxX = 0;
 	let last = rects[0];
 	for (const r of rects) {
-		minX = Math.min(minX, r.x);
-		maxX = Math.max(maxX, r.x + r.w);
 		if (r.y + r.h > last.y + last.h + 1e-6) {
 			last = r;
 		} else if (
@@ -125,18 +130,22 @@ export function pinFromRects(
 	}
 
 	const y = Math.min(0.98, Math.max(0.02, last.y + last.h / 2));
-	const rightX = Math.min(0.98, Math.max(0.02, maxX + PIN_GAP));
-	const leftX = Math.min(0.98, Math.max(0.02, minX - PIN_GAP));
+	const minLeftX = PIN_EDGE_MARGIN + PIN_W + PIN_RENDER_GAP;
+	const maxRightX = 1 - PIN_EDGE_MARGIN - PIN_W - PIN_RENDER_GAP;
+	const rightCandidate = last.x + last.w + PIN_GAP;
+	const leftCandidate = last.x - PIN_GAP;
+	const rightX = Math.min(maxRightX, Math.max(0.02, rightCandidate));
+	const leftX = Math.min(0.98, Math.max(minLeftX, leftCandidate));
 	const rightPin: PinPlacement = { x: rightX, y, side: "right" };
 	const leftPin: PinPlacement = { x: leftX, y, side: "left" };
 
-	const canRight = rightX + PIN_W * 0.5 <= 0.99;
-	const canLeft = leftX - PIN_W * 0.5 >= 0.01;
+	const canRight = rightCandidate <= maxRightX;
+	const canLeft = leftCandidate >= minLeftX;
 
 	if (!pageText?.length) {
-		return canRight ? rightPin : leftPin;
+		return canRight ? rightPin : canLeft ? leftPin : rightPin;
 	}
 	if (canRight && !pinObscuresBodyText(rightPin, pageText)) return rightPin;
 	if (canLeft && !pinObscuresBodyText(leftPin, pageText)) return leftPin;
-	return canRight ? rightPin : leftPin;
+	return canRight ? rightPin : canLeft ? leftPin : rightPin;
 }

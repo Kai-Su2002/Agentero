@@ -192,6 +192,10 @@ pub struct AppSettings {
     /// Post-vault feature tour completed or skipped. Default false → auto-start once.
     #[serde(default)]
     pub feature_tour_done: bool,
+    /// Config reminders the user dismissed with "don't remind me again"
+    /// (`layout-local-model` | `network-proxy`). Unknown ids are dropped on save.
+    #[serde(default)]
+    pub dismissed_reminders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, specta::Type)]
@@ -380,6 +384,7 @@ impl Default for AppSettings {
             plaza_hidden_sources: Vec::new(),
             onboarding_done: false,
             feature_tour_done: false,
+            dismissed_reminders: Vec::new(),
         }
     }
 }
@@ -1135,6 +1140,24 @@ fn normalize(s: &mut AppSettings) {
         s.layout.parser_backend = "local".to_string();
     }
     normalize_layout_provider_configs(&mut s.layout.provider_configs);
+    s.dismissed_reminders =
+        normalize_dismissed_reminders(std::mem::take(&mut s.dismissed_reminders));
+}
+
+/// Known config-reminder ids; anything else is dropped so a hand-edited file
+/// cannot smuggle stale ids into the frontend.
+const DISMISSED_REMINDER_IDS: &[&str] = &["layout-local-model", "network-proxy"];
+
+fn normalize_dismissed_reminders(raw: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in raw {
+        let id = id.trim();
+        if id.is_empty() || !DISMISSED_REMINDER_IDS.contains(&id) || out.iter().any(|k| k == id) {
+            continue;
+        }
+        out.push(id.to_string());
+    }
+    out
 }
 
 /// Migration rule for `EmbeddingSettings::source`: an explicit value wins,
@@ -1276,6 +1299,24 @@ mod tests {
         assert!(!s.onboarding_done);
         assert!(!s.feature_tour_done);
         assert_eq!(s.theme, "dark");
+    }
+
+    #[test]
+    fn dismissed_reminders_whitelist() {
+        let mut s = AppSettings {
+            dismissed_reminders: vec![
+                "layout-local-model".into(),
+                "unknown".into(),
+                "layout-local-model".into(),
+                "  network-proxy ".into(),
+            ],
+            ..AppSettings::default()
+        };
+        normalize(&mut s);
+        assert_eq!(
+            s.dismissed_reminders,
+            vec!["layout-local-model", "network-proxy"]
+        );
     }
 
     #[test]

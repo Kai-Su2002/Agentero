@@ -27,12 +27,14 @@ import {
 	pinObscuresBodyText,
 	type SelectionPin,
 } from "@/lib/pdf/selection";
+import type { PdfTranslateRecord } from "@/lib/pdf/translate/types";
 
 export type MarksIndexInput = {
 	highlights: PdfHighlight[];
 	/** Annotation id → normalized rect, for gutter-pin placement. */
 	highlightAnchors: ReadonlyMap<string, NormalizedRect>;
 	askPinAnchors: AskPinAnchor[];
+	translates: PdfTranslateRecord[];
 	visualTraces: PdfVisualSessionTrace[];
 	/** 0-based page index → normalized text rects (missing while unloaded). */
 	pageTextMap: ReadonlyMap<number, NormalizedRect[]>;
@@ -51,6 +53,7 @@ export function buildMarksIndex({
 	highlights,
 	highlightAnchors,
 	askPinAnchors,
+	translates,
 	visualTraces,
 	pageTextMap,
 	paperTitle,
@@ -100,6 +103,24 @@ export function buildMarksIndex({
 			y: pin.y,
 			preview: anchor.preview,
 			ended: anchor.ended,
+			overText: pinObscuresBodyText(pin, pageText),
+			side: pin.side,
+		});
+	}
+	for (const translate of translates) {
+		if (!translate.pinned || translate.rects.length === 0) continue;
+		const pageText = pageTextMap.get(translate.page - 1);
+		const pin = pinFromRects(translate.rects, pageText);
+		const preview = (translate.quote || translate.result || "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 96);
+		add(translate.page, {
+			id: translate.id,
+			kind: "translate",
+			x: pin.x,
+			y: pin.y,
+			preview,
 			overText: pinObscuresBodyText(pin, pageText),
 			side: pin.side,
 		});
