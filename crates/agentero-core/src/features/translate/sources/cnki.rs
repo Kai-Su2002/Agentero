@@ -19,6 +19,15 @@ const CNKI_MAX_CHARS: usize = 800;
 /// Pause between chunks to stay under the rate-limit / captcha radar.
 const CNKI_CHUNK_PAUSE: Duration = Duration::from_secs(2);
 
+/// Extra attempts for a request the WAF dropped on the floor. CNKI's edge
+/// silently RSTs a share of requests once an IP heats up (no HTTP status,
+/// just an empty reply), so one transport failure means nothing — the
+/// zotero-pdf-translate plugin retries the same way.
+const CNKI_SEND_RETRIES: u32 = 2;
+
+/// Base backoff between send retries (linear: 0.5s, 1s, …).
+const CNKI_RETRY_DELAY: Duration = Duration::from_millis(500);
+
 /// Token TTL: the endpoint issues 5-minute tokens; refresh with margin.
 const CNKI_TOKEN_TTL: Duration = Duration::from_secs(4 * 60);
 
@@ -37,6 +46,19 @@ struct CnkiChunk {
     cjk_boundary: bool,
 }
 
+/// Distinguish "the server rejected our token" (refetch + retry the chunk)
+/// from every other failure.
+enum CnkiError {
+    StaleToken,
+    Http(AppError),
+}
+
+impl From<AppError> for CnkiError {
+    fn from(e: AppError) -> Self {
+        CnkiError::Http(e)
+    }
+}
+
 pub async fn translate_cnki(
     text: &str,
     _source: &str,
@@ -49,23 +71,39 @@ pub async fn translate_cnki(
     }
 
     let chunks = split_cnki_chunks(text);
-    let token = cnki_token(timeout).await?;
+    let mut token = cnki_token(timeout).await?;
     let mut parts: Vec<(String, bool)> = Vec::with_capacity(chunks.len());
     for (i, chunk) in chunks.iter().enumerate() {
         if i > 0 {
             tokio::time::sleep(CNKI_CHUNK_PAUSE).await;
         }
-        match cnki_translate_chunk(&chunk.text, &token, timeout).await {
-            Ok(translated) => parts.push((translated, chunk.cjk_boundary)),
-            Err(e) => {
-                // Drop the cached token so a retry starts fresh (it may have
-                // expired or been invalidated server-side).
-                if let Ok(mut guard) = CNKI_TOKEN.lock() {
-                    *guard = None;
+        // A 401 means the token died server-side; refetch once and retry the
+        // same chunk instead of failing the whole translation.
+        let mut refreshed_token = false;
+        let translated = loop {
+            match cnki_translate_chunk(&chunk.text, &token, timeout).await {
+                Ok(translated) => break translated,
+                Err(CnkiError::StaleToken) if !refreshed_token => {
+                    refreshed_token = true;
+                    if let Ok(mut guard) = CNKI_TOKEN.lock() {
+                        *guard = None;
+                    }
+                    tokio::time::sleep(CNKI_RETRY_DELAY).await;
+                    token = cnki_token(timeout).await?;
                 }
-                return Err(e);
+                Err(CnkiError::StaleToken) => {
+                    return Err(AppError::message("CNKI rejected a fresh token (code 401)"))
+                }
+                Err(CnkiError::Http(e)) => {
+                    // Drop the cached token so a retry starts fresh.
+                    if let Ok(mut guard) = CNKI_TOKEN.lock() {
+                        *guard = None;
+                    }
+                    return Err(e);
+                }
             }
-        }
+        };
+        parts.push((translated, chunk.cjk_boundary));
     }
     let mut out = String::new();
     for (part, cjk_boundary) in parts {
@@ -77,22 +115,63 @@ pub async fn translate_cnki(
     Ok(out.trim_end().to_string())
 }
 
+/// Send with linear-backoff retries: the WAF drops a share of requests with
+/// an empty reply (no HTTP status) once an IP heats up, so transport failures
+/// are expected noise, not verdicts.
+async fn cnki_send(request: reqwest::RequestBuilder) -> Result<reqwest::Response, AppError> {
+    let mut last_err = String::new();
+    for attempt in 0..=CNKI_SEND_RETRIES {
+        if attempt > 0 {
+            tokio::time::sleep(CNKI_RETRY_DELAY * attempt).await;
+        }
+        let Some(call) = request.try_clone() else {
+            return Err(AppError::message("CNKI request body is not retryable"));
+        };
+        match call.send().await {
+            Ok(resp) => return Ok(resp),
+            Err(e) => last_err = describe_reqwest_error(&e),
+        }
+    }
+    Err(AppError::message(format!(
+        "CNKI request failed after {CNKI_SEND_RETRIES} retries: {last_err}"
+    )))
+}
+
+/// Render a reqwest error with its full source chain. reqwest's own `Display`
+/// ends at "error sending request for url (...)", hiding the actual cause
+/// (DNS failure, connection reset by the WAF, TLS error, timeout). Without
+/// the chain every transport failure looks identical and undiagnosable.
+fn describe_reqwest_error(err: &reqwest::Error) -> String {
+    let mut out = err.to_string();
+    let mut source = std::error::Error::source(err);
+    while let Some(cause) = source {
+        let text = cause.to_string();
+        if !text.is_empty() && !out.contains(&text) {
+            out.push_str(": ");
+            out.push_str(&text);
+        }
+        source = cause.source();
+    }
+    out
+}
+
 async fn cnki_translate_chunk(
     chunk: &str,
     token: &str,
     timeout: Duration,
-) -> Result<String, AppError> {
+) -> Result<String, CnkiError> {
     let words = cnki_encrypt_words(chunk)?;
     let client = http::client_with(timeout, http::DEFAULT_REDIRECT_LIMIT, http::BROWSER_USER_AGENT)?;
-    let resp = client
-        .post("https://dict.cnki.net/fyzs-front-api/translate/literaltranslation")
-        .header("Content-Type", "application/json;charset=UTF-8")
-        .header("Token", token)
-        .json(&serde_json::json!({ "words": words, "translateType": null }))
-        .send()
-        .await
-        .map_err(|e| AppError::message(format!("CNKI request failed: {e}")))?;
-    let (status, body) = read_body(resp).await?;
+    let resp = cnki_send(
+        client
+            .post("https://dict.cnki.net/fyzs-front-api/translate/literaltranslation")
+            .header("Content-Type", "application/json;charset=UTF-8")
+            .header("Token", token)
+            .json(&serde_json::json!({ "words": words, "translateType": null })),
+    )
+    .await
+    .map_err(CnkiError::Http)?;
+    let (status, body) = read_body(resp).await.map_err(CnkiError::Http)?;
     if !status.is_success() {
         let mut err = http_err(status, &body, "CNKI");
         if status.as_u16() == 404 {
@@ -100,19 +179,24 @@ async fn cnki_translate_chunk(
                 "{err} — CNKI is reachable from mainland-China networks; overseas IPs are often rejected"
             ));
         }
-        return Err(err);
+        return Err(CnkiError::Http(err));
     }
-    let v: Value =
-        serde_json::from_str(&body).map_err(|e| AppError::message(format!("CNKI parse: {e}")))?;
+    let v: Value = serde_json::from_str(&body)
+        .map_err(|e| AppError::message(format!("CNKI parse: {e}")))
+        .map_err(CnkiError::Http)?;
+    if v.get("code").and_then(Value::as_i64) == Some(401) {
+        return Err(CnkiError::StaleToken);
+    }
     if v.pointer("/data/isInputVerificationCode").and_then(Value::as_bool) == Some(true) {
-        return Err(AppError::message(
+        return Err(CnkiError::Http(AppError::message(
             "CNKI requires human verification (temporarily banned). Open https://dict.cnki.net/ and pass the captcha, then retry.",
-        ));
+        )));
     }
     v.pointer("/data/mResult")
         .and_then(Value::as_str)
         .map(str::to_string)
         .ok_or_else(|| AppError::message("Unexpected CNKI translation response"))
+        .map_err(CnkiError::Http)
 }
 
 async fn cnki_token(timeout: Duration) -> Result<String, AppError> {
@@ -125,9 +209,7 @@ async fn cnki_token(timeout: Duration) -> Result<String, AppError> {
         }
     }
     let client = http::client_with(timeout, http::DEFAULT_REDIRECT_LIMIT, http::BROWSER_USER_AGENT)?;
-    let resp = client
-        .get("https://dict.cnki.net/fyzs-front-api/getToken")
-        .send()
+    let resp = cnki_send(client.get("https://dict.cnki.net/fyzs-front-api/getToken"))
         .await
         .map_err(|e| AppError::message(format!("CNKI token request failed: {e}")))?;
     let (status, body) = read_body(resp).await?;
