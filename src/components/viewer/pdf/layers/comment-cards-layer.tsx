@@ -359,7 +359,6 @@ const CommentCard = memo(function CommentCard({
 			data-pdf-chrome
 			className={cn(
 				COMMENT_CARD_SURFACE_CLASS,
-				!editing && "max-h-[70vh] overflow-y-auto",
 				editing
 					? "z-[6] bg-background/92 shadow-[0_18px_44px_rgba(15,23,42,0.22),0_4px_16px_rgba(15,23,42,0.12)] ring-2 ring-ring/50 dark:shadow-[0_18px_46px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.45)]"
 					: hovered
@@ -407,124 +406,126 @@ const CommentCard = memo(function CommentCard({
 						: undefined
 				}
 			>
-				{editing ? (
-					<div className="block w-full text-left">
-						{item.kind === "visual" ? (
-							<Crop className="size-2.5 text-muted-foreground" aria-hidden />
-						) : (
-							<span
-								className={cn(
-									"block size-2 rounded-full",
-									swatchColorClass(item.color),
-								)}
-								aria-hidden
-							/>
-						)}
-						<textarea
-							ref={textareaRef}
-							className="mt-1 max-h-60 w-full resize-none bg-transparent p-0 text-sm text-foreground/80 leading-relaxed outline-none placeholder:text-muted-foreground/70 select-text"
-							placeholder={t("annotations.placeholder")}
-							aria-label={t("annotations.editorLabel")}
-							defaultValue={item.comment}
-							rows={EDIT_MIN_COMMENT_LINES}
-							{...compositionProps}
-							onChange={(e) => {
-								draftRef.current = e.currentTarget.value;
-								autosizeTextarea(e.currentTarget);
-							}}
-							onClick={(e) => e.stopPropagation()}
-							onKeyDown={(e) => {
-								e.stopPropagation();
-								if (
-									applyMarkdownTextareaShortcut(e, (value) => {
-										draftRef.current = value;
-										autosizeTextarea(e.currentTarget);
-									})
-								)
-									return;
-								if (e.key === "Escape") {
-									e.preventDefault();
-									cancel();
-									return;
-								}
-								if (
-									e.key === "Enter" &&
-									(e.metaKey || e.ctrlKey) &&
-									!isBlockedByIme(e)
-								) {
-									e.preventDefault();
-									commit(e.currentTarget.value);
-								}
-							}}
-						/>
-					</div>
-				) : (
-					// biome-ignore lint/a11y/useSemanticElements: a native <button> cannot wrap the blockquote/p flow content
-					<div
-						role="button"
-						tabIndex={0}
-						className="block w-full cursor-text text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-						onClick={(e) => {
-							e.stopPropagation();
-							if ((e.target as Element).closest("a, button")) return;
-							onOpen(item);
-						}}
-						onKeyDown={(e) => {
-							if (e.target !== e.currentTarget) return;
-							if (e.key === "Enter" || e.key === " ") {
-								e.preventDefault();
-								onOpen(item);
-							}
-						}}
-					>
-						{item.kind === "visual" ? (
-							<Crop className="size-2.5 text-muted-foreground" aria-hidden />
-						) : (
-							<span
-								className={cn(
-									"block size-2 rounded-full",
-									swatchColorClass(item.color),
-								)}
-								aria-hidden
-							/>
-						)}
-						<div
-							className={cn(
-								"mt-1 max-h-[3.75rem] overflow-hidden break-words text-sm leading-relaxed group-hover:max-h-none group-hover:overflow-x-auto",
-								item.comment.trim()
-									? "text-foreground/80"
-									: "text-muted-foreground/70",
-							)}
-						>
-							{item.comment.trim() ? (
-								<MessageResponse className="text-sm leading-relaxed [&_p]:my-0 [&_table]:min-w-max">
-									{item.comment}
-								</MessageResponse>
+				<div className={cn(!editing && "max-h-[70vh] overflow-y-auto")}>
+					{editing ? (
+						<div className="block w-full text-left">
+							{item.kind === "visual" ? (
+								<Crop className="size-2.5 text-muted-foreground" aria-hidden />
 							) : (
-								t("annotations.placeholder")
+								<span
+									className={cn(
+										"block size-2 rounded-full",
+										swatchColorClass(item.color),
+									)}
+									aria-hidden
+								/>
 							)}
+							<textarea
+								ref={textareaRef}
+								className="mt-1 max-h-60 w-full resize-none bg-transparent p-0 text-sm text-foreground/80 leading-relaxed outline-none placeholder:text-muted-foreground/70 select-text"
+								placeholder={t("annotations.placeholder")}
+								aria-label={t("annotations.editorLabel")}
+								defaultValue={item.comment}
+								rows={EDIT_MIN_COMMENT_LINES}
+								{...compositionProps}
+								onChange={(e) => {
+									draftRef.current = e.currentTarget.value;
+									autosizeTextarea(e.currentTarget);
+								}}
+								onClick={(e) => e.stopPropagation()}
+								onKeyDown={(e) => {
+									e.stopPropagation();
+									if (
+										applyMarkdownTextareaShortcut(e, (value) => {
+											draftRef.current = value;
+											autosizeTextarea(e.currentTarget);
+										})
+									)
+										return;
+									if (e.key === "Escape") {
+										e.preventDefault();
+										cancel();
+										return;
+									}
+									if (
+										e.key === "Enter" &&
+										(e.metaKey || e.ctrlKey) &&
+										!isBlockedByIme(e)
+									) {
+										e.preventDefault();
+										commit(e.currentTarget.value);
+									}
+								}}
+							/>
 						</div>
-						{item.messages && item.messages.length > 0 ? (
-							<div className="mt-1.5 border-t border-border/40 pt-1.5">
-								<div className="line-clamp-3 space-y-1 group-hover:line-clamp-none">
-									{item.messages.map((m) => (
-										<p
-											key={m.id}
-											className={cn(
-												"whitespace-pre-wrap break-words text-caption leading-relaxed",
-												m.role === "assistant"
-													? "text-muted-foreground"
-													: "text-foreground/80",
-											)}
-										>
-											{m.content}
-										</p>
-									))}
-								</div>
+					) : (
+						// biome-ignore lint/a11y/useSemanticElements: a native <button> cannot wrap the blockquote/p flow content
+						<div
+							role="button"
+							tabIndex={0}
+							className="block w-full cursor-text text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+							onClick={(e) => {
+								e.stopPropagation();
+								if ((e.target as Element).closest("a, button")) return;
+								onOpen(item);
+							}}
+							onKeyDown={(e) => {
+								if (e.target !== e.currentTarget) return;
+								if (e.key === "Enter" || e.key === " ") {
+									e.preventDefault();
+									onOpen(item);
+								}
+							}}
+						>
+							{item.kind === "visual" ? (
+								<Crop className="size-2.5 text-muted-foreground" aria-hidden />
+							) : (
+								<span
+									className={cn(
+										"block size-2 rounded-full",
+										swatchColorClass(item.color),
+									)}
+									aria-hidden
+								/>
+							)}
+							<div
+								className={cn(
+									"mt-1 max-h-[3.75rem] overflow-hidden break-words text-sm leading-relaxed group-hover:max-h-none group-hover:overflow-x-auto",
+									item.comment.trim()
+										? "text-foreground/80"
+										: "text-muted-foreground/70",
+								)}
+							>
+								{item.comment.trim() ? (
+									<MessageResponse className="text-sm leading-relaxed [&_p]:my-0 [&_table]:min-w-max">
+										{item.comment}
+									</MessageResponse>
+								) : (
+									t("annotations.placeholder")
+								)}
 							</div>
-						) : null}
-					</div>
-				)}
+							{item.messages && item.messages.length > 0 ? (
+								<div className="mt-1.5 border-t border-border/40 pt-1.5">
+									<div className="line-clamp-3 space-y-1 group-hover:line-clamp-none">
+										{item.messages.map((m) => (
+											<p
+												key={m.id}
+												className={cn(
+													"whitespace-pre-wrap break-words text-caption leading-relaxed",
+													m.role === "assistant"
+														? "text-muted-foreground"
+														: "text-foreground/80",
+												)}
+											>
+												{m.content}
+											</p>
+										))}
+									</div>
+								</div>
+							) : null}
+						</div>
+					)}
+				</div>
 				<div
 					className={cn(
 						COMMENT_ACTION_BAR_CLASS,
