@@ -7,6 +7,7 @@ import {
 // Required base styles — without them the canvas and toolbars collapse.
 import "@excalidraw/excalidraw/index.css";
 import type {
+	BinaryFiles,
 	ExcalidrawInitialDataState,
 	ExcalidrawProps,
 } from "@excalidraw/excalidraw/types";
@@ -29,9 +30,32 @@ interface ExcalidrawViewerProps {
 
 const AUTOSAVE_DELAY_MS = 800;
 
+// The image tool must stay enabled: Excalidraw gates pasting and dropping
+// image files on `isToolSupported("image")` — disabling it here rejects
+// clipboard images with "Images are disabled" (#682).
 const UI_OPTIONS: NonNullable<ExcalidrawProps["UIOptions"]> = {
-	tools: { image: false },
+	tools: { image: true },
 };
+
+// Extract embedded image binaries (`files: { [fileId]: { dataURL, ... } }`)
+// from a `.excalidraw` snapshot so image elements can render on reload.
+// Entries without a usable dataURL are dropped instead of poisoning the
+// image cache.
+function parseSeedFiles(raw: unknown): BinaryFiles | undefined {
+	if (typeof raw !== "object" || raw == null) return undefined;
+	const files: BinaryFiles = {};
+	for (const [id, entry] of Object.entries(raw as Record<string, unknown>)) {
+		if (
+			typeof entry === "object" &&
+			entry != null &&
+			typeof (entry as { dataURL?: unknown }).dataURL === "string" &&
+			(entry as { dataURL: string }).dataURL
+		) {
+			files[id] = entry as BinaryFiles[string];
+		}
+	}
+	return Object.keys(files).length > 0 ? files : undefined;
+}
 
 export function ExcalidrawViewer({
 	seed,
@@ -66,6 +90,9 @@ export function ExcalidrawViewer({
 			return {
 				elements: restoreElements(elements, null),
 				appState: restoreAppState(appState, null),
+				// Image binaries live top-level next to elements; without
+				// them restored image elements render as broken placeholders.
+				files: parseSeedFiles(parsed.files),
 			};
 		} catch {
 			return {
@@ -133,12 +160,14 @@ export function ExcalidrawViewer({
 	}, [reloadKey]);
 
 	const handleChange: NonNullable<ExcalidrawProps["onChange"]> = useCallback(
-		(elements, appState) => {
+		(elements, appState, files) => {
 			if (!dirty) {
 				setDirty(true);
 				onDirtyChangeRef.current(true);
 			}
-			const payload = serializeAsJSON(elements, appState, {}, "local");
+			// `files` carries the embedded image binaries (dataURLs); passing
+			// an empty map here would persist elements without their images.
+			const payload = serializeAsJSON(elements, appState, files, "local");
 			schedulePersist(payload);
 		},
 		[dirty, schedulePersist],
