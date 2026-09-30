@@ -106,6 +106,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	embedding: { ...DEFAULT_EMBEDDING_SETTINGS },
 	translate: { ...DEFAULT_TRANSLATE_SETTINGS },
 	layout: { ...DEFAULT_LAYOUT_SETTINGS, providerConfigs: {} },
+	dismissedReminders: [],
 };
 
 /** Snap an arbitrary scale value to the closest supported preset. */

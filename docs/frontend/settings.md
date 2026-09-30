@@ -41,6 +41,8 @@
 | 知识库诊断 | 主机运行环境 / 网络连通性 / Agent ACP 连通性 / Vault / Catalog / 双链 / 论文 aliases / 视觉批注格式；本地 Vault 可确认批量修复 |
 | 关于 | 版本信息与应用更新、CLI 安装/卸载（状态行由结构化字段推导并全部走 i18n，不直接展示后端英文 message；安装/卸载失败 Toast 带真实错误原因；安装成功后展示可复制的验证命令 `agentero(-cli) --version`，Windows 额外说明已自动加入用户 PATH、开新终端即可、无需重启；应用更新重启后 main window 启动时自动把已安装 CLI 同步到新版本，成功静默、失败 Toast，见 [docs/backend/cli.md](../backend/cli.md)）、「打开日志文件夹」与「清理日志」（`appLogDir()` / Host `logs_clear`，见 [backend/logging.md](../backend/logging.md)）；标题右侧「Star us on GitHub」打开仓库 |
 
+> **低频配置提醒**（#658，`src/lib/settings/reminders.ts` + `use-config-reminders.ts`）：主窗口进入 Vault 后，若版面分析后端是本地模型，延迟约 5s 弹一次右上角 Toast，提示本机模型的性能代价，带「打开版面解析设置」与「不再提醒」；网络请求失败且未启用代理时，由全局 `notifyError` / `notifyWarning` 漏斗按网络关键字触发同款代理 / 镜像提示。每个提醒每会话至多一次，「不再提醒」写入 `settings.dismissedReminders`（Host 侧白名单 `layout-local-model` / `network-proxy`）。
+
 知识库诊断页调用 Host 的只读 Doctor 报告。检查项各自作为小标题（带一行检测说明），标题行右侧显示 icon + 问题数；模块间用非通栏次要分隔线。列表过长时（双链 / 别名 / 视觉批注）`max-h` 内滚动。视觉批注一节可将旧版 `agent-trace` mark 一键升级为 `visual` v2。
 
 - **主机运行环境**（`doctor_check_host`）：提示性检查 Node.js / npm 可用性（路径与版本）；不依赖 Vault，未打开 Vault 时也显示。不再展示 Codex 登录状态。检查失败时错误写在该分区卡片内，不弹 Toast。

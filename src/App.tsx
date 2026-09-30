@@ -30,6 +30,7 @@ import { useAgentCatalogPrefetch } from "@/hooks/use-agent-catalog-prefetch";
 import { useAppBootstrap } from "@/hooks/use-app-bootstrap";
 import { useAppShortcuts } from "@/hooks/use-app-shortcuts";
 import { useUiStore, useVaultStore } from "@/hooks/use-app-stores";
+import { useConfigReminders } from "@/hooks/use-config-reminders";
 import { useConnectorSync } from "@/hooks/use-connector-sync";
 import { useExternalFileDrop } from "@/hooks/use-external-file-drop";
 import { useFeatureTour } from "@/hooks/use-feature-tour";
@@ -213,6 +214,8 @@ export default function App() {
 	useExternalFileDrop();
 	// First-vault highlight tour (driver.js) + Settings replay listener.
 	useFeatureTour();
+	// Low-frequency config reminders (#658): startup layout-model hint.
+	useConfigReminders();
 	const vaultPath = useVaultStore((s) => s.vaultPath);
 	const {
 		sidebarPanelRef,

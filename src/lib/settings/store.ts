@@ -35,6 +35,7 @@ import {
 	DEFAULT_LIBRARY_COLUMNS,
 	type EmbeddingSettings,
 	type EmbeddingSource,
+	isConfigReminderId,
 	isPaperNoteMode,
 	LIBRARY_COLUMN_KEYS,
 	type LibraryColumnKey,
@@ -78,6 +79,7 @@ let cache: AppSettings = {
 	layout: { ...DEFAULT_SETTINGS.layout, providerConfigs: {} },
 	pdfAsk: { ...DEFAULT_PDF_ASK_SETTINGS },
 	embedding: { ...DEFAULT_EMBEDDING_SETTINGS },
+	dismissedReminders: [],
 };
 let loaded = false;
 let loadPromise: Promise<AppSettings> | null = null;
@@ -90,6 +92,7 @@ function cloneSettings(s: AppSettings): AppSettings {
 		embedding: { ...s.embedding },
 		translate: { ...s.translate },
 		layout: { ...s.layout, providerConfigs: { ...s.layout.providerConfigs } },
+		dismissedReminders: [...s.dismissedReminders],
 	};
 }
 
@@ -412,6 +415,13 @@ function normalizePartial(
 	}
 	if (typeof parsed.featureTourDone !== "boolean") {
 		merged.featureTourDone = DEFAULT_SETTINGS.featureTourDone;
+	}
+	if (!Array.isArray(parsed.dismissedReminders)) {
+		merged.dismissedReminders = DEFAULT_SETTINGS.dismissedReminders;
+	} else {
+		merged.dismissedReminders = [
+			...new Set(parsed.dismissedReminders.filter(isConfigReminderId)),
+		];
 	}
 	if (
 		!Number.isInteger(merged.batchImportConcurrency) ||
