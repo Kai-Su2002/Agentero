@@ -38,7 +38,7 @@ import {
 	swatchColorClass,
 } from "@/lib/pdf/highlight/palette";
 /** Card width in CSS px — also the gutter width reserved on the viewport. */
-export const COMMENT_CARD_WIDTH_PX = 224;
+export const COMMENT_CARD_WIDTH_PX = 200;
 /** Horizontal gap between the page edge and the rail. */
 export const COMMENT_CARD_GAP_PX = 8;
 /** Extra px so ring + shadow aren't clipped by the viewport overflow. */
@@ -50,8 +50,8 @@ export const COMMENT_RAIL_WIDTH_PX =
 const CARD_GAP_PX = 8;
 /** text-xs leading-relaxed ≈ 12px × 1.625. */
 const CARD_LINE_HEIGHT_PX = 20;
-/** Conservative chars per line at w-56 with padding (CJK-heavy notes). */
-const CARD_CHARS_PER_LINE = 15;
+/** Conservative chars per line at w-50 with padding (CJK-heavy notes). */
+const CARD_CHARS_PER_LINE = 13;
 /** Padding + color-dot row + blockquote/comment margins. */
 const CARD_BASE_HEIGHT_PX = 54;
 /** View-mode clamp for the note body. */
