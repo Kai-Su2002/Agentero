@@ -196,10 +196,14 @@ export function matchingSentenceIndexes(
 }
 
 /**
- * Sentences to tint while a translation is on screen. A highlight may quote
- * sentences that continue in another box; a sentence still matches when the
- * highlight quote is exactly that sentence, contains it as a whole sentence,
- * or is a long enough fragment inside it.
+ * Sentences whose quotes the annotation text covers exactly.
+ *
+ * Used only while sentence glyph boxes are not available yet. A highlight may
+ * quote sentences that continue in another box, so a sentence matches when the
+ * quote is that sentence, contains it as a whole sentence, or is the same
+ * letters with punctuation dropped. A fragment inside a sentence does not
+ * match: the same word can sit in several sentences, and position decides
+ * which one once glyph boxes are known.
  */
 export function sentenceIndexesCoveredByQuote(
 	sentences: readonly { quote: string }[],
@@ -223,23 +227,12 @@ export function sentenceIndexesCoveredByQuote(
 		}
 	});
 	if (hit.length > 0) return hit;
-	// A highlight made on the English text layer often drops the final period,
-	// starts mid-word, or keeps a different space before a comma. Fold both
-	// sides to letters and digits. Short tokens still match too many sentences.
 	const foldedTarget = foldQuoteKey(target);
 	if (!foldedTarget) return [];
 	const partial: number[] = [];
 	sentences.forEach((sentence, index) => {
 		const piece = foldQuoteKey(sentence.quote);
-		if (!piece) return;
-		// Same letters: the highlight dropped punctuation such as the final period.
-		if (piece === foldedTarget) {
-			partial.push(index);
-			return;
-		}
-		if (foldedTarget.length >= 12 && piece.includes(foldedTarget)) {
-			partial.push(index);
-		}
+		if (piece === foldedTarget) partial.push(index);
 	});
 	return partial;
 }

@@ -167,7 +167,7 @@ describe("matchingSentenceIndexes", () => {
 		).toEqual([0]);
 	});
 
-	it("tints the sentence that contains a pre-translation highlight", () => {
+	it("matches a dropped period and ignores a fragment inside a sentence", () => {
 		expect(sentenceIndexesCoveredByQuote(sentences, "Beta follows")).toEqual([
 			1,
 		]);
@@ -184,7 +184,7 @@ describe("matchingSentenceIndexes", () => {
 				],
 				"bor Adapters, which unify divers",
 			),
-		).toEqual([0]);
+		).toEqual([]);
 		expect(sentenceIndexesCoveredByQuote(sentences, "runs")).toEqual([]);
 	});
 

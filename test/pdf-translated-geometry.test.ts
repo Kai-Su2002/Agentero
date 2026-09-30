@@ -52,7 +52,11 @@ describe("partitionHighlightPaint", () => {
 		]);
 		expect(quotesByPage.get(1)).toBeUndefined();
 		expect(quotesByPage.get(2)).toEqual([
-			{ quote: "Earlier English sentence.", color: "yellow" },
+			{
+				quote: "Earlier English sentence.",
+				color: "yellow",
+				rects: [{ x: 0.1, y: 0.4, w: 0.5, h: 0.08 }],
+			},
 		]);
 		expect(translatedByPage.get(1)).toEqual([
 			{

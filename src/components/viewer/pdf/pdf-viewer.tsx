@@ -84,6 +84,7 @@ import { usePdfRegionFraming } from "@/components/viewer/pdf/hooks/use-pdf-regio
 import { usePdfScrollSync } from "@/components/viewer/pdf/hooks/use-pdf-scroll-sync";
 import { usePdfSelectionActions } from "@/components/viewer/pdf/hooks/use-pdf-selection-actions";
 import { usePdfSelectionTranslate } from "@/components/viewer/pdf/hooks/use-pdf-selection-translate";
+import { useSentenceGlyphRects } from "@/components/viewer/pdf/hooks/use-pdf-sentence-glyph-rects";
 import { usePdfSidebarPanels } from "@/components/viewer/pdf/hooks/use-pdf-sidebar-panels";
 import { usePdfTextSelection } from "@/components/viewer/pdf/hooks/use-pdf-text-selection";
 import { usePdfTranslationSelection } from "@/components/viewer/pdf/hooks/use-pdf-translation-selection";
@@ -1427,6 +1428,14 @@ function PdfViewerInner({
 		translatedByPage: translatedHighlightsByPage,
 	} = useMemo(() => partitionHighlightPaint(highlights), [highlights]);
 
+	const sentenceRectsByItemId = useSentenceGlyphRects({
+		engine,
+		docCapRef,
+		docId,
+		itemsByPage: layoutTranslateItemsByPage,
+		highlightQuotesByPage,
+	});
+
 	const pageMarks = useMemo<PdfPageMarksSlice>(
 		() => ({
 			activeAskAnchor,
@@ -1486,6 +1495,7 @@ function PdfViewerInner({
 				translationPane || !dualPaneTranslate
 					? layoutTranslatePageStateByPage
 					: new Map(),
+			sentenceRectsByItemId,
 		}),
 		[
 			hoverableRegionsByPage,
@@ -1495,6 +1505,7 @@ function PdfViewerInner({
 			layoutTranslatePageStateByPage,
 			translationPane,
 			dualPaneTranslate,
+			sentenceRectsByItemId,
 		],
 	);
 

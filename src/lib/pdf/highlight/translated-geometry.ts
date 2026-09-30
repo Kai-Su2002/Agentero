@@ -17,10 +17,15 @@ export type TranslatedHighlightPaint = {
 	rects: PdfHighlightRect[];
 };
 
-/** English highlight with no translated boxes: paint the matched sentence. */
+/**
+ * English highlight with no translated boxes. `rects` are the English glyph
+ * boxes already stored on the annotation. The overlay tints the sentence
+ * whose own English boxes overlap these.
+ */
 export type HighlightQuoteTint = {
 	quote: string;
 	color: HighlightColor;
+	rects: PdfHighlightRect[];
 };
 
 /** Drop anything that is not a finite, positive page-fraction box. */
@@ -79,6 +84,7 @@ export function partitionHighlightPaint(highlights: readonly PdfHighlight[]): {
 		const tint: HighlightQuoteTint = {
 			quote,
 			color: normalizeHighlightColor(highlight.color),
+			rects: highlight.rects,
 		};
 		const list = quotesByPage.get(highlight.page);
 		if (list) list.push(tint);

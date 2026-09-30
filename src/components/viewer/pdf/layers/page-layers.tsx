@@ -398,12 +398,17 @@ export type PdfPageMarksSlice = {
 	>;
 	/**
 	 * English highlights keyed by 1-based page that have no translated boxes.
-	 * The overlay fills the sentence that contains the quote. Nothing is written
-	 * back. Highlights that stored their own translated boxes are omitted.
+	 * The overlay tints the sentence whose English glyph boxes overlap `rects`.
+	 * Nothing is written back. Highlights that stored their own translated
+	 * boxes are omitted.
 	 */
 	highlightQuotesByPage: ReadonlyMap<
 		number,
-		readonly { quote: string; color: HighlightColor }[]
+		readonly {
+			quote: string;
+			color: HighlightColor;
+			rects: PdfAskNormalizedRect[];
+		}[]
 	>;
 	/**
 	 * Translated selection boxes keyed by 1-based page. Painted instead of the
@@ -427,6 +432,14 @@ export type PdfPageLayoutSlice = {
 	layoutTranslatePageStateByPage: ReadonlyMap<
 		number,
 		{ active: boolean; running: boolean }
+	>;
+	/**
+	 * English glyph boxes for each sentence in a translated block, keyed by
+	 * item id. Absent until that page's text layer has been read.
+	 */
+	sentenceRectsByItemId?: ReadonlyMap<
+		string,
+		readonly (readonly PdfAskNormalizedRect[])[]
 	>;
 };
 
@@ -815,6 +828,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				tone={tone}
 				layoutRegions={layout.rawRegionsByPage.get(pageIndex)}
 				highlightQuotes={marks.highlightQuotesByPage.get(pageNumber)}
+				sentenceRectsByItemId={layout.sentenceRectsByItemId}
 			/>
 		) : null;
 

@@ -10,12 +10,11 @@ import {
 	type HighlightColor,
 	highlightFill,
 } from "@/lib/pdf/highlight/palette";
+import { sentenceIndexesForHighlightTint } from "@/lib/pdf/highlight/sentence-tint";
 import type { HighlightQuoteTint } from "@/lib/pdf/highlight/translated-geometry";
+import type { PdfHighlightRect } from "@/lib/pdf/highlight/types";
 import { isLayoutTranslateHeadingKind } from "@/lib/pdf/layout/labels";
-import {
-	layoutTranslateSentenceNodes,
-	sentenceIndexesCoveredByQuote,
-} from "@/lib/pdf/layout/layout-sentences";
+import { layoutTranslateSentenceNodes } from "@/lib/pdf/layout/layout-sentences";
 import type { LayoutTranslateItem } from "@/lib/pdf/layout/layout-translate";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
 import {
@@ -36,10 +35,15 @@ type LayoutTranslateOverlayProps = {
 	layoutRegions?: readonly PdfLayoutRegion[];
 	/**
 	 * English highlights on this page that have no translated boxes. A sentence
-	 * that contains the quote is filled with that highlight's color. Nothing
-	 * is written back.
+	 * is filled when its English glyph boxes overlap the highlight. Nothing is
+	 * written back.
 	 */
 	highlightQuotes?: readonly HighlightQuoteTint[];
+	/** English glyph boxes per sentence, keyed by layout item id. */
+	sentenceRectsByItemId?: ReadonlyMap<
+		string,
+		readonly (readonly PdfHighlightRect[])[]
+	>;
 };
 
 const LINE_HEIGHT = 1.25;
@@ -460,6 +464,7 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 	tone = "white",
 	layoutRegions,
 	highlightQuotes,
+	sentenceRectsByItemId,
 }: LayoutTranslateOverlayProps) {
 	const onPage = useMemo(
 		() =>
@@ -483,17 +488,19 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 			if (!item.sentences?.length) continue;
 			const colors = new Map<number, HighlightColor>();
 			for (const tint of highlightQuotes) {
-				for (const index of sentenceIndexesCoveredByQuote(
-					item.sentences,
-					tint.quote,
-				)) {
+				for (const index of sentenceIndexesForHighlightTint({
+					sentences: item.sentences,
+					quote: tint.quote,
+					sentenceRects: sentenceRectsByItemId?.get(item.id),
+					highlightRects: tint.rects,
+				})) {
 					if (!colors.has(index)) colors.set(index, tint.color);
 				}
 			}
 			if (colors.size > 0) map.set(item.id, colors);
 		}
 		return map;
-	}, [highlightQuotes, items]);
+	}, [highlightQuotes, items, sentenceRectsByItemId]);
 	if (onPage.length === 0) return null;
 
 	return (

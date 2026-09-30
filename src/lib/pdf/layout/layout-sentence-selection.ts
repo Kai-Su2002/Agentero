@@ -461,6 +461,70 @@ export function locateQuoteGlyphs(options: {
 	});
 }
 
+export type PageFractionRect = {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+};
+
+function glyphRectToFraction(
+	rect: Rect,
+	pageWidth: number,
+	pageHeight: number,
+): PageFractionRect | null {
+	const w = rect.size.width / pageWidth;
+	const h = rect.size.height / pageHeight;
+	if (!(w > 0) || !(h > 0)) return null;
+	return { x: rect.origin.x / pageWidth, y: rect.origin.y / pageHeight, w, h };
+}
+
+/**
+ * English glyph boxes for each sentence inside one layout block, in sentence
+ * order. A sentence that continues in another block is located from the part
+ * that sits in this one. A miss is an empty list, not the whole block.
+ */
+export function sentenceGlyphRects(options: {
+	sentences: readonly { quote: string }[];
+	raw?: string;
+	source: string;
+	runs: readonly { text: string; rect: Rect }[];
+	pageWidth: number;
+	pageHeight: number;
+	bbox: { x: number; y: number; w: number; h: number };
+}): PageFractionRect[][] {
+	const { sentences, runs, pageWidth, pageHeight, bbox } = options;
+	const blockText = normalizeSentenceKey(options.raw || options.source);
+	const item: TranslationBlockRef = {
+		id: "",
+		pageIndex: 0,
+		bbox,
+		source: options.source,
+		raw: options.raw,
+	};
+	return sentences.map((sentence) => {
+		const quoteKey = normalizeSentenceKey(sentence.quote);
+		let locateText = memberLocateText(item, [sentence.quote]);
+		// The member helper's last resort is the whole block. That box belongs
+		// to every sentence, so a word highlight would tint the entire block.
+		if (locateText === blockText && quoteKey && quoteKey !== blockText) {
+			locateText = quoteKey;
+		}
+		if (!locateText) return [];
+		return locateQuoteInBlock({
+			quote: locateText,
+			runs,
+			pageWidth,
+			pageHeight,
+			bbox,
+			blockText,
+		}).flatMap((rect) => {
+			const fraction = glyphRectToFraction(rect, pageWidth, pageHeight);
+			return fraction ? [fraction] : [];
+		});
+	});
+}
+
 export function unionPageRect(rects: readonly Rect[]): Rect {
 	let minX = Number.POSITIVE_INFINITY;
 	let minY = Number.POSITIVE_INFINITY;
