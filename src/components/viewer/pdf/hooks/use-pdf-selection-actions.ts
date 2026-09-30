@@ -3,9 +3,9 @@ import { layoutAnalysisStore } from "@/lib/pdf/layout/store";
 /**
  * Selection actions (highlight / note / copy / ask / add-to-chat / translate).
  *
- * Highlight / ask (quick chat) / add-to-chat / translate are wired to the
+ * Highlight / ask (quick chat) / add-to-chat / translate / copy are wired to the
  * floating selection toolbar; note is typed on the right-rail selection
- * comment chip and committed from there.
+ * comment chip and committed from there. Copy leaves the toolbar open.
  * Detection and menu state stay in {@link usePdfTextSelection}; each action's
  * real work belongs to its own cluster.
  */
@@ -78,7 +78,8 @@ export type PdfSelectionActions = {
 	handleMenuAsk: () => void;
 	handleMenuAddToChat: () => void;
 	handleMenuTranslate: () => void;
-	handleMenuCopy: () => void;
+	/** Copies without a success toast. False when there is nothing to copy or the write fails. */
+	handleMenuCopy: () => Promise<boolean>;
 };
 
 export function usePdfSelectionActions({
@@ -201,17 +202,17 @@ export function usePdfSelectionActions({
 		translateSelection(anchor);
 	}, [selectionCap, docId, setSelectionMenu, translateSelection]);
 
-	const handleMenuCopy = useCallback(() => {
+	const handleMenuCopy = useCallback(async () => {
 		const menu = selectionMenuRef.current;
-		if (!menu) return;
+		if (!menu) return false;
 		const quote = menu.anchor.quote?.trim();
-		if (!quote) return;
-		void copyTextToClipboard(quote, {
-			successMessage: t("selection.copied"),
+		if (!quote) return false;
+		// Leave the toolbar and the PDFium selection in place. The button
+		// swaps to a check; do not toast success or clear the selection.
+		return copyTextToClipboard(quote, {
+			errorMessage: t("selection.copyFailed"),
 		});
-		setSelectionMenu(null);
-		selectionCap?.clear(docId);
-	}, [t, setSelectionMenu, selectionCap, docId]);
+	}, [t]);
 
 	return {
 		handleHighlight,

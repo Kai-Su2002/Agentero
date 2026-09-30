@@ -23,6 +23,7 @@ import {
 	questionsFromAskUserDtos,
 	questionsFromElicitationFields,
 	resolveSelected,
+	shouldAttachLocalTranscript,
 	shouldDeferSessionEvent,
 	upsertChatSessionTurn,
 	upsertPlanPart,
@@ -1018,5 +1019,34 @@ describe("buildLocalTranscriptPrompt", () => {
 
 	it("returns empty when there is no prior dialogue", () => {
 		expect(buildLocalTranscriptPrompt([])).toBe("");
+	});
+});
+
+describe("shouldAttachLocalTranscript", () => {
+	it("attaches when the provider session cannot be resumed", () => {
+		expect(
+			shouldAttachLocalTranscript({
+				resumeAllowed: false,
+				historyStatus: "completed",
+			}),
+		).toBe(true);
+	});
+
+	it("attaches after a failed turn so a dead connection does not drop the chat", () => {
+		expect(
+			shouldAttachLocalTranscript({
+				resumeAllowed: true,
+				historyStatus: "failed",
+			}),
+		).toBe(true);
+	});
+
+	it("omits the transcript on a healthy resume", () => {
+		expect(
+			shouldAttachLocalTranscript({
+				resumeAllowed: true,
+				historyStatus: "completed",
+			}),
+		).toBe(false);
 	});
 });

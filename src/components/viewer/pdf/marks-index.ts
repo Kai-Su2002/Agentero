@@ -125,9 +125,10 @@ export function buildMarksIndex({
 	for (const trace of visualTraces) {
 		const hasAgent = Boolean(trace.agent);
 		const hasComment = trace.comment.trim().length > 0;
-		// Keep fresh crops reachable after the editor blurs so their add-to-chat
-		// action does not disappear. Agent-only marks use the conversation pin.
-		if (hasComment || !hasAgent) {
+		// Empty crops are in-progress drafts. The open editor injects its own
+		// card; blur / outside click / Escape drops them. Agent-only marks use
+		// the conversation pin instead of an empty comment card.
+		if (hasComment) {
 			const entry: PageAnnotationComment = {
 				id: trace.id,
 				pageIndex: trace.page - 1,

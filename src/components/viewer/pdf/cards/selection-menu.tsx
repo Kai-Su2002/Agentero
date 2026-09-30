@@ -1,4 +1,5 @@
-import { Copy, Languages } from "lucide-react";
+import { Check, Copy, Languages } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -27,7 +28,7 @@ type SelectionMenuProps = {
 	/** Open an optional inline comment before adding the quote to chat. */
 	onAddToChat: () => void;
 	onTranslate: () => void;
-	onCopy?: () => void;
+	onCopy?: () => Promise<boolean>;
 	/** Show the highlight color stack (needs marks/ to persist into). */
 	showHighlight?: boolean;
 	/** Show the translate action (ephemeral cards on surfaces without marks/). */
@@ -35,10 +36,72 @@ type SelectionMenuProps = {
 };
 
 const BAR_H = 32;
+const COPIED_FLASH_MS = 1500;
+
+function SelectionCopyButton({
+	onCopy,
+	label,
+	copiedLabel,
+	shortcut,
+}: {
+	onCopy: () => Promise<boolean>;
+	label: string;
+	copiedLabel: string;
+	shortcut: string;
+}) {
+	const [copied, setCopied] = useState(false);
+	const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+	const mountedRef = useRef(true);
+
+	useEffect(() => {
+		mountedRef.current = true;
+		return () => {
+			mountedRef.current = false;
+			if (timerRef.current) clearTimeout(timerRef.current);
+		};
+	}, []);
+
+	const handleClick = useCallback(() => {
+		void (async () => {
+			const ok = await onCopy();
+			if (!mountedRef.current || ok === false) return;
+			setCopied(true);
+			if (timerRef.current) clearTimeout(timerRef.current);
+			timerRef.current = setTimeout(() => {
+				timerRef.current = null;
+				if (mountedRef.current) setCopied(false);
+			}, COPIED_FLASH_MS);
+		})();
+	}, [onCopy]);
+
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Button
+					type="button"
+					variant="ghost"
+					size="icon-sm"
+					className="size-7"
+					aria-label={copied ? copiedLabel : `${label} ${shortcut}`}
+					onPointerDown={(event) => event.preventDefault()}
+					onClick={handleClick}
+				>
+					{copied ? (
+						<Check className="size-3.5" />
+					) : (
+						<Copy className="size-3.5" />
+					)}
+				</Button>
+			</TooltipTrigger>
+			<TooltipContent side="top">{label}</TooltipContent>
+		</Tooltip>
+	);
+}
 
 /**
  * Floating action bar shown next to a text selection: overlapping highlight
  * color dots (fan left on hover), then Translate / Copy / Quick chat / Add to chat.
+ * Copy keeps the bar open and swaps the icon for a check; it does not toast.
  * The bar is pinned by its right edge so expanding colors only grow left —
  * action buttons never shift.
  * Annotate lives on the right-rail selection comment chip instead.
@@ -129,22 +192,12 @@ export function SelectionMenu({
 					</Tooltip>
 				) : null}
 				{onCopy ? (
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								type="button"
-								variant="ghost"
-								size="icon-sm"
-								className="size-7"
-								aria-label={`${t("selection.copy")} ${copyShortcut}`}
-								onPointerDown={(event) => event.preventDefault()}
-								onClick={onCopy}
-							>
-								<Copy className="size-3.5" />
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent side="top">{t("selection.copy")}</TooltipContent>
-					</Tooltip>
+					<SelectionCopyButton
+						onCopy={onCopy}
+						label={t("selection.copy")}
+						copiedLabel={t("selection.copied")}
+						shortcut={copyShortcut}
+					/>
 				) : null}
 				<button
 					type="button"

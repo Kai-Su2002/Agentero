@@ -52,7 +52,11 @@ For a paper folder, use the richest available source in this order:
   `[Section 2.3](papers/<id>/<id>.pdf#section=2.3)`,
   `[Figure 1](papers/<id>/<id>.pdf#figure=1)`,
   `[p.11](papers/<id>/<id>.pdf#page=11)`,
-  or notes `[[papers/<id>/NOTES]]` / `[[papers/<id>/NOTES|short title]]`.For web pages use `[domain](https://...)`.
+  or notes `[[papers/<id>/NOTES]]` / `[[papers/<id>/NOTES|short title]]`.
+  If a path segment contains a space, percent-encode it as `%20` (preferred) or wrap the destination in angle brackets. Do not leave a raw space outside `<>`.
+  `[p.4](papers/Quantum%20Error%20Correcting/<id>/<id>.pdf#page=4)`
+  `[p.4](<papers/Quantum Error Correcting/<id>/<id>.pdf#page=4>)`
+  For web pages use `[domain](https://...)`.
 
 ## Rules
 

@@ -108,6 +108,15 @@ enum TurnPhase<T> {
     Cancelled(AgentResultPayload),
 }
 
+/// True when `session/prompt` never left the process. The pooled connection
+/// is dead; the turn must be retried on a fresh process via `session/load`
+/// instead of failing and dropping the conversation.
+pub(crate) fn prompt_was_not_delivered(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("connection is no longer running")
+        || lower.contains("failed to send outgoing request")
+}
+
 /// Error from the prompt phase tagged by whether the `PromptRequest` was
 /// already dispatched: only pre-prompt failures let the pooled path hand off
 /// to the cold retry; post-prompt failures are terminal.
@@ -514,7 +523,16 @@ impl RunOnceContext {
         let prompt_response = tokio::select! {
             response = connection
                 .send_request(PromptRequest::new(session_id.clone(), content_blocks.clone()))
-                .block_task() => response.map_err(|e| PromptPhaseError::post_prompt(acp_err(format!("prompt: {e}")))),
+                .block_task() => response.map_err(|e| {
+                    let wrapped = format!("prompt: {e}");
+                    // Send failed before the agent saw the turn. Hand off so a
+                    // new process can session/load and deliver the same prompt.
+                    if prompt_was_not_delivered(&wrapped) {
+                        PromptPhaseError::pre_prompt(acp_err(wrapped))
+                    } else {
+                        PromptPhaseError::post_prompt(acp_err(wrapped))
+                    }
+                }),
             () = wait_for_cancellation(cancellation) => {
                 let _ = connection
                     .send_notification(CancelNotification::new(session_id.clone()));
@@ -1038,6 +1056,16 @@ pub fn new_ids() -> (String, String) {
 mod cancelled_payload_tests {
     use crate::features::agent::acp::client::cancelled_payload;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn undelivered_prompt_is_retryable() {
+        assert!(super::prompt_was_not_delivered(
+            "prompt: Internal error: \"failed to send outgoing request session/prompt: connection is no longer running\""
+        ));
+        assert!(!super::prompt_was_not_delivered(
+            "prompt: model rejected the request"
+        ));
+    }
 
     #[test]
     fn preserves_provider_session_id_after_cancel() {

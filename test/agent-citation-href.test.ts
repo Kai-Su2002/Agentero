@@ -4,6 +4,7 @@ import {
 	citationLabelFromHref,
 	isAgentCitationHref,
 	isCitationStatusLabel,
+	isVaultPdfHref,
 	paperDirFromCitationPath,
 	rewriteCitationHrefToPdf,
 	stripCitationStatusTags,
@@ -76,6 +77,34 @@ describe("isAgentCitationHref", () => {
 				"\u200bpapers/vla/2504.16054/2504.16054.pdf#page=1\u200b",
 			),
 		).toBe(true);
+	});
+
+	it("accepts percent-encoded paths with spaces", () => {
+		expect(
+			isAgentCitationHref(
+				"/papers/Quantum%20Error%20Correcting/parallel%20window/2209.08552/2209.08552.pdf#page=4",
+			),
+		).toBe(true);
+	});
+});
+
+describe("isVaultPdfHref", () => {
+	it("accepts a PDF path with or without a fragment", () => {
+		expect(
+			isVaultPdfHref(
+				"./papers/Quantum%20Error%20Correcting/parallel%20window/2209.08552/2209.08552.pdf",
+			),
+		).toBe(true);
+		expect(
+			isVaultPdfHref(
+				"papers/Quantum Error Correcting/parallel window/2209.08552/2209.08552.pdf#page=4",
+			),
+		).toBe(true);
+	});
+
+	it("rejects notes and http pdf urls", () => {
+		expect(isVaultPdfHref("papers/a/NOTES.md")).toBe(false);
+		expect(isVaultPdfHref("https://example.com/a.pdf")).toBe(false);
 	});
 });
 

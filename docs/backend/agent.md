@@ -185,6 +185,12 @@ Kimi Code ACP 会把 `Bash`/`Glob`/`Grep` 等工具实现为 `terminal/create`�
 声明 `loadSession: true`、**不**声明 `resume`；对 Grok 调用 `session/resume` 会
 `Method not found`，Host 应改走 `session/load`。
 
+暖连接上发 `session/prompt` 若得到 `connection is no longer running` /
+`failed to send outgoing request`，说明这一轮还没送到 Agent。Host 把这次失败
+当成 prompt 之前的错误：丢掉这条连接，换新进程，再用已有 provider session id
+走 `session/load` 重发同一条 prompt。下一轮如果没有可恢复的 provider session，
+或上一轮已经失败，前端会把屏幕上已有的对话附进 prompt，避免新会话丢掉上文。
+
 生成中取消时，只要 provider session 已创建或本轮正在恢复，取消结果仍携带 `providerSessionId`。前端保留该 ID，并写回视觉批注 mark，使下一条消息和重启后的 pin 续聊继续同一会话；在 `session/new` 返回前取消时尚无可恢复的 provider session。
 
 `session/load` 会把历史以 `SessionNotification` 回放。Host 在
@@ -273,7 +279,7 @@ ACP **没有**统一的 ask-user tool 规范：各 harness 的字段名、挂载
 - Skill：Claude 倾向 `/id`；其它注入 `SKILL.md` 文本（`SkillMentionStyle`）。激活语法**只由 Host 判定**（`skill_mention_style` + `paper_reader_skill_line`）；前端不得重复推断，否则同一条 prompt 的两半会互相矛盾。
 - paper-reader：写 NOTES + `paper_set_is_read`；前端任务条编排。
 - Host `build_prompt` envelope **只**负责：本轮 workflow 角色、回答语言、个人偏好、`User request`（`paper_reader` 另带激活句）。**不**再塞引用格式、CLI 政策、论文阅读顺序，也**不**在 free/qa 等 workflow 里重复 skill-follow-hint（激活靠 `skill_activation_prefix` + 注入的 `SKILL.md`；cwd 为 vault 根时 Agent 自载 `AGENTS.md`）。
-- 引用约定（`AGENTS.md` / `paper-reader`）：**阅读**可用 TeX/`PAPER.md`，citation **href 优先本地 PDF + fragment**；笔记用 `[[papers/<id>/NOTES]]`；不加外层 `([…])`、不用文末 `## Sources`。前端负责 pill 渲染、`.tex`→PDF 回退，以及残留 `blocked` 标签的显示兜底。Host `agent_resolve_citation`：`#figure=N` 在 caption 任意位置匹配 `Fig./Figure N`；`#section=N` 认阿拉伯与 IEEE 罗马章节号（如 `3`↔`III.`），纯数字不走模糊 overlap；失败时前端按 fragment 类型 Toast（短分类 + source）。
+- 引用约定（`AGENTS.md` / `paper-reader`）：**阅读**可用 TeX/`PAPER.md`，citation **href 优先本地 PDF + fragment**；笔记用 `[[papers/<id>/NOTES]]`；不加外层 `([…])`、不用文末 `## Sources`。路径含空格时写成 `%20`，或用 `<>` 包住目标。前端负责 pill 渲染、`.tex`→PDF 回退、百分号解码，以及残留 `blocked` 标签的显示兜底。Host `agent_resolve_citation`：`#figure=N` 在 caption 任意位置匹配 `Fig./Figure N`；`#section=N` 认阿拉伯与 IEEE 罗马章节号（如 `3`↔`III.`），纯数字不走模糊 overlap；失败时前端按 fragment 类型 Toast（短分类 + source）。
 - 自由模型选择：`preferred_model_id` 可指向 ACP catalog 外的任意模型 id；Warm / Run 时始终尝试 `session/set_config_option`，失败不阻断会话。
 
 ## 模型协商

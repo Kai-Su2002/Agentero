@@ -31,6 +31,7 @@ import type {
 } from "@/components/viewer/pdf/types";
 import { useImeGuard } from "@/hooks/use-ime-guard";
 import { cn } from "@/lib/core/utils";
+import { applyMarkdownTextareaShortcut } from "@/lib/markdown/textarea-shortcuts";
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
 import {
 	DEFAULT_HIGHLIGHT_COLOR,
@@ -277,12 +278,15 @@ const CommentCard = memo(function CommentCard({
 	onLeave,
 }: CommentCardProps) {
 	const { t } = useTranslation("viewer");
+	const rootRef = useRef<HTMLDivElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const cancelledRef = useRef(false);
 	const itemRef = useRef(item);
 	itemRef.current = item;
 	const onSaveRef = useRef(onSave);
 	onSaveRef.current = onSave;
+	const onCancelRef = useRef(onCancel);
+	onCancelRef.current = onCancel;
 	const draftRef = useRef(item.comment);
 	const commentSeedRef = useRef(item.comment);
 	commentSeedRef.current = item.comment;
@@ -323,8 +327,34 @@ const CommentCard = memo(function CommentCard({
 		onCancel();
 	};
 
+	// Clicking the page does not always blur the textarea. A new empty note
+	// should disappear on that click; typed text still commits.
+	useEffect(() => {
+		if (!editing) return;
+		const onPointerDown = (event: PointerEvent) => {
+			const current = itemRef.current;
+			if (!current.isNew || cancelledRef.current) return;
+			const target = event.target as Node | null;
+			if (!target || rootRef.current?.contains(target)) return;
+			const text = textareaRef.current?.value ?? draftRef.current;
+			if (!text.trim()) {
+				cancelledRef.current = true;
+				onCancelRef.current();
+				return;
+			}
+			cancelledRef.current = true;
+			draftRef.current = text;
+			onSaveRef.current(current, text);
+		};
+		document.addEventListener("pointerdown", onPointerDown, true);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown, true);
+		};
+	}, [editing]);
+
 	return (
 		<div
+			ref={rootRef}
 			data-pdf-chrome
 			className={cn(
 				COMMENT_CARD_SURFACE_CLASS,
@@ -357,11 +387,21 @@ const CommentCard = memo(function CommentCard({
 				onBlur={
 					editing
 						? (e) => {
-								if (e.currentTarget.contains(e.relatedTarget as Node | null)) {
+								const next = e.relatedTarget as Node | null;
+								if (
+									next &&
+									(e.currentTarget.contains(next) ||
+										rootRef.current?.contains(next))
+								) {
 									return;
 								}
 								if (cancelledRef.current) return;
-								commit(textareaRef.current?.value ?? "");
+								const text = textareaRef.current?.value ?? "";
+								if (item.isNew && !text.trim()) {
+									cancel();
+									return;
+								}
+								commit(text);
 							}
 						: undefined
 				}
@@ -394,6 +434,13 @@ const CommentCard = memo(function CommentCard({
 							onClick={(e) => e.stopPropagation()}
 							onKeyDown={(e) => {
 								e.stopPropagation();
+								if (
+									applyMarkdownTextareaShortcut(e, (value) => {
+										draftRef.current = value;
+										autosizeTextarea(e.currentTarget);
+									})
+								)
+									return;
 								if (e.key === "Escape") {
 									e.preventDefault();
 									cancel();
@@ -763,6 +810,13 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 					onPointerDown={(e) => e.stopPropagation()}
 					onKeyDown={(e) => {
 						e.stopPropagation();
+						if (
+							applyMarkdownTextareaShortcut(e, (value) => {
+								draftTextRef.current = value;
+								autosizeTextarea(e.currentTarget);
+							})
+						)
+							return;
 						if (e.key === "Escape") {
 							e.preventDefault();
 							draftTextRef.current = "";

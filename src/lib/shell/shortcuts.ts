@@ -391,6 +391,32 @@ export type ShortcutDisplay = Pick<
 	"key" | "meta" | "ctrl" | "alt" | "shift"
 >;
 
+/** Let text controls keep editor-native keys, including the sidebar's ⌘B alias. */
+export function shortcutBelongsToTextField(
+	id: ShortcutId,
+	event: Pick<KeyboardEvent, "key" | "target">,
+): boolean {
+	if (
+		id !== "deleteTreeItem" &&
+		id !== "collapseTreeCurrent" &&
+		id !== "collapseTreeDefault" &&
+		id !== "cutTreeItem" &&
+		id !== "pasteTreeItem" &&
+		id !== "layoutTranslate" &&
+		!(id === "toggleSidebar" && event.key.toLowerCase() === "b")
+	) {
+		return false;
+	}
+	const target = event.target as {
+		closest?: (selector: string) => Element | null;
+	} | null;
+	return Boolean(
+		target?.closest?.(
+			"input, textarea, select, [contenteditable='true'], [role='textbox']",
+		),
+	);
+}
+
 /**
  * Platform-aware shortcut label for UI.
  * macOS: Apple symbols (⌘X); Windows/Linux: Ctrl+X style.

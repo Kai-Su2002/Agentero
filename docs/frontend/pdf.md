@@ -38,21 +38,23 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 
 ## 划词菜单
 
-选区后浮动工具栏：高亮色点（默认半重叠叠放并带深色描边，hover / 聚焦时向左弹簧展开；工具栏按右边缘定位，仅左侧色点区变宽，翻译 / 快速对话 / 加入对话位置不变、整栏不抖动）/ **翻译** / **快速对话**（`⌘K`，页内 Ask）/ **加入对话**（`⌘L`），文字按钮小号、快捷键提示更小。点击已有高亮弹出的编辑菜单使用同样的右边缘定位，色点展开方式与划词菜单一致。选中后自动复制，工具栏不再放复制按钮。**批注**不在工具栏里：选区出现时页右缘评论列会在对应高度出现一条竖向入口（与空评论卡同高、宽度更窄，内为评论图标）。**Hover 直接进入编辑**（展开并聚焦输入框）；**移走且尚未输入则缩回竖向卡片**；已有输入则保持编辑直至 ⌘/Ctrl+Enter / 失焦提交或 Esc 取消。入口用选区快照，聚焦时即使 EmbedPDF 清掉选区也保留卡片。Settings → 翻译开启「划词自动翻译」后，选区文本提取完成即自动启动翻译并打开结果卡；关闭时保留手动翻译入口。全局 `⌘L` 有选区时加入对话并打开侧栏；`⌘K` 触发页内快速对话；`⇧⌘A` 加入对话并聚焦输入框。
+选区后浮动工具栏：高亮色点（默认半重叠叠放并带深色描边，hover / 聚焦时向左弹簧展开；工具栏按右边缘定位，仅左侧色点区变宽，翻译 / 复制 / 快速对话 / 加入对话位置不变、整栏不抖动）/ **翻译** / **复制**（图标）/ **快速对话**（`⌘K`，页内 Ask）/ **加入对话**（`⌘L`），文字按钮小号、快捷键提示更小。点击已有高亮弹出的编辑菜单使用同样的右边缘定位，色点展开方式与划词菜单一致。复制写入剪贴板，不弹「已复制」；成功后按钮原地换成对勾，约 1.5 秒后恢复，工具栏和选区都留着，失败才 toast。**批注**不在工具栏里：选区出现时页右缘评论列会在对应高度出现一条竖向入口（与空评论卡同高、宽度更窄，内为评论图标）。**Hover 直接进入编辑**（展开并聚焦输入框）；**移走且尚未输入则缩回竖向卡片**；已有输入则保持编辑直至 ⌘/Ctrl+Enter / 失焦提交或 Esc 取消。入口用选区快照，聚焦时即使 EmbedPDF 清掉选区也保留卡片。Settings → 翻译开启「划词自动翻译」后，选区文本提取完成即自动启动翻译并打开结果卡；关闭时保留手动翻译入口。全局 `⌘L` 有选区时加入对话并打开侧栏；`⌘K` 触发页内快速对话；`⇧⌘A` 加入对话并聚焦输入框。
 
 **远程 PDF**（`agentero:arxiv:*`，如 arXiv Daily 预览）：无本地 sidecar。划词菜单只保留 **加入对话 / 快速对话**（Ask 内存 ephemeral，关 tab 即丢，不写 `marks/`）；高亮 / 批注入口 / 翻译隐藏。底栏显示 Remote mode 徽标（`SiArxiv`，与 Info 面板同色）。引用 hover 可从 PDF dest key 生成只读条目，导入按钮走整篇入库。
 
 | 动作 | 落盘 | UI |
 |---|---|---|
+| 复制 | 不落盘 | 工具栏图标。成功后按钮原地换成对勾，约 1.5 秒恢复；不弹 toast，工具栏和选区留着。失败才 toast |
 | 高亮 | `marks/annotations.json` | 颜色 |
 | 批注 | 高亮 + `comment` | 选区时页右缘竖向评论入口（hover 进入编辑；移走且无输入则缩回图标卡；提交后落盘）；已保存的批注在页右缘外侧常驻评论列（色点 + 评论卡，相邻卡片纵向避让；点击卡片就地编辑，Notion 式：卡片内 textarea，Enter 换行，⌘/Ctrl+Enter 或失焦保存，Esc 取消；hover 出复制链接/嵌入/删除）；**Hover 卡片或原文高亮区**时叠强调层，并画一条经页缘的直角细线连到卡片（仅 Hover 显示，编辑中不常驻；文字与视觉批注双向）；原文高亮区不铺可接收 pointerdown 的透明按钮，避免挡住 EmbedPDF 文字重选；视口窄于 640px 时回退为页边针 |
 | 快速对话（Ask） | `marks/<id>.json`（kind ask）；远程仅内存 | 划词工具栏文字「快速对话」；迷你问答；页边针；**hover / 打开卡片时高亮**锚定选区原文；打开时停在用户问题处，不自动滚到回复底部；卡片右上角 ChatGPT / Claude 图标可把 论文标题 + 页码 + 划选文本 发送到对应外部 AI |
 | 快速对话 | 页内 Ask 浮层（ephemeral） | 划词工具栏文字按钮 / `⌘K`；打开 PDF Ask 对话卡，不强制打开 Agent 侧栏 |
 | 加入对话 | 发送该轮后写 `marks/<id>.json`（kind `ask`）；远程无 pin 落盘 | 划词工具栏文字按钮 / `⌘L` / `⇧⌘A`（额外聚焦）；点击或快捷键后选区固定为 Agent composer 文本 chip 并打开侧栏；**发送**后在选区旁插入**对话卡片**页边针（与「快速对话」同一 ask 卡 / 非视觉批注）；hover / 打开同样高亮原文，见 [agent.md](agent.md) |
 | 翻译 | 译文卡打开期间写入 `marks/<id>.json`（kind translate）；钉住后跨卡片关闭保留 | 浮层结果卡贴合选区随滚轮重定位；未钉住时关闭卡片会丢弃译文，钉住后原文页边保留可重开入口；取消钉住后卡片关闭时丢弃译文。见 [translate.md](translate.md) |
-| 视觉批注 | `marks/<id>.json`（kind `visual` v2）：区域 + 用户批注 + 可选嵌套 `agent`；裁剪图 `marks/assets/<id>.png`。默认形态为纯批注（与文字「批注备注」同壳）；有 Agent 会话时仍保留页边针以便定位。旧版 `agent-trace` v1 仍可读，Doctor 可一键升 v2 | 框选或单击 layout 区域后裁剪直接落盘，并在页右缘评论列打开就地编辑。尚未关联 Agent 的裁剪即使备注为空，失焦后仍保留评论卡，避免「加入侧边栏对话」入口消失。评论卡 hover 工具栏含「加入侧边栏对话」图标，点击将裁剪送入 Agent sidebar composer；删除图标也在卡上。「加入」传递的是 mark id，而草稿 id 就是落盘后的 `marks/<id>.json`，因此同一 mark 在 composer 中至多一枚 chip：重复点击刷新该枚（备注 / 区域 / 裁剪图），不会堆出共享同一 id 的重复项（重复项会共用 React key，点掉一个即全部消失）。没有用户备注但已有 Agent 会话时，点击页边针在针旁打开浮动对话卡，展示已保存 transcript，并可隐藏或删除该视觉批注；其余续聊统一在右侧 Agent 面板进行。视口窄于 640px 时评论列回退为页边针。`marks/annotations.json` 读写会按 annotation id 去重，避免重复导入脏数据 |
+| 视觉批注 | `marks/<id>.json`（kind `visual` v2）：区域 + 用户批注 + 可选嵌套 `agent`；裁剪图 `marks/assets/<id>.png`。默认形态为纯批注（与文字「批注备注」同壳）；有 Agent 会话时仍保留页边针以便定位。旧版 `agent-trace` v1 仍可读，Doctor 可一键升 v2 | 框选或单击 layout 区域后在页右缘打开就地编辑；备注为空时不落盘。失焦、点到卡片外或 Esc 且没有输入时取消这次批注，选框和草稿一起消失。已输入的备注在失焦或 ⌘/Ctrl+Enter 时落盘。评论卡 hover 工具栏含「加入侧边栏对话」图标，点击将裁剪送入 Agent sidebar composer；删除图标也在卡上。「加入」传递的是 mark id，而草稿 id 就是落盘后的 `marks/<id>.json`，因此同一 mark 在 composer 中至多一枚 chip：重复点击刷新该枚（备注 / 区域 / 裁剪图），不会堆出共享同一 id 的重复项（重复项会共用 React key，点掉一个即全部消失）。没有用户备注但已有 Agent 会话时，点击页边针在针旁打开浮动对话卡，展示已保存 transcript，并可隐藏或删除该视觉批注；其余续聊统一在右侧 Agent 面板进行。视口窄于 640px 时评论列回退为页边针。`marks/annotations.json` 读写会按 annotation id 去重，避免重复导入脏数据 |
 
 - 不改 PDF 二进制；不自动写入 `NOTES.md`。
+- 评论列中已保存批注和新选区批注的输入框支持 ⌘/Ctrl+B、⌘/Ctrl+I，将选中文字包成 Markdown 加粗或斜体标记；再次按相同快捷键可去掉标记。
 - 文字高亮与视觉区域批注的备注以原始 Markdown 字符串存储；PDF 评论卡在非编辑状态和笔记中的批注嵌入卡均渲染 Markdown，编辑时显示源码。
 - PDF 评论卡保留原有 224px 宽度；长备注悬停展开后可在卡内纵向滚动，超宽内容可横向滚动。
 - 提问 Agent 可与面板默认 Agent 分开配置。
@@ -61,7 +63,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 - 页右缘控件使用固定 CSS px 尺寸：逐页翻译页签和批注评论列只随 PDF 缩放更新锚点位置，不随页面放大/缩小改变自身宽高。
 - 对话 / 翻译 / 视觉卡片与**同一侧页边针**对齐（左针开左、右针开右），贴合锚点，避免卡片落到选区另一侧。
 - 普通划词只启用文本选区；选区显示使用浅透明蓝色，并按 PDFium 的紧致字形边界逐行合并，行间保留空隙，首尾严格停在实际选中文字处，不再使用 EmbedPDF 宽松字框产生的整行溢出。EmbedPDF 默认 marquee 矩形框选关闭，视觉区域批注只通过工具栏 / **⌘.** 显式进入。
-- 普通划词后可通过浮动菜单或系统复制快捷键（macOS **⌘C** / Windows/Linux **Ctrl+C**）复制选中文本；输入框和 Markdown 编辑器复制保持原生行为。
+- 普通划词后可通过浮动菜单的复制按钮或系统复制快捷键（macOS **⌘C** / Windows/Linux **Ctrl+C**）复制选中文本。按钮复制成功后原地换成对勾，不弹 toast，工具栏不收起；输入框和 Markdown 编辑器复制保持原生行为。
 - 旧版 visual Ask（`kind: ask` + `visualKind`）仍可读、可打开。
 - 一次提交可包含多条视觉批注：prompt 按 `## Annotation N` 分点，图片顺序与 annotation 对齐。
 - PDF 内视觉批注草稿 / pin 卡片打开时，原页面显示框选区域；浮层不重复显示页码和裁剪图，裁剪图在 Agent 侧边栏视觉上下文与批注侧边栏视觉批注列表中展示。
@@ -129,7 +131,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 | `src/components/viewer/pdf/hooks/use-pdf-pin-anchors.ts` | ask/translate 钉锚点几何投影（`useStableDerived` 指纹稳定：流式期间引用不变，`pinsByPage` 不失效） |
 | `src/components/viewer/pdf/hooks/use-pdf-active-anchors.ts` | 活动卡记录查找（thread/translate/visualTrace）与 ask/translate 页内源锚点投影（仅几何，流式期间保持引用稳定） |
 | `src/components/viewer/pdf/hooks/use-pdf-sidebar-panels.ts` | 左栏 References/Figures 面板开关（与大纲互斥）与评论卡 hover id |
-| `src/components/viewer/pdf/hooks/use-pdf-selection-actions.ts` | 划词动作装配（工具栏：高亮/翻译/复制/快速对话/加入对话；右缘入口：批注），各动作入口注入；划词表面三件套（copied 标签 / ⌘K 注册 / 加入对话尾段）与 plaza / 网页论文 / 文本编辑器共用 `src/components/selection/`（见 [web-view.md](web-view.md)） |
+| `src/components/viewer/pdf/hooks/use-pdf-selection-actions.ts` | 划词动作装配（工具栏：高亮/翻译/复制/快速对话/加入对话；右缘入口：批注）。复制成功不弹 toast、不关工具栏，对勾画在按钮上。划词表面三件套（copied 标签 / ⌘K 注册 / 加入对话尾段）与 plaza / 网页论文 / 文本编辑器共用 `src/components/selection/`（见 [web-view.md](web-view.md)） |
 | `src/components/viewer/pdf/hooks/use-pdf-mark-actions.ts` | 页边针打开（ask 线程/翻译卡/高亮编辑/visual 卡）与高亮标注菜单动作（编辑/删除/换色） |
 | `src/components/viewer/pdf/hooks/use-pdf-layout-cluster.ts` | layout 簇聚合：region 分桶、分析运行与 Figures 处理器、visual draft 卡状态、全文翻译任务 |
 | `src/components/viewer/pdf/marks-index.ts` | 纯派生 `buildMarksIndex`：由各 mark 数组 + 页文字矩形产出 `pinsByPage` / `commentsByPage`（无 React，调用方 memo） |
