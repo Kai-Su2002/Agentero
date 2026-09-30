@@ -300,6 +300,14 @@ export type PdfPageMarksSlice = {
 	 * read-only remote PDF.
 	 */
 	selectionCommentDraft: SelectionCommentDraft | null;
+	/**
+	 * Persisted selection-translate spans. Painted even after the result card
+	 * closes, above the layout-translate paper (z-3) and under its glyphs (z-6).
+	 */
+	translateHighlightsByPage: ReadonlyMap<
+		number,
+		{ id: string; rects: PdfAskNormalizedRect[] }[]
+	>;
 };
 
 /** Layout-analysis derived overlays (hover targets, debug boxes, translations). */
@@ -529,6 +537,8 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 		marks.selectionCommentDraft?.page === pageNumber
 			? marks.selectionCommentDraft
 			: null;
+	const translateHighlightsOnPage =
+		marks.translateHighlightsByPage.get(pageNumber) ?? [];
 	const layoutTranslateOnPage =
 		layout.layoutTranslateItemsByPage.get(pageIndex);
 	const pageTranslateState = layout.layoutTranslatePageStateByPage.get(
@@ -835,8 +845,33 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 							);
 						})
 					: null}
-				{/* Bulk layout translate: progressive text overlays over body blocks. */}
+				{/*
+				 * Bulk layout translate. Paper is z-3 (under the selection tint,
+				 * z-5); glyphs are z-6 so the tint cannot wash them out.
+				 */}
 				{translateOverlay}
+				{/*
+				 * Selection-translate spans stay tinted after the result card
+				 * closes, above the opaque translation paper (z-3) and under
+				 * the glyphs (z-6).
+				 */}
+				{translateHighlightsOnPage.map((item) =>
+					item.id === activeTranslateOnPage?.id
+						? null
+						: item.rects.map((rect) => (
+								<div
+									key={`tr-hl-${item.id}-${rect.x}-${rect.y}-${rect.w}-${rect.h}`}
+									className="pointer-events-none absolute z-[4] rounded-[2px] bg-yellow-300/40 dark:bg-yellow-400/35"
+									style={{
+										left: `${rect.x * 100}%`,
+										top: `${rect.y * 100}%`,
+										width: `${rect.w * 100}%`,
+										height: `${rect.h * 100}%`,
+									}}
+									aria-hidden="true"
+								/>
+							)),
+				)}
 				{/*
 				 * Hit targets for post-merge figure/table/algorithm/formula.
 				 * Largest first so smaller boxes stack on top and win pointer hits.
@@ -944,7 +979,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 							<div
 								key={`${activeTranslateOnPage.id}-source-${rect.x}-${rect.y}-${rect.w}-${rect.h}`}
 								className={cn(
-									"pointer-events-auto absolute z-[1] rounded-[2px] bg-yellow-300/40 dark:bg-yellow-400/35",
+									"pointer-events-auto absolute z-[4] rounded-[2px] bg-yellow-300/40 dark:bg-yellow-400/35",
 								)}
 								style={{
 									left: `${rect.x * 100}%`,

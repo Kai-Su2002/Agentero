@@ -63,6 +63,10 @@ export const PdfTextSelectionLayer = memo(function PdfTextSelectionLayer({
 			style={{
 				position: "absolute",
 				inset: 0,
+				// Above layout-translate paper (z-3) so the tint stays visible, and
+				// under the translated glyphs (z-6). An opaque block here would
+				// hide the highlight; this tint on top of the glyphs washes them out.
+				zIndex: 5,
 				isolation: "isolate",
 				mixBlendMode: "multiply",
 				pointerEvents: "none",

@@ -1,3 +1,8 @@
+export type { TranslateHighlight } from "@/lib/pdf/translate/highlights";
+export {
+	translateHighlightsByPage,
+	translateHighlightsFingerprint,
+} from "@/lib/pdf/translate/highlights";
 export {
 	createTranslateRecord,
 	deletePdfTranslate,

@@ -89,6 +89,7 @@ import { usePdfTextSelection } from "@/components/viewer/pdf/hooks/use-pdf-text-
 import { usePdfViewerHandle } from "@/components/viewer/pdf/hooks/use-pdf-viewer-handle";
 import { usePdfVisualMarks } from "@/components/viewer/pdf/hooks/use-pdf-visual-marks";
 import { usePdfZoomControls } from "@/components/viewer/pdf/hooks/use-pdf-zoom-controls";
+import { useStableDerived } from "@/components/viewer/pdf/hooks/use-stable-derived";
 import { excludeOverlappingPdfTextLinks } from "@/components/viewer/pdf/layers/citation-links";
 import { COMMENT_RAIL_WIDTH_PX } from "@/components/viewer/pdf/layers/comment-cards-layer";
 import {
@@ -137,6 +138,10 @@ import {
 	type ActiveSelectionCard,
 	selectionAnchorKey,
 } from "@/lib/pdf/selection";
+import {
+	translateHighlightsByPage as translateHighlightsByPageOf,
+	translateHighlightsFingerprint,
+} from "@/lib/pdf/translate/highlights";
 import { PDF_ZOOM_MAX, PDF_ZOOM_MIN } from "@/lib/pdf/zoom";
 
 export type {
@@ -557,6 +562,10 @@ function PdfViewerInner({
 		onAsksChangeRef,
 		onVisualTracesChangeRef,
 	});
+	const translateHighlightsByPage = useStableDerived(
+		() => translateHighlightsByPageOf(translates),
+		translateHighlightsFingerprint(translates),
+	);
 	/**
 	 * Per-page 0–1 text rects from PDFium `getPageTextRects` — used to decide
 	 * whether a gutter pin sits on real glyphs (translucent) vs in a free gutter.
@@ -1375,6 +1384,7 @@ function PdfViewerInner({
 			activeCardId: activeCard?.id ?? null,
 			hoveredCommentId,
 			selectionCommentDraft,
+			translateHighlightsByPage,
 		}),
 		[
 			activeAskAnchor,
@@ -1393,6 +1403,7 @@ function PdfViewerInner({
 			activeCard?.id,
 			hoveredCommentId,
 			selectionCommentDraft,
+			translateHighlightsByPage,
 		],
 	);
 

@@ -4,7 +4,7 @@
  * body size, then re-fits so the translation fills the block without huge gaps.
  */
 
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { Fragment, memo, useLayoutEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/core/utils";
 import { isLayoutTranslateHeadingKind } from "@/lib/pdf/layout/labels";
 import type { LayoutTranslateItem } from "@/lib/pdf/layout/layout-translate";
@@ -308,6 +308,8 @@ type ExactFitParagraphProps = {
 	boxWidthPx: number;
 	boxHeightPx: number;
 	isHeading: boolean;
+	/** Dark PDF paper: selection ink stays light, matching the glyphs. */
+	paperDark: boolean;
 };
 
 /**
@@ -322,6 +324,7 @@ export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 	boxWidthPx,
 	boxHeightPx,
 	isHeading,
+	paperDark,
 }: ExactFitParagraphProps) {
 	const ref = useRef<HTMLParagraphElement>(null);
 
@@ -381,9 +384,10 @@ export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 		<p
 			ref={ref}
 			className={cn(
-				"m-0 h-full w-full select-text overflow-hidden whitespace-pre-wrap",
+				"pdf-translate-selection pointer-events-auto m-0 h-full w-full select-text overflow-hidden whitespace-pre-wrap",
 				isHeading && "font-bold",
 			)}
+			data-paper={paperDark ? "dark" : undefined}
 			style={{
 				fontSize: initialFontSize,
 				lineHeight: LINE_HEIGHT,
@@ -442,43 +446,74 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 				);
 				const boxWidthPx = item.bbox.w * pageWidthPx;
 				const boxHeightPx = item.bbox.h * pageHeightPx;
+				const boxStyle = {
+					left: `${item.bbox.x * 100}%`,
+					top: `${item.bbox.y * 100}%`,
+					width: `${item.bbox.w * 100}%`,
+					height: `${item.bbox.h * 100}%`,
+				};
 				return (
-					<div
-						key={`layout-tr-${item.id}`}
-						className={cn(
-							"pointer-events-none absolute z-[3] overflow-hidden rounded-[1px]",
-							// Blocks are opaque paper: paint the active tone, and invert in
-							// dark mode exactly like the page rasters so they still match.
-							PDF_PAPER_BLOCK_CLASS[tone],
-							"text-zinc-900",
-							tone === "dark" && PDF_PAGE_RASTER_DARK_CLASS,
-							item.status === "running" && "opacity-90",
-						)}
-						style={{
-							left: `${item.bbox.x * 100}%`,
-							top: `${item.bbox.y * 100}%`,
-							width: `${item.bbox.w * 100}%`,
-							height: `${item.bbox.h * 100}%`,
-							padding: "1px 2px",
-							fontSize,
-							lineHeight: LINE_HEIGHT,
-							// Serif stack closer to paper body than UI sans.
-							fontFamily:
-								'ui-serif, "Times New Roman", Times, "Noto Serif SC", "Songti SC", "Source Han Serif SC", serif',
-							// Titles / section headers: bold; body justified.
-							fontWeight: isHeading ? 700 : 400,
-							textAlign: isHeading ? "left" : "justify",
-						}}
-						aria-hidden="true"
-					>
-						<LayoutTranslateParagraph
-							text={text}
-							initialFontSize={fontSize}
-							boxWidthPx={boxWidthPx}
-							boxHeightPx={boxHeightPx}
-							isHeading={isHeading}
-						/>
-					</div>
+					<Fragment key={`layout-tr-${item.id}`}>
+						{/*
+						 * Paper and glyphs are separate layers. The PDF selection
+						 * tint is z-index 5 and uses multiply: an opaque block above
+						 * it hides the highlight, but glyphs under it get washed out
+						 * (WebKit). Paper stays at z-3, under the tint. Glyphs are
+						 * z-6, above the tint, so the translation stays readable.
+						 */}
+						<div
+							aria-hidden="true"
+							className={cn(
+								"pointer-events-none absolute z-[3] overflow-hidden rounded-[1px]",
+								item.status === "running" && "opacity-90",
+							)}
+							style={boxStyle}
+						>
+							{/*
+							 * Paper tone lives on this layer only. A filter on the
+							 * text itself hides ::selection (WebKit), so dark mode
+							 * inverts the paper and sets the glyphs explicitly.
+							 */}
+							<div
+								className={cn(
+									"absolute inset-0",
+									PDF_PAPER_BLOCK_CLASS[tone],
+									tone === "dark" && PDF_PAGE_RASTER_DARK_CLASS,
+								)}
+							/>
+						</div>
+						<div
+							className={cn(
+								"pointer-events-none absolute z-[6] overflow-hidden rounded-[1px]",
+								item.status === "running" && "opacity-90",
+							)}
+							style={{ ...boxStyle, padding: "1px 2px" }}
+						>
+							<div
+								className={cn(
+									"h-full w-full",
+									tone === "dark" ? "text-zinc-100" : "text-zinc-900",
+								)}
+								style={{
+									fontSize,
+									lineHeight: LINE_HEIGHT,
+									fontFamily:
+										'ui-serif, "Times New Roman", Times, "Noto Serif SC", "Songti SC", "Source Han Serif SC", serif',
+									fontWeight: isHeading ? 700 : 400,
+									textAlign: isHeading ? "left" : "justify",
+								}}
+							>
+								<LayoutTranslateParagraph
+									text={text}
+									initialFontSize={fontSize}
+									boxWidthPx={boxWidthPx}
+									boxHeightPx={boxHeightPx}
+									isHeading={isHeading}
+									paperDark={tone === "dark"}
+								/>
+							</div>
+						</div>
+					</Fragment>
 				);
 			})}
 		</>

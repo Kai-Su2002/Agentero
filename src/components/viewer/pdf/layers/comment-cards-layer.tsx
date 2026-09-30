@@ -884,7 +884,8 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 	const svgWidth = pageWidthPx + COMMENT_CARD_GAP_PX + COMMENT_CARD_WIDTH_PX;
 
 	return (
-		<div className="pointer-events-none absolute inset-0 z-[5] overflow-visible">
+		// Above translated glyphs (also z-6, mounted earlier) so the rail stays visible.
+		<div className="pointer-events-none absolute inset-0 z-[6] overflow-visible">
 			{connectorD ? (
 				// Decorative hover leader; announced via the card / hit-target labels.
 				// biome-ignore lint/a11y/noSvgWithoutTitle: purely visual connector
