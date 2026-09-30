@@ -25,6 +25,7 @@
 		"exportAnnotatedPdf": "导出带批注的 PDF",
 		"exportingAnnotatedPdf": "正在导出带批注的 PDF…",
 		"exportAnnotatedPdfFailed": "导出带批注的 PDF 失败",
+		"exportAnnotatedPdfSaved": "已导出带批注的 PDF",
 		"exportDesktopOnly": "导出功能仅在桌面端可用",
 		"layout": {
 			"unavailable": "版面分析尚未就绪。",

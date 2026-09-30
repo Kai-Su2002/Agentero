@@ -31,7 +31,7 @@ import type {
 	PdfViewerProps,
 } from "@/components/viewer/pdf/types";
 import { errorText } from "@/lib/core/error";
-import { notifyError } from "@/lib/core/notify";
+import { notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import { deletePdfAskThread, type PdfAskThread } from "@/lib/pdf/ask";
@@ -271,7 +271,9 @@ export function usePdfViewerHandle({
 					}
 					const buffer = await engine.saveAsCopy(document).toPromise();
 					await writeVaultBytes(path, new Uint8Array(buffer));
-					toast.dismiss(exportingToast);
+					notifySuccess(t("pdf.exportAnnotatedPdfSaved"), {
+						id: exportingToast,
+					});
 				} catch (error) {
 					toast.dismiss(exportingToast);
 					notifyError(errorText(error) || t("pdf.exportAnnotatedPdfFailed"));

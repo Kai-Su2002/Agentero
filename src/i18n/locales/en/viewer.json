@@ -25,6 +25,7 @@
 		"exportAnnotatedPdf": "Export annotated PDF",
 		"exportingAnnotatedPdf": "Exporting annotated PDF…",
 		"exportAnnotatedPdfFailed": "Failed to export annotated PDF",
+		"exportAnnotatedPdfSaved": "Annotated PDF saved",
 		"exportDesktopOnly": "Export is only available in the desktop app",
 		"layout": {
 			"unavailable": "Layout analysis is not ready yet.",
