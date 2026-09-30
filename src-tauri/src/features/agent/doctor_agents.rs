@@ -190,7 +190,19 @@ async fn diagnostic(desc: &AgentDescriptor, result: &ProbeResult) -> AgentAcpDia
     let same_binary = agent_command
         .as_ref()
         .is_some_and(|cmd| cmd == &desc.command);
-    let acp_tool = diagnose_tool(&desc.command, &environment).await;
+    // Claude/Codex adapters ship bundled with the app (see `registry/bundled.rs`),
+    // so a PATH probe of the adapter is meaningless and would spawn a console
+    // window on Windows. Their Doctor card omits the ACP row; only the host CLI
+    // row and login status matter. (#686)
+    let acp_bundled = matches!(
+        desc.template,
+        AgentTemplate::CodexAcp | AgentTemplate::ClaudeAcp
+    );
+    let acp_tool = if acp_bundled {
+        None
+    } else {
+        Some(diagnose_tool(&desc.command, &environment).await)
+    };
     let agent_tool = if same_binary {
         None
     } else if let Some(ref cmd) = agent_command {
@@ -201,13 +213,18 @@ async fn diagnostic(desc: &AgentDescriptor, result: &ProbeResult) -> AgentAcpDia
     // Prefer diagnose_tool paths; fall back to which() when --version failed.
     let (agent_path, agent_version) = if same_binary {
         (
-            acp_tool.resolved_path.clone().or_else(|| {
-                resolve_command_in_agent_env(&desc.command, &environment)
-                    .map(|path| path.display().to_string())
+            acp_tool
+                .as_ref()
+                .and_then(|tool| tool.resolved_path.clone())
+                .or_else(|| {
+                    resolve_command_in_agent_env(&desc.command, &environment)
+                        .map(|path| path.display().to_string())
+                }),
+            acp_tool.as_ref().and_then(|tool| {
+                (tool.status == HostToolStatus::Available)
+                    .then(|| tool.version.clone())
+                    .flatten()
             }),
-            (acp_tool.status == HostToolStatus::Available)
-                .then(|| acp_tool.version.clone())
-                .flatten(),
         )
     } else {
         (
@@ -227,13 +244,17 @@ async fn diagnostic(desc: &AgentDescriptor, result: &ProbeResult) -> AgentAcpDia
             }),
         )
     };
-    let resolved_path = acp_tool.resolved_path.clone().or_else(|| {
-        resolve_command_in_agent_env(&desc.command, &environment)
-            .map(|path| path.display().to_string())
+    let resolved_path = acp_tool.as_ref().and_then(|tool| {
+        tool.resolved_path.clone().or_else(|| {
+            resolve_command_in_agent_env(&desc.command, &environment)
+                .map(|path| path.display().to_string())
+        })
     });
-    let acp_version = (acp_tool.status == HostToolStatus::Available)
-        .then(|| acp_tool.version.clone())
-        .flatten();
+    let acp_version = acp_tool.as_ref().and_then(|tool| {
+        (tool.status == HostToolStatus::Available)
+            .then(|| tool.version.clone())
+            .flatten()
+    });
 
     let error = if result.available {
         None

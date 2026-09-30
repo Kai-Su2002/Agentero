@@ -86,6 +86,10 @@ function AgentCard({
 	const { t } = useTranslation("settings");
 	const category = agent.failureCategory ?? "unknown";
 	const authStatus = agent.authStatus ?? "unknown";
+	// Claude/Codex ACP adapters ship bundled with the app, so the ACP row would
+	// only ever report a meaningless PATH probe. (#686)
+	const showAcp =
+		agent.template !== "claude-acp" && agent.template !== "codex-acp";
 	const canLogin =
 		authStatus === "unauthenticated" &&
 		Boolean(agent.loginCommand?.trim()) &&
@@ -127,12 +131,14 @@ function AgentCard({
 							path={agent.agentPath}
 							missingLabel={t("doctor.agent.locationMissing")}
 						/>
-						<MetaRow
-							label="ACP"
-							version={agent.acpVersion}
-							path={agent.resolvedPath}
-							missingLabel={t("doctor.agent.locationMissing")}
-						/>
+						{showAcp ? (
+							<MetaRow
+								label="ACP"
+								version={agent.acpVersion}
+								path={agent.resolvedPath}
+								missingLabel={t("doctor.agent.locationMissing")}
+							/>
+						) : null}
 						<span className="text-foreground/70">
 							{t("doctor.agent.authLabel")}
 						</span>
