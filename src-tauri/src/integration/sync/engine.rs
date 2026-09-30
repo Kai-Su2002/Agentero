@@ -69,7 +69,13 @@ pub type Progress<'a> = &'a (dyn Fn(&str, usize, usize) + Send + Sync);
 /// PUTs (Aliyun OSS, most WebDAV servers) degrade to plain PUTs before the
 /// first real sync instead of failing mid-pass.
 pub async fn test_connection(cfg: &SyncBackendConfig) -> Result<bool, AppError> {
-    let client = SyncStore::new(cfg)?;
+    // The probe must measure the server, not echo the persisted verdict: a
+    // config re-saved with a different address (or after the server's
+    // behavior changed) must re-evaluate conditional-write support instead
+    // of preserving a stale `conditional_writes = false`.
+    let mut probe = cfg.clone();
+    probe.conditional_writes = true;
+    let client = SyncStore::new(&probe)?;
     client.ensure_root().await?;
     client.probe_conditional_writes().await
 }
