@@ -1,3 +1,5 @@
+import { dataTransferLooksLikeVaultMove } from "@/lib/core/file-accept";
+
 /**
  * Vault-relative or absolute paths from a file-tree drag (`text/plain`, one path per line).
  * Returns [] when the payload is an external OS file drop.
@@ -18,13 +20,12 @@ export function readDraggedVaultPaths(dt: DataTransfer | null): string[] {
 
 /**
  * True when the drag payload can open a split (file-tree path drag).
- * Uses `types` only — `getData` is often empty during dragover for security.
+ * Uses the dedicated vault-path MIME + active-session flag, *not* `text/plain`:
+ * the Library column-reorder drag also writes `text/plain`, and matching on
+ * that made a column-header drag split the workspace open a phantom panel
+ * (#646). `getData` is often empty during dragover, so only `types`/flag are
+ * consulted here.
  */
 export function isSplitDragPayload(dt: DataTransfer | null): boolean {
-	if (!dt) return false;
-	// File-tree drags set text/plain without Files (internal).
-	if (dt.types.includes("text/plain") && !dt.types.includes("Files")) {
-		return true;
-	}
-	return false;
+	return dataTransferLooksLikeVaultMove(dt);
 }
