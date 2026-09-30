@@ -65,6 +65,25 @@ import { normalizePathKey } from "@/lib/vault/path";
 /** One Agent turn can rewrite several mark files; coalesce the burst. */
 const MARKS_REFRESH_BURST_MS = 200;
 
+/** Preserve live results and pending deletions while accepting other disk edits. */
+export function mergeTranslateRefresh(
+	current: PdfTranslateRecord[],
+	incoming: PdfTranslateRecord[],
+	protectedIds: ReadonlySet<string>,
+	recordsAtStart: PdfTranslateRecord[] = current,
+): PdfTranslateRecord[] {
+	const protectedNow = new Set(protectedIds);
+	const before = new Map(recordsAtStart.map((record) => [record.id, record]));
+	const after = new Map(current.map((record) => [record.id, record]));
+	for (const id of new Set([...before.keys(), ...after.keys()])) {
+		if (before.get(id) !== after.get(id)) protectedNow.add(id);
+	}
+	return [
+		...current.filter((record) => protectedNow.has(record.id)),
+		...incoming.filter((record) => !protectedNow.has(record.id)),
+	];
+}
+
 export type UsePdfMarksIoOptions = {
 	/** Sidecar root for `marks/` (null for loose PDFs — nothing is persisted). */
 	paperAbsPath: string | null;
@@ -84,6 +103,8 @@ export type PdfMarksIo = {
 	setThreads: Dispatch<SetStateAction<PdfAskThread[]>>;
 	translates: PdfTranslateRecord[];
 	translatesRef: RefObject<PdfTranslateRecord[]>;
+	/** Local runs and pending writes take precedence over disk refreshes. */
+	protectedTranslateIdsRef: RefObject<Set<string>>;
 	setTranslates: Dispatch<SetStateAction<PdfTranslateRecord[]>>;
 	visualTraces: PdfVisualSessionTrace[];
 	visualTracesRef: RefObject<PdfVisualSessionTrace[]>;
@@ -109,6 +130,7 @@ export function usePdfMarksIo({
 	const threadsRef = useRef(threads);
 	threadsRef.current = threads;
 	const translatesRef = useRef(translates);
+	const protectedTranslateIdsRef = useRef(new Set<string>());
 	translatesRef.current = translates;
 	const visualTracesRef = useRef(visualTraces);
 	visualTracesRef.current = visualTraces;
@@ -160,6 +182,8 @@ export function usePdfMarksIo({
 	useEffect(() => {
 		if (marksLoadedRef.current || !paperAbsPath) return;
 		marksLoadedRef.current = true;
+		const protectedAtStart = new Set(protectedTranslateIdsRef.current);
+		const recordsAtStart = translatesRef.current;
 		void (async () => {
 			const [ts, trs, traces] = await Promise.all([
 				listPdfAskThreads(paperAbsPath),
@@ -167,7 +191,14 @@ export function usePdfMarksIo({
 				listPdfVisualTraces(paperAbsPath),
 			]);
 			if (ts.length) setThreads(ts);
-			if (trs.length) setTranslates(trs);
+			setTranslates((prev) =>
+				mergeTranslateRefresh(
+					prev,
+					trs,
+					new Set([...protectedAtStart, ...protectedTranslateIdsRef.current]),
+					recordsAtStart,
+				),
+			);
 			if (traces.length) {
 				setVisualTraces((prev) => keepUnsavedVisualDrafts(prev, traces));
 			}
@@ -190,6 +221,8 @@ export function usePdfMarksIo({
 		if (!paperAbsPath || !marksLoadedRef.current || !isActive) return;
 		let cancelled = false;
 		const refresh = () => {
+			const protectedAtStart = new Set(protectedTranslateIdsRef.current);
+			const recordsAtStart = translatesRef.current;
 			void Promise.all([
 				listPdfAskThreads(paperAbsPath),
 				listPdfVisualTraces(paperAbsPath),
@@ -208,7 +241,18 @@ export function usePdfMarksIo({
 				lastMarksPollRef.current = fingerprint;
 				setThreads(asks);
 				setVisualTraces((prev) => keepUnsavedVisualDrafts(prev, traces));
-				setTranslates(translates);
+				setTranslates((prev) => {
+					const protectedIds = new Set([
+						...protectedAtStart,
+						...protectedTranslateIdsRef.current,
+					]);
+					return mergeTranslateRefresh(
+						prev,
+						translates,
+						protectedIds,
+						recordsAtStart,
+					);
+				});
 			});
 		};
 		// Immediate refresh on become-active (covers Agent multi-turn writes
@@ -280,6 +324,7 @@ export function usePdfMarksIo({
 		setThreads,
 		translates,
 		translatesRef,
+		protectedTranslateIdsRef,
 		setTranslates,
 		visualTraces,
 		visualTracesRef,

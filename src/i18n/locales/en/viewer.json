@@ -204,6 +204,7 @@
 		"translateHide": "Close card",
 		"translatePin": "Pin",
 		"translateUnpin": "Unpin",
+		"translateUpdateFailed": "Could not update translation.",
 		"translatePinAria": "Open translation: {{preview}}",
 		"translateNoAgent": "No available Agent for translation. Configure one in Settings → Agent.",
 		"translateOpenSettings": "Open translation settings",

@@ -3,6 +3,22 @@ import { describe, expect, it } from "vitest";
 import { pinFromRects, pinObscuresBodyText } from "@/lib/pdf/selection/pin";
 
 describe("pinFromRects", () => {
+	it("anchors a paragraph to its final short line", () => {
+		const pin = pinFromRects([
+			{ x: 0.1, y: 0.2, w: 0.8, h: 0.02 },
+			{ x: 0.1, y: 0.24, w: 0.3, h: 0.02 },
+		]);
+		expect(pin.side).toBe("right");
+		expect(pin.x).toBeGreaterThan(0.4);
+		expect(pin.x).toBeLessThan(0.5);
+		expect(pin.y).toBeCloseTo(0.25);
+	});
+
+	it("keeps a marker inside the page for a full-width line", () => {
+		const pin = pinFromRects([{ x: 0.01, y: 0.3, w: 0.98, h: 0.02 }]);
+		expect(pin.x + 0.003 + 0.04).toBeLessThanOrEqual(0.99);
+	});
+
 	it("prefers the right side of the selection", () => {
 		const rects = [{ x: 0.12, y: 0.3, w: 0.55, h: 0.02 }];
 		const pin = pinFromRects(rects);

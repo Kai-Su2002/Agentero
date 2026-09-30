@@ -37,6 +37,8 @@ import {
 import { useTranslation } from "react-i18next";
 import type { PdfViewerProps } from "@/components/viewer/pdf/types";
 import { cancelAgentRun, disposeAgentRun } from "@/lib/agent";
+import { errorText } from "@/lib/core/error";
+import { notifyError } from "@/lib/core/notify";
 import type { PdfAskAnchor } from "@/lib/pdf/ask/types";
 import type { ActiveSelectionCard } from "@/lib/pdf/selection";
 import {
@@ -58,6 +60,7 @@ export type UsePdfSelectionTranslateOptions = {
 	onOpenSettings: PdfViewerProps["onOpenSettings"];
 	/** Persisted translate records; owned by {@link usePdfMarksIo}. */
 	translatesRef: RefObject<PdfTranslateRecord[]>;
+	protectedTranslateIdsRef: RefObject<Set<string>>;
 	setTranslates: Dispatch<SetStateAction<PdfTranslateRecord[]>>;
 	upsertTranslate: (
 		rec: PdfTranslateRecord,
@@ -95,12 +98,15 @@ export function usePdfSelectionTranslate({
 	vaultPath,
 	onOpenSettings,
 	translatesRef,
+	protectedTranslateIdsRef,
 	setTranslates,
 	upsertTranslate,
 	openCard,
 	activeSessionRef,
 }: UsePdfSelectionTranslateOptions): PdfSelectionTranslate {
 	const { t } = useTranslation("viewer");
+	const tRef = useRef(t);
+	tRef.current = t;
 	const [translateStreaming, setTranslateStreaming] = useState(false);
 	const [translateError, setTranslateError] = useState<string | null>(null);
 	/** ACP session of the running translate turn (null for provider translate). */
@@ -139,39 +145,60 @@ export function usePdfSelectionTranslate({
 	const persistTranslate = useCallback(
 		(rec: PdfTranslateRecord): Promise<void> => {
 			if (!paperAbsPath) return Promise.resolve();
+			protectedTranslateIdsRef.current.add(rec.id);
+			let saved = false;
 			const previous = pendingWritesRef.current.get(rec.id);
 			const save = (previous ?? Promise.resolve())
 				.catch(() => undefined)
 				.then(() => writePdfTranslate(paperAbsPath, rec))
-				.catch(() => undefined);
+				.then(() => {
+					saved = true;
+				})
+				.catch((error) => {
+					notifyError(tRef.current("selection.translateUpdateFailed"), {
+						description: errorText(error),
+					});
+				});
 			pendingWritesRef.current.set(rec.id, save);
 			void save.then(() => {
 				if (pendingWritesRef.current.get(rec.id) === save) {
 					pendingWritesRef.current.delete(rec.id);
+					if (saved && translateRunIdRef.current !== rec.id)
+						protectedTranslateIdsRef.current.delete(rec.id);
 				}
 			});
 			return save;
 		},
-		[paperAbsPath],
+		[paperAbsPath, protectedTranslateIdsRef],
 	);
 
 	const removePersistedTranslate = useCallback(
 		(id: string): Promise<void> => {
 			if (!paperAbsPath) return Promise.resolve();
+			protectedTranslateIdsRef.current.add(id);
+			let removed = false;
 			const previous = pendingWritesRef.current.get(id);
 			const remove = (previous ?? Promise.resolve())
 				.catch(() => undefined)
 				.then(() => deletePdfTranslate(paperAbsPath, id))
-				.catch(() => undefined);
+				.then(() => {
+					removed = true;
+				})
+				.catch((error) => {
+					notifyError(tRef.current("selection.translateUpdateFailed"), {
+						description: errorText(error),
+					});
+				});
 			pendingWritesRef.current.set(id, remove);
 			void remove.then(() => {
 				if (pendingWritesRef.current.get(id) === remove) {
 					pendingWritesRef.current.delete(id);
+					if (removed) protectedTranslateIdsRef.current.delete(id);
 				}
 			});
 			return remove;
 		},
-		[paperAbsPath],
+		[paperAbsPath, protectedTranslateIdsRef],
 	);
 
 	// Closing the viewer must not strand the run's IPC listeners (or the run
@@ -251,6 +278,7 @@ export function usePdfSelectionTranslate({
 				quote,
 			});
 			let currentRecord = upsertTranslate(rec);
+			protectedTranslateIdsRef.current.add(rec.id);
 			temporaryTranslateIdsRef.current.add(rec.id);
 			translateRunIdRef.current = rec.id;
 			openCard({ kind: "translate", id: rec.id });
@@ -324,6 +352,7 @@ export function usePdfSelectionTranslate({
 			paperRelPath,
 			stopTranslateSession,
 			upsertTranslate,
+			protectedTranslateIdsRef,
 			persistTranslate,
 			openCard,
 			activeSessionRef,
