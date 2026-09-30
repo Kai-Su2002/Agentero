@@ -1,5 +1,18 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import * as tauri from "@/lib/core/tauri";
 import { LIBRARY_VIRTUAL_PATH } from "@/lib/paper/api";
+import { vaultStore } from "@/lib/vault/store";
+import {
+	closeTab,
+	hydratePlaceholderTabs,
+	setNotesSplit,
+	syncUpdatedPaperTabs,
+} from "@/lib/workspace/actions";
+import {
+	type DockHandle,
+	registerDockHandle,
+} from "@/lib/workspace/dock-registry";
+import { getTabs, setActiveTabId, setTabs } from "@/lib/workspace/store";
 import {
 	createNotesSplitPane,
 	createPlaceholderTab,
@@ -25,6 +38,7 @@ import {
 	tabIsPaperNotes,
 	tabNotesEligible,
 } from "@/lib/workspace/tabs";
+import * as tabResources from "@/lib/workspace/tabs/resources";
 
 function makeTab(path: string, overrides: Partial<DocTab> = {}): DocTab {
 	return { ...createPlaceholderTab(path), ...overrides };
@@ -65,6 +79,37 @@ describe("createPlaceholderTab", () => {
 		expect(tab.title).toBe("Library");
 		expect(tab.mode).toBe("markdown");
 	});
+});
+
+it("restores a dotted paper folder only after the tree identifies its owner", async () => {
+	const path = "/vault/papers/topic/2606.04046";
+	const tab = makeTab(path, { mode: "pdf" });
+	const previousVault = vaultStore.getState();
+	const previousTabs = getTabs();
+	vi.spyOn(tauri, "isTauri").mockReturnValue(true);
+	const load = vi
+		.spyOn(tabResources, "loadTabResources")
+		.mockResolvedValue(makeResources({ notesPath: null }));
+	try {
+		vaultStore.setState({
+			vaultPath: "/vault",
+			tree: [],
+			paperFolders: [],
+			treeLoading: true,
+		});
+		setTabs([tab]);
+		hydratePlaceholderTabs([tab.id]);
+		expect(load).not.toHaveBeenCalled();
+
+		vaultStore.setState({ treeLoading: false, paperFolders: [path] });
+		hydratePlaceholderTabs([tab.id]);
+		await vi.waitFor(() => expect(getTabs()[0]?.loaded).toBe(true));
+		expect(load).toHaveBeenCalledExactlyOnceWith(path, "/vault", [], [path]);
+	} finally {
+		vi.restoreAllMocks();
+		vaultStore.setState(previousVault);
+		setTabs(previousTabs);
+	}
 });
 
 describe("insertPlaceholderTab", () => {
@@ -638,5 +683,120 @@ describe("flat workspace helpers", () => {
 		expect(readingPairCloseIds(open, notes.id)).toEqual([notes.id]);
 		expect(readingPairCloseIds([paper], paper.id)).toEqual([paper.id]);
 		expect(readingPairCloseIds([notes], notes.id)).toEqual([notes.id]);
+	});
+
+	it("closeTab never closes the resident Library tab", () => {
+		const library = makeTab(LIBRARY_VIRTUAL_PATH);
+		const paper = makeTab("/vault/p", {
+			kind: "paper",
+			mode: "pdf",
+			notesPath: "/vault/p/NOTES.md",
+			paperMeta: { path: "p", title: "P" } as DocTab["paperMeta"],
+		});
+		setTabs([library, paper]);
+		closeTab(library.id);
+		expect(getTabs().map((t) => t.id)).toEqual([
+			LIBRARY_VIRTUAL_PATH,
+			paper.id,
+		]);
+		closeTab(paper.id);
+		expect(getTabs().map((t) => t.id)).toEqual([LIBRARY_VIRTUAL_PATH]);
+	});
+
+	it("syncUpdatedPaperTabs updates paper tab title and metadata while preserving notes title", () => {
+		const vault = "/vault";
+		const paperTab = makeTab("/vault/papers/test-paper", {
+			kind: "paper",
+			title: "Old Paper Title",
+			mode: "pdf",
+			notesPath: "/vault/papers/test-paper/NOTES.md",
+			paperMeta: {
+				id: "paper-1",
+				path: "papers/test-paper",
+				title: "Old Paper Title",
+			} as DocTab["paperMeta"],
+		});
+		const notesTab = makeTab("/vault/papers/test-paper/NOTES.md", {
+			kind: "file",
+			title: "Notes",
+			mode: "markdown",
+			notesPath: "/vault/papers/test-paper/NOTES.md",
+			paperMeta: {
+				id: "paper-1",
+				path: "papers/test-paper",
+				title: "Old Paper Title",
+			} as DocTab["paperMeta"],
+		});
+		const otherTab = makeTab("/vault/notes/todo.md", {
+			kind: "file",
+			title: "todo.md",
+			mode: "markdown",
+		});
+
+		setTabs([paperTab, notesTab, otherTab]);
+
+		syncUpdatedPaperTabs(
+			vault,
+			"papers/test-paper",
+			{
+				title: "Brand New Paper Title",
+				year: 2026,
+			},
+			"paper-1",
+		);
+
+		const updated = getTabs();
+		const updatedPaper = updated.find((t) => t.id === paperTab.id);
+		const updatedNotes = updated.find((t) => t.id === notesTab.id);
+		const updatedOther = updated.find((t) => t.id === otherTab.id);
+
+		expect(updatedPaper?.title).toBe("Brand New Paper Title");
+		expect(updatedPaper?.paperMeta?.title).toBe("Brand New Paper Title");
+		expect(updatedPaper?.paperMeta?.year).toBe(2026);
+
+		expect(updatedNotes?.title).toBe("Notes");
+		expect(updatedNotes?.paperMeta?.title).toBe("Brand New Paper Title");
+		expect(updatedNotes?.paperMeta?.year).toBe(2026);
+
+		expect(updatedOther?.title).toBe("todo.md");
+	});
+});
+
+describe("Notes layout actions", () => {
+	it("preserves an existing split and remembers/restores it across close and reopen", () => {
+		const paper = makeTab("/vault/p", {
+			kind: "paper",
+			mode: "pdf",
+			notesPath: "/vault/p/NOTES.md",
+		});
+		const notes = createNotesSplitPane(paper);
+		if (!notes) throw new Error("Missing notes fixture");
+		const handle = {
+			openPanel: vi.fn(),
+			rememberNotesSplitWidth: vi.fn(),
+			restoreNotesSplitWidth: vi.fn(),
+		};
+		registerDockHandle(handle as unknown as DockHandle);
+		try {
+			setTabs([paper, notes]);
+			setActiveTabId(paper.id);
+			setNotesSplit(true, { preserveLayoutMode: true });
+			expect(handle.openPanel).not.toHaveBeenCalled();
+			expect(handle.restoreNotesSplitWidth).not.toHaveBeenCalled();
+			setNotesSplit(false, { preserveLayoutMode: true });
+			expect(handle.rememberNotesSplitWidth).toHaveBeenCalledWith(
+				paper.id,
+				notes.id,
+			);
+			setActiveTabId(paper.id);
+			setNotesSplit(true, { preserveLayoutMode: true });
+			expect(handle.openPanel).toHaveBeenCalled();
+			expect(handle.restoreNotesSplitWidth).toHaveBeenCalledWith(
+				paper.id,
+				notes.id,
+			);
+		} finally {
+			registerDockHandle(null);
+		}
 	});
 });

@@ -13,7 +13,6 @@
 		"copyPathFailed": "无法复制路径",
 		"downloadAssets": "下载论文资源",
 		"downloadAllMissing": "下载全部不完整的论文资源",
-		"downloadFailed": "下载论文资源失败。",
 		"downloadReason": {
 			"noPdf": "缺少 PDF",
 			"noBody": "缺少 TeX 与 PAPER.md（有其一即可，优先 TeX）"
@@ -125,18 +124,20 @@
 		"rescanFailed": "重新扫描失败。",
 		"colTitle": "标题",
 		"colAuthors": "作者",
-		"colYear": "年份",
+		"colAddedAt": "添加日期",
+		"colDate": "日期",
 		"colTags": "标签",
 		"colId": "标识符",
 		"colPublication": "出版物",
 		"colCitations": "被引量",
 		"heatmapTooltip": "{{total}} 次 · 高亮 {{highlights}} · 对话 {{asks}} · 翻译 {{translates}}",
+		"resizeColumn": "调整{{column}}列宽",
 		"sortBy": "按{{column}}排序",
 		"copyHint": "双击复制{{label}}",
 		"copied": "已复制{{label}}",
 		"copyFailed": "无法复制到剪贴板",
 		"count": "共 {{formatted}} 篇",
-		"search": "按标题或标签搜索",
+		"search": "按标题、作者、ID、DOI 或标签搜索",
 		"filterTags": "按标签筛选",
 		"filterTagsEmpty": "当前库中还没有标签。",
 		"clearTagFilter": "清除标签筛选",
@@ -160,9 +161,6 @@
 		"recognizeArxivRateLimited": "arXiv 接口限流（{{id}}），未能补全标题/作者。请稍后再点「刷新元数据」。",
 		"importFailed": "导入失败",
 		"exportFailed": "导出失败",
-		"backfillPublication": "补全期刊/会议",
-		"backfillPublicationDone": "已补全 {{updated}} / {{total}} 篇期刊/会议",
-		"backfillPublicationFailed": "补全期刊/会议失败",
 		"desktopOnly": "导入/导出需要桌面应用。",
 		"refreshMetadata": "刷新元数据",
 		"refreshMetadataDone": "元数据已刷新",
@@ -206,11 +204,6 @@
 			"add": "添加订阅",
 			"urlPlaceholder": "Feed URL",
 			"all": "全部",
-			"filter": {
-				"all": "全部",
-				"paper": "论文",
-				"other": "其它"
-			},
 			"refresh": "刷新",
 			"refreshOne": "立即刷新",
 			"rename": "重命名",
@@ -241,7 +234,8 @@
 				"parse": "无法解析这个 Feed。",
 				"http": "源站返回了错误。",
 				"fetch": "拉源失败。",
-				"body": "无法读取 Feed 内容。"
+				"body": "无法读取 Feed 内容。",
+				"opFailed": "订阅源操作失败。"
 			}
 		},
 		"skills": {
@@ -257,10 +251,6 @@
 				"submit": "投稿"
 			}
 		}
-	},
-	"connector": {
-		"saved": "已从浏览器保存「{{title}}」",
-		"deduped": "库中已有：「{{title}}」"
 	},
 	"zoteroMigrate": {
 		"button": "从 Zotero 迁移",
@@ -282,7 +272,6 @@
 		"allFolders": "全部文件夹",
 		"selectedCount": "已选 {{sel}} / {{total}}",
 		"progressLabel": "迁移中 {{current}} / {{total}}",
-		"parseProgressLabel": "正在解析 PDF {{current}} / {{total}}",
 		"copyPdfs": "把 PDF 复制进知识库",
 		"migrateNotes": "迁移 Zotero 笔记",
 		"migrateAnnotations": "迁移 PDF 高亮批注",
@@ -343,7 +332,6 @@
 		"fetchFailed": "获取元数据失败。",
 		"needsVault": "请先打开知识库。",
 		"batchEmpty": "未识别到有效标识符。",
-		"batchSummary": "已导入 {{imported}} 篇论文、{{skills}} 个 Skill，跳过 {{skipped}} 条，失败 {{failed}} 条",
 		"skillImportTitle": "选择要安装的 Skill",
 		"skillImportCancel": "取消",
 		"skillImportConfirm": "安装 {{count}} 个",
@@ -366,11 +354,22 @@
 		"selectPrompt": "选择一篇论文以查看元数据。",
 		"title": "标题",
 		"authors": "作者",
-		"year": "年份",
+		"date": "日期",
 		"publication": "出版物",
 		"tags": "标签",
 		"addTag": "添加标签…",
 		"removeTag": "移除标签 {{tag}}",
+		"editTagColor": "修改 {{tag}} 的颜色",
+		"tagColors": {
+			"red": "红色",
+			"orange": "橙色",
+			"yellow": "黄色",
+			"green": "绿色",
+			"teal": "青色",
+			"blue": "蓝色",
+			"indigo": "靛蓝色",
+			"purple": "紫色"
+		},
 		"tagColor": "标签颜色",
 		"tagColorDefault": "默认（无颜色）",
 		"tagColorNamed": "颜色 {{color}}",
@@ -388,7 +387,7 @@
 			"fieldTitle": "标题",
 			"fieldAuthors": "作者",
 			"authorsPlaceholder": "每行一位作者",
-			"fieldYear": "年份",
+			"fieldDate": "日期",
 			"fieldArxivId": "arXiv 编号",
 			"fieldDoi": "DOI",
 			"fieldPublication": "期刊 / 会议",

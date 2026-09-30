@@ -82,9 +82,9 @@ export function usePdfVisualMarks({
 	const { t } = useTranslation("viewer");
 
 	/**
-	 * Persist a freshly-cropped region as a note-only visual mark. When
-	 * `beginEdit` is true (default) the new mark is opened in the right-rail
-	 * comment editor so the user can type the note immediately (#396).
+	 * Hold a freshly-cropped region in memory and open the rail editor.
+	 * An empty note is not written until the user commits text: blur, outside
+	 * click, or Escape drops the draft instead of leaving an empty box.
 	 */
 	const handleVisualDraft = useCallback(
 		(draft: VisualDraftEditorState, beginEdit = true) => {
@@ -105,12 +105,6 @@ export function usePdfVisualMarks({
 				return;
 			}
 			upsertVisualTrace(mark);
-			if (paperAbsPath) {
-				void writePdfVisualTrace(paperAbsPath, mark).catch((error) => {
-					console.warn("[visual-mark] save note failed", error);
-					notifyError(errorText(error));
-				});
-			}
 			if (beginEdit) {
 				beginRailEditRef.current?.({
 					id: mark.id,
@@ -121,6 +115,12 @@ export function usePdfVisualMarks({
 					color: DEFAULT_HIGHLIGHT_COLOR,
 					anchorY: draft.region.y,
 					rects: [draft.region],
+					isNew: true,
+				});
+			} else if (paperAbsPath) {
+				void writePdfVisualTrace(paperAbsPath, mark).catch((error) => {
+					console.warn("[visual-mark] save note failed", error);
+					notifyError(errorText(error));
 				});
 			}
 		},

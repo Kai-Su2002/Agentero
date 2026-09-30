@@ -1,10 +1,4 @@
-import {
-	ChevronRight,
-	Cloud,
-	CloudUpload,
-	LoaderCircle,
-	Unplug,
-} from "lucide-react";
+import { ChevronRight, CloudUpload, LoaderCircle, Unplug } from "lucide-react";
 import type { ComponentType } from "react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -16,6 +10,7 @@ import {
 	SiMinio,
 	SiNextcloud,
 } from "react-icons/si";
+import { JianguoyunIcon } from "@/components/icons/jianguoyun-icon";
 import {
 	HelpLabel,
 	PageTitle,
@@ -43,6 +38,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { formatLocaleTimestamp } from "@/i18n";
 import { formatBytes } from "@/lib/core/background-tasks";
 import { events } from "@/lib/core/bindings";
 import { errorMessage, notifyError, notifySuccess } from "@/lib/core/notify";
@@ -119,10 +115,10 @@ const SYNC_PROVIDER_LINKS: SyncProviderLink[] = [
 const WEBDAV_PROVIDER_LINKS: SyncProviderLink[] = [
 	{
 		id: "jianguoyun",
-		name: "坚果云",
+		name: "Jianguoyun",
 		docsUrl: "https://help.jianguoyun.com/?p=2064",
-		icon: Cloud,
-		iconClassName: "text-[#2E7CF6]",
+		icon: JianguoyunIcon,
+		iconClassName: "text-[#C7792B]",
 	},
 	{
 		id: "nextcloud",
@@ -328,7 +324,7 @@ export function SyncPane({ vaultPath }: { vaultPath: string | null }) {
 				})
 			: status?.lastSyncAt
 				? t("sync.lastSync", {
-						time: new Date(status.lastSyncAt).toLocaleString(),
+						time: formatLocaleTimestamp(status.lastSyncAt),
 					})
 				: status?.configured
 					? t("sync.neverSynced")

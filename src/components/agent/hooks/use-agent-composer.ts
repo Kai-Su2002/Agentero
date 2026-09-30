@@ -17,6 +17,7 @@ import {
 } from "react";
 import type { ComposerInlineInputHandle } from "@/components/agent/composer/composer-inline-input";
 import type { AgentPanelRefs } from "@/components/agent/hooks/use-agent-panel-context";
+import { usePlazaMentionSource } from "@/components/agent/hooks/use-plaza-mention-source";
 import {
 	useSelectionStore,
 	useVisualContextStore,
@@ -31,6 +32,7 @@ import {
 	encodeSelectionToken,
 	encodeSkillToken,
 	extractMentionPaths,
+	extractSelectionTokens,
 	extractSkillIds,
 	plainTriggerSuffix,
 	replaceTrailingTriggerWithToken,
@@ -56,6 +58,7 @@ import {
 	mentionPathHasChildren,
 	pushRecentMentionPath,
 } from "@/lib/agent/mention";
+import { isPlazaCollectionPath } from "@/lib/agent/plaza-mention";
 import { stripPromptEnvelopeForDisplay } from "@/lib/agent/prompt-display";
 import {
 	removeSelection,
@@ -229,34 +232,39 @@ export function useAgentComposer({
 	// Ref exposed to AgentComposer so it can be wired to ComposerInlineInput.
 	const composerInputRef = useRef<ComposerInlineInputHandle>(null);
 
-	// Only explicitly pinned selections (Add to chat / ⌘K / ⌘L) become chips.
-	// Live drag-selection stays in the store so pinActiveSelection can freeze it,
-	// but is never shown or auto-inserted into the composer.
+	// Only explicitly pinned selections (Add to chat / ⌘L / ⇧⌘A) enter the draft.
+	// Live drag-selection stays in the store until pinActiveSelection freezes it.
 	const pinnedSelections = useSelectionStore((s) => s.pinned);
 	const selectionChips = pinnedSelections;
 
-	// Inline-ify newly pinned selections at the composer caret, then drop them
-	// from the ephemeral store. Visual drafts still use the round chip row.
+	// Move newly pinned selections into the draft's annotation summary, then
+	// drop them from the ephemeral store. They are hidden from the inline editor.
 	const prevPinnedRef = useRef<SelectionContext[]>([]);
 	useEffect(() => {
 		const prev = prevPinnedRef.current;
 		const inserted: SelectionContext[] = [];
 		for (const sel of pinnedSelections) {
 			if (!prev.some((p) => p.id === sel.id)) {
-				composerInputRef.current?.insertAtCursor(
-					encodeSelectionToken(sel),
-					true,
-				);
 				inserted.push(sel);
 			}
 		}
 		if (inserted.length > 0) {
+			setComposerText((current) => {
+				const existing = new Set(
+					extractSelectionTokens(current).map((selection) => selection.id),
+				);
+				const tokens = inserted
+					.filter((selection) => !existing.has(selection.id))
+					.map(encodeSelectionToken)
+					.join("");
+				return tokens ? `${tokens}${current}` : current;
+			});
 			for (const sel of inserted) {
 				removeSelection(sel.id);
 			}
 		}
 		prevPinnedRef.current = pinnedSelections;
-	}, [pinnedSelections]);
+	}, [pinnedSelections, setComposerText]);
 
 	const visualDrafts = useVisualContextStore((s) => s.drafts);
 
@@ -267,15 +275,33 @@ export function useAgentComposer({
 	const mentionQueryRaw = mentionMatch?.[2] ?? "";
 	const mentionQuery = mentionQueryRaw.toLocaleLowerCase();
 
-	const mentionCandidates = useMemo(
-		() =>
-			buildMentionCandidatePaths({
-				markdownPaths: vaultMarkdownPaths,
-				directoryPaths: vaultDirectoryPaths,
-				paperPaths: vaultPaperPaths,
-			}),
-		[vaultDirectoryPaths, vaultMarkdownPaths, vaultPaperPaths],
-	);
+	const plazaMentionEntries = usePlazaMentionSource(vaultPath);
+
+	const mentionCandidates = useMemo(() => {
+		const vaultPaths = buildMentionCandidatePaths({
+			markdownPaths: vaultMarkdownPaths,
+			directoryPaths: vaultDirectoryPaths,
+			paperPaths: vaultPaperPaths,
+		});
+		// Plaza entries are virtual leaves (arXiv Daily / Feeds); they surface
+		// on typed title queries or as recents, never in the shallow tree.
+		return [...vaultPaths, ...plazaMentionEntries.map((entry) => entry.path)];
+	}, [
+		plazaMentionEntries,
+		vaultDirectoryPaths,
+		vaultMarkdownPaths,
+		vaultPaperPaths,
+	]);
+
+	/** Vault paper titles + plaza titles/sources, both searchable via `@`. */
+	const mentionSearchLabels = useMemo(() => {
+		if (plazaMentionEntries.length === 0) return mentionLabelsByPath;
+		const map = new Map(mentionLabelsByPath);
+		for (const entry of plazaMentionEntries) {
+			map.set(entry.path, `${entry.title} ${entry.sourceLabel}`);
+		}
+		return map;
+	}, [mentionLabelsByPath, plazaMentionEntries]);
 
 	const [recentMentionPaths, setRecentMentionPaths] = useState<string[]>(() => {
 		try {
@@ -318,6 +344,14 @@ export function useAgentComposer({
 		}
 	}, [composerMenuDismissed, mentionMatch]);
 
+	/** Whole-list entries (the arXiv Daily collection) stay visible at `@`. */
+	const pinnedMentionPaths = useMemo(() => {
+		const pinned = plazaMentionEntries
+			.map((entry) => entry.path)
+			.filter(isPlazaCollectionPath);
+		return pinned.length ? pinned : null;
+	}, [plazaMentionEntries]);
+
 	const mentionOptions = useMemo(() => {
 		if (!mentionMatch) return [];
 		return filterMentionOptions({
@@ -325,17 +359,19 @@ export function useAgentComposer({
 			query: mentionQuery,
 			exclude: contextPaths,
 			recent: recentMentionPaths,
-			labelsByPath: mentionLabelsByPath,
+			labelsByPath: mentionSearchLabels,
 			browseRoot: mentionBrowseRoot,
+			pinned: pinnedMentionPaths,
 			limit: 8,
 		});
 	}, [
 		contextPaths,
 		mentionBrowseRoot,
 		mentionCandidates,
-		mentionLabelsByPath,
 		mentionMatch,
 		mentionQuery,
+		mentionSearchLabels,
+		pinnedMentionPaths,
 		recentMentionPaths,
 	]);
 

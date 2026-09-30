@@ -1,5 +1,6 @@
 import type { LucideIcon } from "lucide-react";
 import { motion, useReducedMotion } from "motion/react";
+import { Dialog } from "radix-ui";
 import {
 	type ReactNode,
 	type PointerEvent as ReactPointerEvent,
@@ -17,6 +18,7 @@ import { PDF_FLOAT_CARD } from "@/components/viewer/pdf/chrome/pdf-chrome-surfac
 import type { ScreenPoint } from "@/components/viewer/pdf/types";
 import { clamp } from "@/lib/core/math";
 import { cn } from "@/lib/core/utils";
+import { useSelectionOverlayGuard } from "@/lib/workspace/selection-overlay";
 
 /** Minimum inset from the viewport edges (px). */
 export const SELECTION_CARD_EDGE = 12;
@@ -31,6 +33,8 @@ type SelectionCardAction = {
 	icon: ReactNode;
 	/** Destructive styling for the header icon button */
 	destructive?: boolean;
+	/** Pressed state for toggle actions such as pin / unpin. */
+	pressed?: boolean;
 };
 
 type PlaceSelectionCardOptions = {
@@ -194,13 +198,16 @@ type SelectionCardProps = {
 	bodyScroll?: boolean;
 	preferRight?: boolean;
 	title: string;
-	icon: LucideIcon;
+	/** Optional header glyph; omit for a title-only header. */
+	icon?: LucideIcon;
 	/** Header trailing icon buttons (close / hide / delete …). */
 	actions?: SelectionCardAction[];
 	/** Accessible name; defaults to title. */
 	ariaLabel?: string;
 	/** Announce body updates (e.g. streaming translation). */
 	ariaLive?: "polite" | "off";
+	/** Dismiss this card on Escape or pointer interaction outside it. */
+	onDismiss?: () => void;
 	onPointerEnter?: () => void;
 	onPointerLeave?: () => void;
 	/** Optional footer strip (prompt input, save/cancel). */
@@ -232,6 +239,7 @@ export function SelectionCard({
 	actions,
 	ariaLabel,
 	ariaLive = "off",
+	onDismiss,
 	onPointerEnter,
 	onPointerLeave,
 	footer,
@@ -241,6 +249,9 @@ export function SelectionCard({
 }: SelectionCardProps) {
 	const rootRef = useRef<HTMLDivElement>(null);
 	const reduceMotion = useReducedMotion();
+	// Suspend dockview drag-and-drop while this card floats over the tab strip
+	// so a stray drag cannot split the layout (#608).
+	useSelectionOverlayGuard();
 	const { left, top, maxHeight } = placeSelectionCard(screen, {
 		width,
 		height,
@@ -258,6 +269,11 @@ export function SelectionCard({
 	const transition = reduceMotion
 		? { duration: 0 }
 		: { type: "spring" as const, bounce: 0.15, duration: 0.35 };
+	const titleNode = (
+		<span className="min-w-0 flex-1 truncate font-medium text-foreground text-sm">
+			{title}
+		</span>
+	);
 
 	// If the card mounts / remounts under an existing pointer (mode switch,
 	// open under cursor), browsers do not re-fire pointerenter — re-arm the
@@ -275,7 +291,7 @@ export function SelectionCard({
 		onPointerLeave?.();
 	};
 
-	return (
+	const card = (
 		<motion.div
 			ref={rootRef}
 			className={cn(
@@ -311,10 +327,17 @@ export function SelectionCard({
 			onPointerLeave={handlePointerLeave}
 		>
 			<header className="flex shrink-0 items-center gap-2 border-border/60 border-b px-3 py-2">
-				<Icon className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
-				<span className="min-w-0 flex-1 truncate font-medium text-foreground text-sm">
-					{title}
-				</span>
+				{Icon ? (
+					<Icon
+						className="size-3.5 shrink-0 text-muted-foreground"
+						aria-hidden
+					/>
+				) : null}
+				{onDismiss ? (
+					<Dialog.Title asChild>{titleNode}</Dialog.Title>
+				) : (
+					titleNode
+				)}
 				{actions && actions.length > 0 ? (
 					// disableHoverableContent: tooltip is portaled outside the card;
 					// moving into it would fire pointerleave and start the hide timer.
@@ -326,15 +349,18 @@ export function SelectionCard({
 										<button
 											type="button"
 											aria-label={a.label}
+											aria-pressed={a.pressed}
 											// Native button (not ghost Button): avoid variant
 											// hover:text-foreground fighting the red icon color.
 											className={cn(
 												"inline-flex size-6 shrink-0 items-center justify-center rounded-md",
 												"text-muted-foreground transition-colors outline-none",
 												"focus-visible:ring-2 focus-visible:ring-ring/50",
-												a.destructive
-													? "hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
-													: "hover:bg-muted hover:text-foreground",
+												a.pressed
+													? "bg-primary/10 text-primary hover:bg-primary/15 hover:text-primary"
+													: a.destructive
+														? "hover:bg-red-500/10 hover:text-red-600 dark:hover:text-red-400"
+														: "hover:bg-muted hover:text-foreground",
 											)}
 											onClick={a.onClick}
 										>
@@ -375,4 +401,27 @@ export function SelectionCard({
 			) : null}
 		</motion.div>
 	);
+
+	if (onDismiss) {
+		return (
+			<Dialog.Root
+				open
+				modal={false}
+				onOpenChange={(open) => {
+					if (!open) onDismiss();
+				}}
+			>
+				<Dialog.Content
+					asChild
+					aria-describedby={undefined}
+					onOpenAutoFocus={(event) => event.preventDefault()}
+					onCloseAutoFocus={(event) => event.preventDefault()}
+				>
+					{card}
+				</Dialog.Content>
+			</Dialog.Root>
+		);
+	}
+
+	return card;
 }

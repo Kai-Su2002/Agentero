@@ -55,11 +55,14 @@ export type ZoomGestureBindingOptions = {
  * scroll gesture starts and comes back once the wheel stream goes idle. A pinch
  * that begins mid-scroll still zooms; only that first tick keeps its default.
  *
- * On WebKit (Safari / macOS WKWebView) trackpad pinch never arrives as
- * ctrl+wheel; it is delivered as gesturestart/gesturechange/gestureend
- * instead. Those are default-prevented so the platform magnify is suppressed
- * and reported through the same start/change/end callbacks, with the scale
- * ratio measured against the start of the gesture.
+ * Delivery of a pinch differs per engine. On WebKit (Safari / macOS WKWebView)
+ * it never arrives as ctrl+wheel — it comes as
+ * gesturestart/gesturechange/gestureend instead. Those are default-prevented so
+ * the platform magnify is suppressed and reported through the same
+ * start/change/end callbacks, with the scale
+ * ratio measured against the start of the gesture. On WebView2 (Windows) a
+ * trackpad pinch never reaches the page at all: the renderer consumes it in the
+ * compositor, so only the Ctrl/Cmd+wheel path applies there.
  */
 export function bindZoomGesture({
 	target,
@@ -172,38 +175,4 @@ export function bindZoomGesture({
 			target.removeEventListener("gestureend", handleGestureEnd);
 		},
 	};
-}
-
-/**
- * Horizontal scroll offset that recenters the active page in the viewport
- * after a zoom commit.
- *
- * EmbedPDF anchors zoom on the `clientWidth` it observes, which has the
- * comment-rail `rightGutter` subtracted (see DockviewViewport.commitResize),
- * so the page lands biased ~`rightGutter / 2` left of the real screen center.
- * This adds the page-vs-viewport center mismatch back onto `scrollLeft` and
- * clamps it to the container's scroll range; only the horizontal offset is
- * touched (scrollTop is preserved).
- *
- * Only call this when `scrollWidth > clientWidth` (a horizontal scrollbar
- * exists); when there is no horizontal overflow there is no room to recenter,
- * so the original `scrollLeft` is returned unchanged.
- */
-export function computeCenteredScrollLeft({
-	scrollLeft,
-	scrollWidth,
-	clientWidth,
-	pageCenter,
-	viewportCenter,
-}: {
-	scrollLeft: number;
-	scrollWidth: number;
-	clientWidth: number;
-	pageCenter: number;
-	viewportCenter: number;
-}): number {
-	const maxScrollLeft = Math.max(0, scrollWidth - clientWidth);
-	if (maxScrollLeft <= 0) return scrollLeft;
-	const next = scrollLeft + (pageCenter - viewportCenter);
-	return Math.max(0, Math.min(next, maxScrollLeft));
 }

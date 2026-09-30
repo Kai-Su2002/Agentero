@@ -5,6 +5,7 @@
 
 use async_trait::async_trait;
 
+use crate::features::paper::util::collapse_ws;
 use crate::features::scholar_api::client;
 use crate::features::scholar_api::traits::AcademicApi;
 use crate::features::scholar_api::{
@@ -15,6 +16,20 @@ const SOURCE: &str = "pubmed";
 const EUTILS_BASE: &str = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils";
 const EMAIL: &str = "agentero@users.noreply.github.com";
 const TOOL: &str = "agentero";
+
+/// Optional `api_key` query suffix for NCBI E-utilities. A free key from
+/// NCBI raises the per-IP rate limit from 3 to 10 requests/second.
+/// Pure so the suffix shape is unit-testable without touching the environment.
+fn api_key_suffix(key: Option<&str>) -> String {
+    match key.map(str::trim).filter(|k| !k.is_empty()) {
+        Some(k) => format!("&api_key={}", urlencoding::encode(k)),
+        None => String::new(),
+    }
+}
+
+fn env_api_key_suffix() -> String {
+    api_key_suffix(std::env::var("NCBI_API_KEY").ok().as_deref())
+}
 
 /// PubMed metadata source.
 #[derive(Debug, Clone, Default)]
@@ -47,8 +62,9 @@ impl AcademicApi for PubMedApi {
 
 async fn search_by_title(title: &str, limit: usize) -> Result<Vec<ApiPaper>, ApiError> {
     let search_url = format!(
-        "{EUTILS_BASE}/esearch.fcgi?db=pubmed&term={}&retmax={limit}&retmode=json&email={EMAIL}&tool={TOOL}",
-        urlencoding::encode(title)
+        "{EUTILS_BASE}/esearch.fcgi?db=pubmed&term={}&retmax={limit}&retmode=json&email={EMAIL}&tool={TOOL}{}",
+        urlencoding::encode(title),
+        env_api_key_suffix()
     );
     let search_value = client::get_json(&search_url).await?;
     let pmids: Vec<String> = search_value
@@ -81,7 +97,8 @@ async fn fetch_by_pmids(pmids: &[String]) -> Result<Vec<ApiPaper>, ApiError> {
     }
     let ids = pmids.join(",");
     let fetch_url = format!(
-        "{EUTILS_BASE}/efetch.fcgi?db=pubmed&id={ids}&rettype=xml&retmode=xml&email={EMAIL}&tool={TOOL}"
+        "{EUTILS_BASE}/efetch.fcgi?db=pubmed&id={ids}&rettype=xml&retmode=xml&email={EMAIL}&tool={TOOL}{}",
+        env_api_key_suffix()
     );
     let xml = client::get_text(&fetch_url).await?;
     Ok(parse_articles(&xml))
@@ -131,7 +148,13 @@ fn parse_article(xml: &str) -> Option<ApiPaper> {
         })
         .collect();
 
-    let year = tag_text(xml, "Year")
+    // The first `<PubDate>` is the journal issue date; it carries the day for
+    // print articles and often only the month for online-first ones.
+    let pub_date = tag_text(xml, "PubDate");
+    let year = pub_date
+        .as_deref()
+        .and_then(|p| tag_text(p, "Year"))
+        .or_else(|| tag_text(xml, "Year"))
         .and_then(|y| y.parse::<i32>().ok())
         .or_else(|| {
             tag_text(xml, "MedlineDate").and_then(|d| {
@@ -143,7 +166,22 @@ fn parse_article(xml: &str) -> Option<ApiPaper> {
                     .ok()
             })
         });
-    let date = year.map(|y| y.to_string());
+    let date = year.map(|y| {
+        let month = pub_date
+            .as_deref()
+            .and_then(|p| tag_text(p, "Month"))
+            .and_then(|m| month_number(&m));
+        let day = pub_date
+            .as_deref()
+            .and_then(|p| tag_text(p, "Day"))
+            .and_then(|d| d.trim().parse::<u32>().ok())
+            .filter(|d| (1..=31).contains(d));
+        match (month, day) {
+            (Some(month), Some(day)) => format!("{y:04}-{month:02}-{day:02}"),
+            (Some(month), None) => format!("{y:04}-{month:02}"),
+            _ => format!("{y:04}"),
+        }
+    });
 
     let venue = tag_text(xml, "Journal").and_then(|journal| tag_text(&journal, "Title"));
     let volume = tag_text(xml, "Volume");
@@ -220,6 +258,22 @@ fn tag_text(xml: &str, tag: &str) -> Option<String> {
     None
 }
 
+/// PubMed months are 3-letter abbreviations (`Jun`); numeric values pass through.
+fn month_number(text: &str) -> Option<u32> {
+    let trimmed = text.trim();
+    if let Ok(value) = trimmed.parse::<u32>() {
+        return (1..=12).contains(&value).then_some(value);
+    }
+    const MONTHS: [&str; 12] = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ];
+    let lower = trimmed.to_ascii_lowercase();
+    MONTHS
+        .iter()
+        .position(|month| lower.starts_with(month))
+        .map(|index| index as u32 + 1)
+}
+
 /// Extract text from every `<tag …>…</tag>` fragment in `xml`.
 fn split_tagged_fragments(xml: &str, tag: &str) -> Vec<String> {
     let mut out = Vec::new();
@@ -271,13 +325,20 @@ fn article_id(xml: &str, kind: &str) -> Option<String> {
     None
 }
 
-fn collapse_ws(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn api_key_suffix_empty_without_key() {
+        assert_eq!(api_key_suffix(None), "");
+        assert_eq!(api_key_suffix(Some("  ")), "");
+    }
+
+    #[test]
+    fn api_key_suffix_encodes_key() {
+        assert_eq!(api_key_suffix(Some("abc 123")), "&api_key=abc%20123");
+    }
 
     #[test]
     fn tag_text_handles_attributes() {
@@ -338,6 +399,7 @@ mod tests {
             Some("10.1038/s41586-022-00001-x")
         );
         assert_eq!(paper.year, Some(2022));
+        assert_eq!(paper.date.as_deref(), Some("2022-01"));
         assert_eq!(paper.venue.as_deref(), Some("Nature"));
         assert_eq!(paper.volume.as_deref(), Some("600"));
         assert_eq!(paper.issue.as_deref(), Some("1"));

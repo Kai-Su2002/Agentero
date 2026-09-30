@@ -378,7 +378,7 @@ export async function setPaperTags(
 export type PaperMetaPatch = {
 	title?: string;
 	authors?: string[];
-	year?: string;
+	date?: string;
 	doi?: string;
 	arxivId?: string;
 	publication?: string;
@@ -414,7 +414,7 @@ export async function updatePaperMeta(
 	const wirePatch: PaperMetaPatchWire = {
 		title: patch.title ?? null,
 		authors: patch.authors ?? null,
-		year: patch.year ?? null,
+		date: patch.date ?? null,
 		doi: patch.doi ?? null,
 		arxivId: patch.arxivId ?? null,
 		publication: patch.publication ?? null,
@@ -461,36 +461,6 @@ export async function resolveIdentifierMetadata(
 		{ fallback: i18n.t("sidebar:paperInfo.editMeta.fetchFailed") },
 	);
 	return paperFromWire(record);
-}
-
-export type PaperBackfillPublicationResult = {
-	total: number;
-	updated: number;
-	failed: number;
-	errors: string[];
-};
-
-export async function backfillPublication(
-	vaultPath: string,
-	settings?: AppSettings,
-): Promise<PaperBackfillPublicationResult> {
-	if (!isTauri()) {
-		throw new Error(i18n.t("sidebar:papersLibrary.desktopOnly"));
-	}
-	const r = await callApiResult(
-		() =>
-			commands.paperBackfillPublication({
-				vaultPath,
-				translatorBaseUrl: translatorBase(settings),
-			}),
-		{ fallback: i18n.t("sidebar:papersLibrary.backfillPublicationFailed") },
-	);
-	return {
-		total: r.total,
-		updated: r.updated,
-		failed: r.failed,
-		errors: r.errors ?? [],
-	};
 }
 
 export type PaperImportResult = {

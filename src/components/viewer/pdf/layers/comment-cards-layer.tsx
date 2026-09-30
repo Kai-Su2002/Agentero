@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { MessageResponse } from "@/components/ai-elements/message";
 import { Button } from "@/components/ui/button";
 import {
 	Tooltip,
@@ -30,6 +31,7 @@ import type {
 } from "@/components/viewer/pdf/types";
 import { useImeGuard } from "@/hooks/use-ime-guard";
 import { cn } from "@/lib/core/utils";
+import { applyMarkdownTextareaShortcut } from "@/lib/markdown/textarea-shortcuts";
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
 import {
 	DEFAULT_HIGHLIGHT_COLOR,
@@ -37,8 +39,6 @@ import {
 } from "@/lib/pdf/highlight/palette";
 /** Card width in CSS px — also the gutter width reserved on the viewport. */
 export const COMMENT_CARD_WIDTH_PX = 224;
-/** Collapsed selection-comment chip width (icon only). */
-export const COMMENT_AFFORDANCE_COLLAPSED_WIDTH_PX = 36;
 /** Horizontal gap between the page edge and the rail. */
 export const COMMENT_CARD_GAP_PX = 8;
 /** Extra px so ring + shadow aren't clipped by the viewport overflow. */
@@ -278,12 +278,15 @@ const CommentCard = memo(function CommentCard({
 	onLeave,
 }: CommentCardProps) {
 	const { t } = useTranslation("viewer");
+	const rootRef = useRef<HTMLDivElement>(null);
 	const textareaRef = useRef<HTMLTextAreaElement>(null);
 	const cancelledRef = useRef(false);
 	const itemRef = useRef(item);
 	itemRef.current = item;
 	const onSaveRef = useRef(onSave);
 	onSaveRef.current = onSave;
+	const onCancelRef = useRef(onCancel);
+	onCancelRef.current = onCancel;
 	const draftRef = useRef(item.comment);
 	const commentSeedRef = useRef(item.comment);
 	commentSeedRef.current = item.comment;
@@ -324,11 +327,38 @@ const CommentCard = memo(function CommentCard({
 		onCancel();
 	};
 
+	// Clicking the page does not always blur the textarea. A new empty note
+	// should disappear on that click; typed text still commits.
+	useEffect(() => {
+		if (!editing) return;
+		const onPointerDown = (event: PointerEvent) => {
+			const current = itemRef.current;
+			if (!current.isNew || cancelledRef.current) return;
+			const target = event.target as Node | null;
+			if (!target || rootRef.current?.contains(target)) return;
+			const text = textareaRef.current?.value ?? draftRef.current;
+			if (!text.trim()) {
+				cancelledRef.current = true;
+				onCancelRef.current();
+				return;
+			}
+			cancelledRef.current = true;
+			draftRef.current = text;
+			onSaveRef.current(current, text);
+		};
+		document.addEventListener("pointerdown", onPointerDown, true);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown, true);
+		};
+	}, [editing]);
+
 	return (
 		<div
+			ref={rootRef}
 			data-pdf-chrome
 			className={cn(
 				COMMENT_CARD_SURFACE_CLASS,
+				!editing && "max-h-[70vh] overflow-y-auto",
 				editing
 					? "z-[6] bg-background/92 shadow-[0_18px_44px_rgba(15,23,42,0.22),0_4px_16px_rgba(15,23,42,0.12)] ring-2 ring-ring/50 dark:shadow-[0_18px_46px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.45)]"
 					: hovered
@@ -357,11 +387,21 @@ const CommentCard = memo(function CommentCard({
 				onBlur={
 					editing
 						? (e) => {
-								if (e.currentTarget.contains(e.relatedTarget as Node | null)) {
+								const next = e.relatedTarget as Node | null;
+								if (
+									next &&
+									(e.currentTarget.contains(next) ||
+										rootRef.current?.contains(next))
+								) {
 									return;
 								}
 								if (cancelledRef.current) return;
-								commit(textareaRef.current?.value ?? "");
+								const text = textareaRef.current?.value ?? "";
+								if (item.isNew && !text.trim()) {
+									cancel();
+									return;
+								}
+								commit(text);
 							}
 						: undefined
 				}
@@ -394,6 +434,13 @@ const CommentCard = memo(function CommentCard({
 							onClick={(e) => e.stopPropagation()}
 							onKeyDown={(e) => {
 								e.stopPropagation();
+								if (
+									applyMarkdownTextareaShortcut(e, (value) => {
+										draftRef.current = value;
+										autosizeTextarea(e.currentTarget);
+									})
+								)
+									return;
 								if (e.key === "Escape") {
 									e.preventDefault();
 									cancel();
@@ -418,9 +465,11 @@ const CommentCard = memo(function CommentCard({
 						className="block w-full cursor-text text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
 						onClick={(e) => {
 							e.stopPropagation();
+							if ((e.target as Element).closest("a, button")) return;
 							onOpen(item);
 						}}
 						onKeyDown={(e) => {
+							if (e.target !== e.currentTarget) return;
 							if (e.key === "Enter" || e.key === " ") {
 								e.preventDefault();
 								onOpen(item);
@@ -438,16 +487,22 @@ const CommentCard = memo(function CommentCard({
 								aria-hidden
 							/>
 						)}
-						<p
+						<div
 							className={cn(
-								"mt-1 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-relaxed",
+								"mt-1 max-h-[3.75rem] overflow-hidden break-words text-sm leading-relaxed group-hover:max-h-none group-hover:overflow-x-auto",
 								item.comment.trim()
 									? "text-foreground/80"
 									: "text-muted-foreground/70",
 							)}
 						>
-							{item.comment.trim() || t("annotations.placeholder")}
-						</p>
+							{item.comment.trim() ? (
+								<MessageResponse className="text-sm leading-relaxed [&_p]:my-0 [&_table]:min-w-max">
+									{item.comment}
+								</MessageResponse>
+							) : (
+								t("annotations.placeholder")
+							)}
+						</div>
 						{item.messages && item.messages.length > 0 ? (
 							<div className="mt-1.5 border-t border-border/40 pt-1.5">
 								<div className="line-clamp-3 space-y-1 group-hover:line-clamp-none">
@@ -755,6 +810,13 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 					onPointerDown={(e) => e.stopPropagation()}
 					onKeyDown={(e) => {
 						e.stopPropagation();
+						if (
+							applyMarkdownTextareaShortcut(e, (value) => {
+								draftTextRef.current = value;
+								autosizeTextarea(e.currentTarget);
+							})
+						)
+							return;
 						if (e.key === "Escape") {
 							e.preventDefault();
 							draftTextRef.current = "";
@@ -846,7 +908,7 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 					<path
 						d={connectorD}
 						fill="none"
-						className="stroke-primary/85"
+						className="stroke-default-primary/85"
 						strokeWidth={2.5}
 						strokeLinecap="round"
 						strokeLinejoin="round"

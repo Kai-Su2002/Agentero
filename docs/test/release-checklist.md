@@ -54,7 +54,7 @@
 ```bash
 pnpm lint && pnpm test && pnpm build
 cargo test --manifest-path src-tauri/Cargo.toml
-cargo test -p agentero-cli
+cargo test -p agentero-core -p agentero-cli
 ```
 
 | # | 界面 | 操作 | 预期 | 结果 |
@@ -62,6 +62,7 @@ cargo test -p agentero-cli
 | 0.2.1 | 终端 | 跑上列命令 | 全部通过 | ☐ |
 | 0.2.2 | GitHub Actions | Release job 的 updater secret 校验 | `TAURI_SIGNING_PRIVATE_KEY` 和密码缺失时在创建 Draft 前失败 | ☐ |
 | 0.2.3 | Draft Release | 检查 updater 资产 | 有 `latest.json`、各平台 updater 包与对应 `.sig`；`latest.json` 包含每个平台的 URL 和签名 | ☐ |
+| 0.2.3a | GitHub Actions / AtomGit | 配置 `ATOMGIT_TOKEN`，确认代码镜像包含对应提交，检查构建后的同步 job 并按 tag 重跑 | 同名 tag 提交一致；说明和全部上传附件同步；每个附件回读 SHA-256 一致；重跑不重复附件；Draft 对应 `pre`，正式发布最新稳定版后才标记 `latest`；缺令牌或附件失败时 job 报错 | ☐ |
 | 0.2.4 | GitHub Actions / 应用·设置 | 确认 `AGENTERO_BUILTIN_API_KEY` secret 已配且本次构建注入了它 | 缺 secret **不会**让构建失败（`option_env!` 当未设置处理），只会静默产出没有内置 provider 的包。信号：设置 → 翻译的「Agentero 内置」可选、设置 → Agent → Embedding 的来源默认「Agentero 内置」、设置 → 版面解析的正文引擎默认「Agentero 内置」。见 [release.md](release.md) §内置 Provider 构建期注入 | ☐ |
 
 ### 0.3 安装启动
@@ -266,6 +267,7 @@ cargo test -p agentero-cli
 | 7.1.2 | 中间栏·PDF | 底栏改页码 / PageDown / Home | 跳页正确 | ☐ |
 | 7.1.3 | 中间栏·PDF | 底部缩放滑动条、滚轮缩放 | 重渲染清晰；放大后可平移 | ☐ |
 | 7.1.3a | 中间栏·PDF / NOTES 分屏 | PDF 设为手动 125%，先慢速、再快速向左/向右来回拖动中间 divider，然后在一次快速拖动中直接松手 | divider 与 PDF panel 边界按屏幕帧连续跟手，无输入堆积、PDF 蓝色文本选区或松手回跳；页面仅被即时裁剪/扩展，125% 保持，滚动区域与最终尺寸一致 | ☐ |
+| 7.1.3b | 中间栏·PDF | 打开含 `/Rotate 90` 页面的 PDF（如 `10_3389_fpls_2025_1611992` 第 4、5 页） | 旋转页按横向页框显示；不被塞进竖向 A4 页框；翻译分屏同样正确 | ☐ |
 | 7.1.4 | 中间栏·PDF | 打开大纲，点书签 | 跳到对应位置 | ☐ |
 | 7.1.5 | 中间栏·PDF | `⌘F` 输入文中词 | 命中高亮；可下一条 | ☐ |
 
@@ -380,6 +382,9 @@ cargo test -p agentero-cli
 | 11.1.9 | 右栏·Agent | 看回答中的 Sources（若 Agent 返回） | 展示读过的本地路径 | ☐ |
 | 11.1.10 | 右栏·Agent（支持 Client terminal 的 Agent） | 依次执行 `pwd`、`echo AGENTERO_SMOKE`，再启动长命令，发送 `wait_for_exit` 并在等待期间读取 output、kill、release | 前两条及时返回；wait 挂起时同连接仍能处理 output / kill / release，卡片最终 completed / failed | ☐ |
 | 11.1.11 | 右栏·Agent | 在工具卡 pending 时结束或取消回合，再依次接收迟到 progress、completion、progress | 回合结束后不保留永久 spinner；内容与终态按同一 toolCallId 修正原卡片，迟到 progress 不恢复 spinner，也不新增重复卡片 | ☐ |
+| 11.1.12 | Windows · 设置 → Agent | 原生 `.exe` 探针模拟 initialize 阻塞，等待 30 秒超时并重复探测；查看父子进程 | 探针没有新增外层 CMD；超时后目标 `.exe` 被回收。Pi / Custom / npm shim / Dsh 自带 launcher 的后代清理单独记录，见 [cwd 边界](../bug_fix/pi-acp-vault-cwd.md#5-边界) | ☐ |
+| 11.1.13 | Windows · Dsh | 在含空格的用户路径与 Vault 下探测、发送一轮消息 | 仅使用 Dsh 自带 launcher，不新增双层 CMD；launcher 配置与认证可读取 | ☐ |
+| 11.1.14 | macOS · Finder 启动 | 打开本地 Vault，用 Codex 精读论文；无 Vault 时执行探针 | 会话进程 cwd 为 Vault，探针为 scratch；不因继承 `/` 触发 Music / Desktop / Downloads 等无关 TCC 弹窗 | ☐ |
 
 ### 11.2 权限
 
@@ -394,7 +399,7 @@ cargo test -p agentero-cli
 | # | 界面 | 操作 | 预期 | 结果 |
 |---|---|---|---|---|
 | 11.3.1 | 右栏·Agent（空态） | 点 Summarize / Ask library / Draft Related Work | 对**当前聚焦 paper** 发起对应 workflow | ☐ |
-| 11.3.2 | 左栏·树 | 找资源齐全且未读 paper，点 **Zap** | 任务条 paper-reader 进度；写/更新 `NOTES.md`；`is_read` 变已读；Zap 消失 | ☐ |
+| 11.3.2 | 左栏·树 | 找资源齐全且未读 paper，点 **精读图标** | 任务条 paper-reader 进度；写/更新 `NOTES.md`；`is_read` 变已读；图标消失 | ☐ |
 | 11.3.3 | 设置 → Agent | 打开 **入库后自动精读**；魔棒再入一篇未读 | 入库/下载完成后**自动**精读；任务条可见 | ☐ |
 | 11.3.4 | 魔棒 | 批量多 ID 入库（自动精读开着） | **不**对批量每篇连跑精读 | ☐ |
 | 11.3.5 | 右栏·Agent 历史 | 精读跑完后翻主对话列表 | 精读**不**出现在主 chat 历史 | ☐ |

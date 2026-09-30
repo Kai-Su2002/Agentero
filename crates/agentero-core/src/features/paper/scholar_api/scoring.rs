@@ -4,8 +4,12 @@ use std::collections::HashSet;
 
 use crate::features::scholar_api::ApiPaper;
 
-/// Normalize a title for comparison: lowercase, drop punctuation, collapse whitespace.
-pub fn normalize_title(s: &str) -> String {
+/// Comparison key for title *similarity*: lowercase, every non-alphanumeric
+/// run collapsed into a single space (full Unicode letters/digits kept, word
+/// order preserved). Differs from [`crate::features::refs::latex::title_compact_key`]
+/// (ASCII-only, separators dropped entirely) and from the Zotero
+/// `title_match_key` (whitespace collapsed but punctuation kept).
+pub fn title_similarity_key(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut pending_space = false;
     for ch in s.chars() {
@@ -60,31 +64,12 @@ fn levenshtein_distance(a: &str, b: &str) -> usize {
     prev[m]
 }
 
-/// Score a list of candidates by normalized title similarity to the query.
-pub fn score_candidates(candidates: &mut [ApiPaper], norm_query: &str) {
-    for c in candidates {
-        // ApiPaper has no score field; scoring is used externally by callers
-        // that wrap ApiPaper in a scored container. This helper returns the
-        // numeric similarity so callers can attach it themselves.
-        let _score = title_similarity(norm_query, &normalize_title(&c.title));
-    }
-}
-
-/// Compute a title-similarity score between a query and a candidate.
-pub fn score_against_query(paper: &ApiPaper, norm_query: &str) -> i32 {
-    title_similarity(norm_query, &normalize_title(&paper.title))
-}
-
-/// Pick the candidate with the highest title similarity.
-pub fn best_match<'a>(candidates: &'a [ApiPaper], norm_query: &str) -> Option<&'a ApiPaper> {
-    candidates
-        .iter()
-        .max_by_key(|c| score_against_query(c, norm_query))
-}
-
 /// True if two papers describe the same work using title, year, and author overlap.
 pub fn is_same_paper(a: &ApiPaper, b: &ApiPaper, year_tolerance: i32) -> bool {
-    title_similarity(&normalize_title(&a.title), &normalize_title(&b.title)) >= 85
+    title_similarity(
+        &title_similarity_key(&a.title),
+        &title_similarity_key(&b.title),
+    ) >= 85
         && year_close(a.year, b.year, year_tolerance)
         && author_overlap(&a.authors, &b.authors) >= 0.30
 }
@@ -140,8 +125,8 @@ mod tests {
 
     #[test]
     fn title_similarity_handles_word_order() {
-        let a = normalize_title("Attention Is All You Need");
-        let b = normalize_title("All You Need Is Attention");
+        let a = title_similarity_key("Attention Is All You Need");
+        let b = title_similarity_key("All You Need Is Attention");
         assert!(title_similarity(&a, &b) >= 90);
     }
 

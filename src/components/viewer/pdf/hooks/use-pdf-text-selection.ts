@@ -1,3 +1,4 @@
+import { tightenFormattedSelection } from "@/lib/pdf/selection-appearance";
 /**
  * Text-selection detection for the EmbedPDF viewer: turning an EmbedPDF drag
  * selection into a placed floating action menu, publishing the selected text to
@@ -25,7 +26,6 @@ import {
 	type SetStateAction,
 	useCallback,
 	useEffect,
-	useRef,
 	useState,
 } from "react";
 import {
@@ -109,11 +109,7 @@ export type PdfTextSelection = {
 	 * Call on viewport scroll and zoom so the menu stays glued to the selection.
 	 */
 	rePlaceSelectionMenu: () => void;
-	/** Transient screen position for the auto-copy confirmation label. */
-	copiedLabelPos: { x: number; y: number } | null;
 };
-
-const COPIED_LABEL_DURATION_MS = 1000;
 
 export function usePdfTextSelection({
 	selectionCap,
@@ -129,26 +125,11 @@ export function usePdfTextSelection({
 		null,
 	);
 	const [isSelecting, setIsSelecting] = useState(false);
-	const [copiedLabelPos, setCopiedLabelPos] = useState<{
-		x: number;
-		y: number;
-	} | null>(null);
-	const labelTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-	const mouseUpPosRef = useRef<{ x: number; y: number } | null>(null);
-
-	const clearCopiedLabel = useCallback(() => {
-		if (labelTimerRef.current) {
-			clearTimeout(labelTimerRef.current);
-			labelTimerRef.current = null;
-		}
-		setCopiedLabelPos(null);
-	}, []);
 
 	const closeSelectionMenu = useCallback(() => {
 		setSelectionMenu(null);
-		clearCopiedLabel();
 		selectionCap?.clear(docId);
-	}, [selectionCap, docId, clearCopiedLabel]);
+	}, [selectionCap, docId]);
 
 	const rePlaceSelectionMenu = useCallback(() => {
 		setSelectionMenu((prev) => {
@@ -172,18 +153,13 @@ export function usePdfTextSelection({
 	useEffect(() => {
 		if (!selectionCap || !docCap) return;
 
-		const onMouseUp = (event: MouseEvent) => {
-			mouseUpPosRef.current = { x: event.clientX, y: event.clientY };
-		};
-		document.addEventListener("mouseup", onMouseUp);
-
 		const scope = selectionCap.forDocument(docId);
 		const offBegin = scope.onBeginSelection(() => {
 			setIsSelecting(true);
 		});
 		const offEnd = scope.onEndSelection(() => {
-			const pages = selectionCap.getFormattedSelection(docId);
-			if (!pages.length) {
+			const rawPages = selectionCap.getFormattedSelection(docId);
+			if (!rawPages.length) {
 				setIsSelecting(false);
 				setSelectionMenu(null);
 				return;
@@ -193,6 +169,11 @@ export function usePdfTextSelection({
 			// selections the first page may be scrolled out of view, which makes the
 			// toolbar appear off-screen and seem missing.
 			const state = selectionCap.getState(docId);
+			const pages = tightenFormattedSelection(
+				rawPages,
+				state.geometry,
+				state.selection,
+			);
 			const endPage = state.selection?.end?.page ?? null;
 			const anchorPage = menuAnchorPage(
 				pages,
@@ -236,22 +217,6 @@ export function usePdfTextSelection({
 				}
 				setSelectionMenu({ screen, anchor, pages });
 				setIsSelecting(false);
-				if (quote) {
-					try {
-						selectionCap.copyToClipboard(docId);
-						clearCopiedLabel();
-						const pos = mouseUpPosRef.current;
-						if (pos) {
-							setCopiedLabelPos(pos);
-							labelTimerRef.current = setTimeout(() => {
-								labelTimerRef.current = null;
-								setCopiedLabelPos(null);
-							}, COPIED_LABEL_DURATION_MS);
-						}
-					} catch {
-						// auto-copy is best-effort
-					}
-				}
 				publishSelection({
 					text: quote,
 					sourcePath: paperRelPath ?? paperAbsPath ?? "PDF",
@@ -266,17 +231,14 @@ export function usePdfTextSelection({
 			if (!sel) {
 				setIsSelecting(false);
 				setSelectionMenu(null);
-				clearCopiedLabel();
 				clearActiveSelection("pdf");
 			}
 		});
 		return () => {
-			document.removeEventListener("mouseup", onMouseUp);
 			offBegin();
 			offEnd();
 			offChange();
 			setIsSelecting(false);
-			clearCopiedLabel();
 			clearActiveSelection("pdf");
 		};
 	}, [
@@ -287,7 +249,6 @@ export function usePdfTextSelection({
 		paperAbsPath,
 		hostRef,
 		zoomRef,
-		clearCopiedLabel,
 	]);
 
 	// PDFium selections are invisible to the browser: intercept copy so ⌘/Ctrl+C
@@ -333,6 +294,5 @@ export function usePdfTextSelection({
 		isSelecting,
 		closeSelectionMenu,
 		rePlaceSelectionMenu,
-		copiedLabelPos,
 	};
 }

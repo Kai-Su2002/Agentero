@@ -40,7 +40,7 @@ agentero describe paper_list --json   # MCP tool 名亦可
 
 未知 id 返回 `usage`，并尽量提示相近 op。Skill `agentero-cli`（v16+）按**任务分支**写协议（已知 path 的问答直接读文件；探索才 `paper list`；`describe` 仅在 flag 未知时用；`set-read` 只在 paper-reader / 显式标已读后），细节仍以本命令为准。
 
-`paper list --json` 默认每行只含 `id/path/title`；用 `--fields year,tags,abstract,…`（逗号分隔、可重复）按需加字段，或 `--full` 输出完整 `PaperRecord`。未知字段报 `usage` 错误并列出合法字段。text 表格输出不受影响。
+`paper list --json` 默认每行只含 `id/path/title`；用 `--fields year,date,tags,abstract,…`（逗号分隔、可重复）按需加字段，或 `--full` 输出完整 `PaperRecord`。未知字段报 `usage` 错误并列出合法字段。text 表格不受 `--fields` 影响，其 DATE 列显示 `date`（缺失时回退 `year`）。
 
 `paper get` / 其它接受 paper ref 的命令：优先 vault-relative **path**。bare **id** 在多 shelf 同 id 时返回 `paper_ambiguous`（`details.candidates` 为可选 path），message 会提示用 path 重试。
 
@@ -163,6 +163,23 @@ agentero import id 1706.03762 --parent papers/nlp --json
 
 `--parent` 是 **vault-relative** 的父目录，最终论文目录名由 resolver 根据论文 ID 决定，不是完全自定义路径。导入成功后会返回 `path`、`id`、`title` 以及 `pdf` / `tex` / `paperMd` 等资源旗标。
 
+### 导入本地 PDF
+
+`import pdf` 将本地裸 PDF 文件导入 Vault。CLI 默认会同步执行元数据识别（LiteParse probe → Zotero recognizer → DOI/arXiv 权威解析），识别成功后直接以规范 ID（如 bare arXiv ID 或 DOI slug）命名论文目录 `{parent}/{canonical_id}/`，填充真实标题、作者、年份及摘要并写入 `catalog.sqlite` 与 `NOTES.md`。若未识别出权威标识符，则回退至文件名派生元数据。可使用 `--no-recognize` 跳过识别：
+
+```bash
+# 导入单篇本地 PDF（默认 parent = papers，自动识别元数据与规范命名）
+agentero import pdf /path/to/paper.pdf --json
+
+# 批量导入多篇本地 PDF 到指定分类目录
+agentero import pdf paper1.pdf paper2.pdf --parent papers/nlp --json
+
+# 跳过元数据识别，直接以文件名派生元数据入库
+agentero import pdf paper.pdf --no-recognize --json
+```
+
+支持一次传入多个文件路径；支持相对路径与绝对路径。
+
 ## 论文与 Tag
 
 Tag 写入支持桌面端相同的 8 色后缀格式：
@@ -184,7 +201,7 @@ agentero paper tag list --all
 
 `paper delete` 默认移入可恢复回收站（由桌面端管理恢复与清空）；明确传 `--files` 才会物理删除。
 
-论文移动会更新文件夹和 Catalog 路径。目标父目录不存在时会自动创建；目标已存在或路径逃出 `papers/` 时失败且不改 Catalog：
+同 Vault 论文移动与桌面、本地 Connector 共用 core 用例：更新文件夹、Catalog/页数路径与已解析的 Wiki 链接；Catalog 提交失败时补偿文件和链接。CLI 为本次操作构建 Wiki 索引，无本进程未保存编辑状态；不能替另一个桌面进程保护未保存内容。移动到当前父目录为成功 no-op。目标父目录不存在时会自动创建；目标已存在或路径逃出 `papers/` 时失败且不改 Catalog：
 
 ```bash
 agentero paper move papers/inbox/demo papers/archive

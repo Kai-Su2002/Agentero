@@ -99,6 +99,11 @@ pub struct AppSettings {
     /// Default on; off opens only the PDF/HTML body.
     #[serde(default = "default_true")]
     pub auto_open_paper_notes: bool,
+    /// Auto-ingest: adopt bare folders created under `papers/` that hold at
+    /// least one settled PDF into the library in place (catalog row + NOTES
+    /// shell + background metadata recognition). Default on.
+    #[serde(default = "default_true")]
+    pub auto_ingest: bool,
     /// When opening a new paper, close the active tab instead of adding a new one.
     /// Default off; useful for users who prefer a single-paper-at-a-time workflow.
     #[serde(default)]
@@ -220,6 +225,8 @@ pub struct EmbeddingSettings {
 pub struct LibraryColumnPref {
     pub key: String,
     pub visible: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width_rem: Option<f64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
@@ -241,6 +248,11 @@ pub struct TranslateSettings {
     pub agent_id: String,
     #[serde(default)]
     pub model_id: String,
+    /// Custom translate prompt replacing the built-in instructions for the
+    /// Agent and OpenAI-compatible providers (free MT and the built-in ignore
+    /// it). Empty = built-in. Max 8000 chars.
+    #[serde(default)]
+    pub custom_prompt: String,
 }
 
 impl Default for TranslateSettings {
@@ -254,6 +266,7 @@ impl Default for TranslateSettings {
             dual_pane_translate: false,
             agent_id: String::new(),
             model_id: String::new(),
+            custom_prompt: String::new(),
         }
     }
 }
@@ -331,6 +344,7 @@ impl Default for AppSettings {
             paper_tree_sort_mode: default_paper_tree_sort_mode(),
             paper_note_mode: default_paper_note_mode(),
             auto_open_paper_notes: default_true(),
+            auto_ingest: default_true(),
             replace_current_tab_on_open_paper: false,
             auto_update_internal_links: default_auto_update_internal_links(),
             library_columns: default_library_columns(),
@@ -392,13 +406,23 @@ fn default_auto_update_internal_links() -> String {
     "ask".into()
 }
 /// Canonical papers-Library column keys, in default order.
-const LIBRARY_COLUMN_KEYS: &[&str] = &["title", "authors", "year", "tags", "type", "id"];
+const LIBRARY_COLUMN_KEYS: &[&str] = &[
+    "title",
+    "authors",
+    "date",
+    "publication",
+    "tags",
+    "id",
+    "citations",
+    "addedAt",
+];
 fn default_library_columns() -> Vec<LibraryColumnPref> {
     LIBRARY_COLUMN_KEYS
         .iter()
         .map(|&key| LibraryColumnPref {
             key: key.to_string(),
-            visible: true,
+            visible: key != "addedAt",
+            width_rem: None,
         })
         .collect()
 }
@@ -598,6 +622,17 @@ impl AppSettingsStore {
         } else {
             Some(api_key.to_string())
         }
+    }
+
+    /// Custom translate prompt (Settings → 翻译; empty = built-in). Injected by
+    /// `translate_text` for the OpenAI-compatible path; the Agent path builds
+    /// its prompt on the frontend.
+    pub fn translate_custom_prompt(&self) -> String {
+        self.inner
+            .lock()
+            .ok()
+            .map(|guard| guard.translate.custom_prompt.trim().to_string())
+            .unwrap_or_default()
     }
 
     pub fn layout_backend(&self) -> String {
@@ -962,25 +997,35 @@ fn normalize(s: &mut AppSettings) {
     }
 
     // Library columns: drop unknown/duplicate keys, append missing ones
-    // (visible), and keep `title` visible so rows stay identifiable.
+    // with their default visibility, and keep `title` visible.
     let mut seen: Vec<String> = Vec::new();
     let mut cols: Vec<LibraryColumnPref> = Vec::new();
     for col in s.library_columns.drain(..) {
-        if !LIBRARY_COLUMN_KEYS.contains(&col.key.as_str()) {
+        // `year` became a full publication date; keep the saved position.
+        let key = if col.key == "year" {
+            "date".to_string()
+        } else {
+            col.key
+        };
+        if !LIBRARY_COLUMN_KEYS.contains(&key.as_str()) {
             continue;
         }
-        if seen.iter().any(|k| k == &col.key) {
+        if seen.iter().any(|k| k == &key) {
             continue;
         }
-        seen.push(col.key.clone());
-        cols.push(col);
+        seen.push(key.clone());
+        cols.push(LibraryColumnPref {
+            key,
+            visible: col.visible,
+            width_rem: col
+                .width_rem
+                .filter(|w| w.is_finite() && *w > 0.0)
+                .map(|w| w.clamp(5.0, 120.0)),
+        });
     }
-    for &key in LIBRARY_COLUMN_KEYS {
-        if !seen.iter().any(|k| k == key) {
-            cols.push(LibraryColumnPref {
-                key: key.to_string(),
-                visible: true,
-            });
+    for fallback in default_library_columns() {
+        if !seen.iter().any(|key| key == &fallback.key) {
+            cols.push(fallback);
         }
     }
     for col in cols.iter_mut() {
@@ -1065,6 +1110,10 @@ fn normalize(s: &mut AppSettings) {
     if s.translate.source_lang != "auto" {
         s.translate.source_lang = default_translate_source();
     }
+    // Cap hand-edited oversized prompts; this value is echoed to a billed API
+    // on every request. No trim: leading whitespace may be intentional (the
+    // settings UI trims on blur, same as agent_personal_prompt).
+    s.translate.custom_prompt = s.translate.custom_prompt.chars().take(8000).collect();
 
     const LAYOUT_BACKENDS: &[&str] = &["local", "paddle", "mineru"];
     if !LAYOUT_BACKENDS.contains(&s.layout.backend.as_str()) {
@@ -1410,6 +1459,30 @@ mod tests {
     }
 
     #[test]
+    fn normalize_caps_translate_custom_prompt() {
+        // Hand-edited oversized prompt is capped; empty and normal values pass.
+        let mut s = AppSettings {
+            translate: TranslateSettings {
+                custom_prompt: "x".repeat(9000),
+                ..Default::default()
+            },
+            ..AppSettings::default()
+        };
+        normalize(&mut s);
+        assert_eq!(s.translate.custom_prompt.chars().count(), 8000);
+
+        let mut s = AppSettings {
+            translate: TranslateSettings {
+                custom_prompt: "keep me".into(),
+                ..Default::default()
+            },
+            ..AppSettings::default()
+        };
+        normalize(&mut s);
+        assert_eq!(s.translate.custom_prompt, "keep me");
+    }
+
+    #[test]
     fn normalize_rejects_unknown_paper_note_mode() {
         let mut s = AppSettings {
             paper_note_mode: "fancy".into(),
@@ -1478,19 +1551,39 @@ mod tests {
     }
 
     #[test]
+    fn library_column_widths_roundtrip_and_normalize() {
+        let old: LibraryColumnPref =
+            serde_json::from_str(r#"{"key":"title","visible":true}"#).unwrap();
+        assert_eq!(old.width_rem, None);
+        let mut s = AppSettings::default();
+        s.library_columns[0].width_rem = Some(25.5);
+        s.library_columns[1].width_rem = Some(-2.0);
+        s.library_columns[2].width_rem = Some(999.0);
+        normalize(&mut s);
+        let encoded = serde_json::to_string(&s).unwrap();
+        let loaded: AppSettings = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(loaded.library_columns[0].width_rem, Some(25.5));
+        assert_eq!(loaded.library_columns[1].width_rem, None);
+        assert_eq!(loaded.library_columns[2].width_rem, Some(120.0));
+    }
+
+    #[test]
     fn normalize_reconciles_library_columns() {
         let mut s = AppSettings {
             library_columns: vec![
                 LibraryColumnPref {
                     key: "bogus".into(),
+                    width_rem: None,
                     visible: true,
                 },
                 LibraryColumnPref {
                     key: "title".into(),
+                    width_rem: None,
                     visible: false,
                 },
                 LibraryColumnPref {
                     key: "year".into(),
+                    width_rem: None,
                     visible: false,
                 },
             ],
@@ -1498,14 +1591,26 @@ mod tests {
         };
         normalize(&mut s);
         let keys: Vec<&str> = s.library_columns.iter().map(|c| c.key.as_str()).collect();
-        // Unknown dropped; kept order first, then missing canonical columns appended.
-        assert_eq!(keys, vec!["title", "year", "authors", "tags", "type", "id"]);
+        // Unknown dropped; `year` renamed in place; missing columns appended.
+        assert_eq!(
+            keys,
+            vec![
+                "title",
+                "date",
+                "authors",
+                "publication",
+                "tags",
+                "id",
+                "citations",
+                "addedAt"
+            ]
+        );
         // Title forced visible even though stored hidden.
         let title = s.library_columns.iter().find(|c| c.key == "title").unwrap();
         assert!(title.visible);
-        // Non-title hidden preference preserved.
-        let year = s.library_columns.iter().find(|c| c.key == "year").unwrap();
-        assert!(!year.visible);
+        // Non-title hidden preference preserved through the rename.
+        let date = s.library_columns.iter().find(|c| c.key == "date").unwrap();
+        assert!(!date.visible);
         // Appended column defaults to visible.
         let authors = s
             .library_columns
@@ -1513,6 +1618,51 @@ mod tests {
             .find(|c| c.key == "authors")
             .unwrap();
         assert!(authors.visible);
+    }
+
+    #[test]
+    fn library_columns_added_date_persists_through_host_store() {
+        let store = AppSettingsStore::for_tests(AppSettings::default());
+        let mut legacy = AppSettings::default();
+        legacy.library_columns.retain(|col| col.key != "addedAt");
+        legacy.library_columns.reverse();
+        legacy.library_columns[0].visible = false;
+        let existing: Vec<_> = legacy
+            .library_columns
+            .iter()
+            .map(|col| (col.key.clone(), col.visible))
+            .collect();
+        // Simulate an older settings.json, exercising the real disk load path.
+        persist(&store.path, &legacy).expect("write legacy settings");
+        let (mut loaded, existed) = read_file(&store.path);
+        assert!(existed);
+        let added = loaded.library_columns.last().unwrap();
+        assert_eq!(added.key, "addedAt");
+        assert!(!added.visible);
+        assert_eq!(
+            loaded.library_columns[..existing.len()]
+                .iter()
+                .map(|col| (col.key.clone(), col.visible))
+                .collect::<Vec<_>>(),
+            existing
+        );
+
+        // Enable and move the column, then save via the desktop Host store.
+        let mut added = loaded.library_columns.pop().unwrap();
+        added.visible = true;
+        loaded.library_columns.insert(0, added);
+        let expected = serde_json::to_value(&loaded.library_columns).unwrap();
+        let returned = store.set(loaded).expect("save settings through Host");
+        assert_eq!(
+            serde_json::to_value(&returned.library_columns).unwrap(),
+            expected
+        );
+        let (reloaded, _) = read_file(&store.path);
+        assert_eq!(
+            serde_json::to_value(&reloaded.library_columns).unwrap(),
+            expected
+        );
+        fs::remove_file(&store.path).expect("remove test settings");
     }
 
     /// `agentero` is a parser (body-text) backend only. Layout analysis stays on

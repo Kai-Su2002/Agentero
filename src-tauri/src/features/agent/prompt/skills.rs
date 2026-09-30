@@ -32,6 +32,7 @@ pub fn skill_mention_style(template: &AgentTemplate) -> SkillMentionStyle {
         AgentTemplate::Pi => SkillMentionStyle::InjectedOnly,
         // All other agents use slash-style skill mentions.
         AgentTemplate::ClaudeAcp
+        | AgentTemplate::AntigravityAcp
         | AgentTemplate::Opencode
         | AgentTemplate::OpenClaw
         | AgentTemplate::Hermes
@@ -40,6 +41,7 @@ pub fn skill_mention_style(template: &AgentTemplate) -> SkillMentionStyle {
         | AgentTemplate::Dsh
         | AgentTemplate::KimiCode
         | AgentTemplate::Zcode
+        | AgentTemplate::MinimaxCode
         | AgentTemplate::Custom => SkillMentionStyle::Slash,
     }
 }

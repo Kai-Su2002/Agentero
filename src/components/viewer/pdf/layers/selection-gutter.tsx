@@ -1,3 +1,4 @@
+import type { LucideIcon } from "lucide-react";
 import {
 	Languages,
 	MessageSquare,
@@ -20,7 +21,7 @@ type SelectionGutterProps = {
 	onEnter?: (pin: SelectionPin) => void;
 };
 
-const PILL = 20;
+const PILL = 24;
 const GAP = 4;
 
 /**
@@ -34,6 +35,7 @@ function layoutPins(
 	pageH: number,
 ): Array<{
 	id: string;
+	kind: SelectionPin["kind"];
 	leftPct: number;
 	topPct: number;
 	side: "left" | "right";
@@ -41,45 +43,64 @@ function layoutPins(
 	const sorted = [...items].sort((a, b) => a.y - b.y || a.x - b.x);
 	const placed: Array<{
 		id: string;
+		kind: SelectionPin["kind"];
 		x: number;
 		y: number;
 		side: "left" | "right";
 	}> = [];
+	const edgeY = Math.min(0.5, PILL / 2 / pageH);
+	const minY = edgeY;
+	const maxY = 1 - edgeY;
+	const slotStep = (PILL + GAP) / pageH;
+	const slotCount = Math.max(1, Math.floor((maxY - minY) / slotStep) + 1);
+	const slotSpacing = slotCount > 1 ? (maxY - minY) / (slotCount - 1) : 0;
+	const slots = Array.from(
+		{ length: slotCount },
+		(_, index) => minY + index * slotSpacing,
+	);
 
 	for (const it of sorted) {
-		let x = it.x;
-		let y = it.y;
+		const x = Math.min(0.98, Math.max(0.02, it.x));
+		const baseY = Math.min(maxY, Math.max(minY, it.y));
 		const side = it.side ?? "right";
-		let guard = 0;
-		while (guard < 12) {
-			let hit = false;
+		let y = baseY;
+		let bestClearance = -1;
+		const orderedSlots = [...slots].sort(
+			(a, b) => Math.abs(a - baseY) - Math.abs(b - baseY),
+		);
+		for (const slot of orderedSlots) {
+			let clearance = Number.POSITIVE_INFINITY;
 			for (const p of placed) {
 				const dx = (x - p.x) * pageW;
-				const dy = (y - p.y) * pageH;
-				if (Math.hypot(dx, dy) < PILL + GAP) {
-					// Stack vertically only — preserve side-of-line x.
-					y += (PILL + GAP) / (pageH || 1);
-					hit = true;
-					break;
-				}
+				const dy = (slot - p.y) * pageH;
+				clearance = Math.min(clearance, Math.max(Math.abs(dx), Math.abs(dy)));
 			}
-			if (!hit) break;
-			guard += 1;
+			if (clearance > bestClearance) {
+				bestClearance = clearance;
+				y = slot;
+			}
+			if (clearance >= PILL + GAP) {
+				y = slot;
+				break;
+			}
 		}
-		y = Math.min(0.98, Math.max(0.02, y));
-		x = Math.min(0.98, Math.max(0.02, x));
-		placed.push({ id: it.id, x, y, side });
+		placed.push({ id: it.id, kind: it.kind, x, y, side });
 	}
 
 	return placed.map((p) => ({
 		id: p.id,
+		kind: p.kind,
 		leftPct: p.x * 100,
 		topPct: p.y * 100,
 		side: p.side,
 	}));
 }
 
-function pinIcon(kind: SelectionPin["kind"]) {
+/**
+ * Header glyph per pin kind. Translation pins are only shown for records the
+ * reader explicitly pinned; the marker reopens the saved result card.
+ */
+function pinIcon(kind: SelectionPin["kind"]): LucideIcon | null {
 	switch (kind) {
 		case "ask":
 			return MessageSquare;
@@ -112,7 +133,7 @@ export const SelectionGutter = memo(function SelectionGutter({
 	if (!items.length) return null;
 
 	const laid = layoutPins(items, 600, 800);
-	const byId = new Map(items.map((it) => [it.id, it]));
+	const byKey = new Map(items.map((it) => [`${it.kind}:${it.id}`, it]));
 
 	return (
 		<div
@@ -120,7 +141,7 @@ export const SelectionGutter = memo(function SelectionGutter({
 			aria-hidden={false}
 		>
 			{laid.map((pos) => {
-				const item = byId.get(pos.id);
+				const item = byKey.get(`${pos.kind}:${pos.id}`);
 				if (!item) return null;
 				const Icon = pinIcon(item.kind);
 				const aria =
@@ -184,7 +205,7 @@ export const SelectionGutter = memo(function SelectionGutter({
 								onOpen(item);
 							}}
 						>
-							<Icon className="size-3.5" strokeWidth={2} />
+							{Icon ? <Icon className="size-3.5" strokeWidth={2} /> : null}
 						</button>
 					</div>
 				);

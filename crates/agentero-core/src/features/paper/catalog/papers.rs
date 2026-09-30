@@ -255,8 +255,10 @@ pub struct PaperRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[specta(type = Option<crate::json::Json>)]
     pub creators: Option<serde_json::Value>,
+    /// Publication year, kept for citation keys / tree labels.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub year: Option<i32>,
+    /// Publication date at source precision: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "abstract")]
@@ -395,7 +397,7 @@ pub fn upsert_paper(vault_root: &Path, record: &PaperRecord) -> Result<PaperReco
 }
 
 pub fn get_by_path(vault_root: &Path, path: &str) -> Result<Option<PaperRecord>, AppError> {
-    let path = path.replace('\\', "/").trim_matches('/').to_string();
+    let path = crate::fs::normalize_rel_separators(path);
     with_catalog(vault_root, |conn| get_conn(conn, &path))
 }
 
@@ -425,6 +427,77 @@ pub fn list_by_id(vault_root: &Path, id: &str) -> Result<Vec<PaperRecord>, AppEr
             .map_err(AppError::from)?;
         Ok(rows)
     })
+}
+
+/// Outcome of resolving a user/agent supplied paper reference.
+pub enum PaperRefLookup {
+    /// Boxed because [`PaperRecord`] is an order of magnitude larger than the
+    /// other variants.
+    Found(Box<PaperRecord>),
+    /// Several catalog rows share the logical id; carries their vault paths
+    /// (ordered by path) for the caller to disambiguate.
+    Ambiguous(Vec<String>),
+    NotFound,
+}
+
+/// Whether `reference` should be treated as a vault-relative path rather than
+/// a logical paper id.
+pub fn looks_like_path(reference: &str) -> bool {
+    let t = reference.trim();
+    t.contains('/') || t.contains('\\') || t.starts_with("papers")
+}
+
+/// Resolve a path-or-id reference against the catalog: path form goes through
+/// [`get_by_path`] (normalized separators), id form through [`list_by_id`].
+/// Returns [`PaperRefLookup::Ambiguous`] instead of picking one arbitrarily.
+pub fn lookup_paper_ref(vault_root: &Path, reference: &str) -> Result<PaperRefLookup, AppError> {
+    let reference = reference.trim();
+    if reference.is_empty() {
+        return Err(AppError::message("paper ref is required"));
+    }
+    if looks_like_path(reference) {
+        let path = crate::fs::normalize_rel_separators(reference);
+        return Ok(match get_by_path(vault_root, &path)? {
+            Some(record) => PaperRefLookup::Found(Box::new(record)),
+            None => PaperRefLookup::NotFound,
+        });
+    }
+    let matches = list_by_id(vault_root, reference)?;
+    match matches.len() {
+        0 => Ok(PaperRefLookup::NotFound),
+        1 => Ok(PaperRefLookup::Found(Box::new(
+            matches.into_iter().next().expect("len 1"),
+        ))),
+        _ => Ok(PaperRefLookup::Ambiguous(
+            matches.iter().map(|p| p.path.clone()).collect(),
+        )),
+    }
+}
+
+/// Parse a CLI/MCP tag spec `name[:color]` into a [`PaperTag`]. A trailing
+/// `:color` only counts when the color id is known; anything else stays part
+/// of the name.
+pub fn parse_tag_spec(raw: &str) -> Result<PaperTag, AppError> {
+    let value = raw.trim();
+    if value.is_empty() {
+        return Err(AppError::message("tag name must not be empty"));
+    }
+    let Some((name, color)) = value.rsplit_once(':') else {
+        return Ok(PaperTag::new(value));
+    };
+    if name.trim().is_empty() {
+        return Err(AppError::message("tag name must not be empty"));
+    }
+    if TAG_COLOR_IDS
+        .iter()
+        .any(|id| id.eq_ignore_ascii_case(color.trim()))
+    {
+        return Ok(PaperTag {
+            name: name.trim().to_string(),
+            color: Some(color.trim().to_ascii_lowercase()),
+        });
+    }
+    Ok(PaperTag::new(value))
 }
 
 /// Find a paper by one of its canonical identifier columns.
@@ -462,30 +535,6 @@ pub fn find_by_identifier(
 /// List all papers for library table (newest first).
 pub fn list_all(vault_root: &Path) -> Result<Vec<PaperRecord>, AppError> {
     with_catalog(vault_root, list_all_conn)
-}
-
-/// List papers whose `publication` column is NULL or empty.
-/// Used by the batch venue backfill workflow.
-pub fn list_missing_publication(vault_root: &Path) -> Result<Vec<PaperRecord>, AppError> {
-    with_catalog(vault_root, |conn| {
-        let mut stmt = conn
-            .prepare(&format!(
-                r#"
-                SELECT {PAPER_COLUMNS}
-                FROM papers
-                WHERE publication IS NULL OR TRIM(publication) = ''
-                ORDER BY updated_at DESC
-                "#,
-            ))
-            .map_err(AppError::from)?;
-
-        let rows = stmt
-            .query_map([], map_row)
-            .map_err(AppError::from)?
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(AppError::from)?;
-        Ok(rows)
-    })
 }
 
 /// Read all papers from an already-open Catalog connection.
@@ -814,7 +863,7 @@ pub fn rebuild_from_disk(vault_root: &Path) -> Result<usize, AppError> {
                     .strip_prefix(vault_root)
                     .ok()
                     .and_then(|p| p.to_str())
-                    .map(|s| s.replace('\\', "/").trim_matches('/').to_string());
+                    .map(crate::fs::normalize_rel_separators);
                 if let Some(rel_path) = rel.filter(|r| !r.is_empty()) {
                     let existing = get_conn(conn, &rel_path).ok().flatten();
                     let sidecar = super::sidecar::read_sidecar(vault_root, &rel_path);
@@ -862,7 +911,7 @@ pub fn ensure_row_for_path(
     vault_root: &Path,
     rel_path: &str,
 ) -> Result<Option<PaperRecord>, AppError> {
-    let rel_path = rel_path.replace('\\', "/").trim_matches('/').to_string();
+    let rel_path = crate::fs::normalize_rel_separators(rel_path);
     with_catalog(vault_root, |conn| {
         if let Some(row) = get_conn(conn, &rel_path)? {
             return Ok(Some(row));
@@ -886,6 +935,84 @@ fn minimal_record_for(dir: &Path, rel_path: &str) -> PaperRecord {
     record
 }
 
+/// Publication date at the precision its source provided.
+struct PublicationDate {
+    year: i32,
+    month: Option<u32>,
+    day: Option<u32>,
+}
+
+impl PublicationDate {
+    /// Zero-padded `YYYY` / `YYYY-MM` / `YYYY-MM-DD`.
+    fn canonical(&self) -> String {
+        match (self.month, self.day) {
+            (Some(month), Some(day)) => format!("{:04}-{:02}-{:02}", self.year, month, day),
+            (Some(month), None) => format!("{:04}-{:02}", self.year, month),
+            _ => format!("{:04}", self.year),
+        }
+    }
+}
+
+const DATE_SEPARATORS: &[char] = &['-', '/', '.', ' '];
+
+/// `(value, index after it)` for up to two digits behind a separator.
+fn number_after_separator(chars: &[char], at: usize) -> Option<(u32, usize)> {
+    if !chars.get(at).is_some_and(|c| DATE_SEPARATORS.contains(c)) {
+        return None;
+    }
+    let mut end = at + 1;
+    while end < chars.len() && end < at + 3 && chars[end].is_ascii_digit() {
+        end += 1;
+    }
+    let digits: String = chars[at + 1..end].iter().collect();
+    digits.parse().ok().map(|value| (value, end))
+}
+
+/// Lenient partial-date parse: the first standalone 4-digit year in
+/// `1000..=2100` wins, so `Spring 2017` and `2017-06-12T00:00:00Z` both yield a
+/// usable date. A month/day behind a separator must be a real calendar value.
+fn parse_publication_date(text: &str) -> Option<PublicationDate> {
+    let chars: Vec<char> = text.trim().chars().collect();
+    let mut year_at = None;
+    for i in 0..chars.len().saturating_sub(3) {
+        if !chars[i..i + 4].iter().all(char::is_ascii_digit) {
+            continue;
+        }
+        if i > 0 && chars[i - 1].is_ascii_digit() {
+            continue;
+        }
+        if chars.get(i + 4).is_some_and(char::is_ascii_digit) {
+            continue;
+        }
+        let digits: String = chars[i..i + 4].iter().collect();
+        let year: i32 = digits.parse().ok()?;
+        if (1000..=2100).contains(&year) {
+            year_at = Some((year, i + 4));
+            break;
+        }
+    }
+    let (year, after_year) = year_at?;
+
+    let mut month = None;
+    let mut day = None;
+    if let Some((value, next)) = number_after_separator(&chars, after_year) {
+        if !(1..=12).contains(&value) {
+            return None;
+        }
+        month = Some(value);
+        if let Some((value, _)) = number_after_separator(&chars, next) {
+            if !(1..=31).contains(&value) {
+                return None;
+            }
+            day = Some(value);
+        }
+    }
+    if let (Some(month), Some(day)) = (month, day) {
+        chrono::NaiveDate::from_ymd_opt(year, month, day)?;
+    }
+    Some(PublicationDate { year, month, day })
+}
+
 /// Manual metadata patch: `None` keeps the current value; a provided value is
 /// trimmed and an empty string clears the column (stored as NULL).
 #[derive(Debug, Default, Clone, Deserialize, specta::Type)]
@@ -893,8 +1020,9 @@ fn minimal_record_for(dir: &Path, rel_path: &str) -> PaperRecord {
 pub struct PaperMetaPatch {
     pub title: Option<String>,
     pub authors: Option<Vec<String>>,
-    /// Year as text so an empty string can clear it; validated as 1000..=2100.
-    pub year: Option<String>,
+    /// Publication date as text — `YYYY`, `YYYY-MM` or `YYYY-MM-DD` — so an
+    /// empty string can clear it. `year` is derived from it.
+    pub date: Option<String>,
     pub doi: Option<String>,
     pub arxiv_id: Option<String>,
     pub publication: Option<String>,
@@ -917,121 +1045,123 @@ pub fn update_meta(
     path: &str,
     patch: &PaperMetaPatch,
 ) -> Result<PaperRecord, AppError> {
-    let path = path.replace('\\', "/").trim_matches('/').to_string();
-    let Some(mut row) = get_by_path(vault_root, &path)? else {
-        return Err(AppError::message("paper not found in catalog"));
-    };
-
-    fn norm(value: &str) -> Option<String> {
-        let trimmed = value.trim();
-        (!trimmed.is_empty()).then(|| trimmed.to_string())
-    }
-
+    let mut old_title = String::new();
     let mut title_changed = false;
-    if let Some(title) = patch.title.as_deref() {
-        let title = title.trim();
-        if title.is_empty() {
-            return Err(AppError::message("title cannot be empty"));
+    let updated = mutate_paper(vault_root, path, |row| {
+        fn norm(value: &str) -> Option<String> {
+            let trimmed = value.trim();
+            (!trimmed.is_empty()).then(|| trimmed.to_string())
         }
-        title_changed = title != row.title;
-        row.title = title.to_string();
-    }
-    if let Some(authors) = &patch.authors {
-        row.authors = authors
-            .iter()
-            .map(|a| a.trim().to_string())
-            .filter(|a| !a.is_empty())
-            .collect();
-    }
-    if let Some(year) = patch.year.as_deref() {
-        row.year = match norm(year) {
-            None => None,
-            Some(text) => {
-                let parsed: i32 = text
-                    .parse()
-                    .map_err(|_| AppError::message("year must be a number"))?;
-                if !(1000..=2100).contains(&parsed) {
-                    return Err(AppError::message("year must be between 1000 and 2100"));
-                }
-                Some(parsed)
-            }
-        };
-    }
-    if let Some(v) = patch.doi.as_deref() {
-        row.doi = norm(v);
-    }
-    if let Some(v) = patch.arxiv_id.as_deref() {
-        row.arxiv_id = norm(v);
-    }
-    if let Some(v) = patch.publication.as_deref() {
-        row.publication = norm(v);
-    }
-    if let Some(v) = patch.volume.as_deref() {
-        row.volume = norm(v);
-    }
-    if let Some(v) = patch.issue.as_deref() {
-        row.issue = norm(v);
-    }
-    if let Some(v) = patch.pages.as_deref() {
-        row.pages = norm(v);
-    }
-    if let Some(v) = patch.publisher.as_deref() {
-        row.publisher = norm(v);
-    }
-    if let Some(v) = patch.abstract_text.as_deref() {
-        row.abstract_text = norm(v);
-    }
-    if let Some(v) = patch.pdf_url.as_deref() {
-        row.pdf_url = norm(v);
-    }
-    if let Some(v) = patch.html_url.as_deref() {
-        row.html_url = norm(v);
-    }
 
-    row.meta_source = Some("manual".to_string());
-    row.updated_at = crate::time::now_rfc3339_millis();
-    let updated = upsert_paper(vault_root, &row)?;
+        if let Some(title) = patch.title.as_deref() {
+            let title = title.trim();
+            if title.is_empty() {
+                return Err(AppError::message("title cannot be empty"));
+            }
+            old_title = row.title.clone();
+            title_changed = title != row.title;
+            row.title = title.to_string();
+        }
+        if let Some(authors) = &patch.authors {
+            row.authors = authors
+                .iter()
+                .map(|a| a.trim().to_string())
+                .filter(|a| !a.is_empty())
+                .collect();
+        }
+        if let Some(date) = patch.date.as_deref() {
+            match norm(date) {
+                None => {
+                    row.date = None;
+                    row.year = None;
+                }
+                Some(text) => {
+                    let parsed = parse_publication_date(&text).ok_or_else(|| {
+                        AppError::message(
+                            "date must be a year (YYYY), year-month (YYYY-MM) or full date (YYYY-MM-DD)",
+                        )
+                    })?;
+                    row.year = Some(parsed.year);
+                    row.date = Some(parsed.canonical());
+                }
+            }
+        }
+        if let Some(v) = patch.doi.as_deref() {
+            row.doi = norm(v);
+        }
+        if let Some(v) = patch.arxiv_id.as_deref() {
+            row.arxiv_id = norm(v);
+        }
+        if let Some(v) = patch.publication.as_deref() {
+            row.publication = norm(v);
+        }
+        if let Some(v) = patch.volume.as_deref() {
+            row.volume = norm(v);
+        }
+        if let Some(v) = patch.issue.as_deref() {
+            row.issue = norm(v);
+        }
+        if let Some(v) = patch.pages.as_deref() {
+            row.pages = norm(v);
+        }
+        if let Some(v) = patch.publisher.as_deref() {
+            row.publisher = norm(v);
+        }
+        if let Some(v) = patch.abstract_text.as_deref() {
+            row.abstract_text = norm(v);
+        }
+        if let Some(v) = patch.pdf_url.as_deref() {
+            row.pdf_url = norm(v);
+        }
+        if let Some(v) = patch.html_url.as_deref() {
+            row.html_url = norm(v);
+        }
+
+        row.meta_source = Some("manual".to_string());
+        Ok(())
+    })?;
     if title_changed {
-        crate::features::wiki::append_title_alias_best_effort(vault_root, &path, &updated.title);
+        log::info!(
+            target: "agentero::catalog",
+            "paper title changed for {path}: old_title={:?}, new_title={:?}",
+            old_title,
+            updated.title
+        );
+        crate::features::wiki::sync_notes_title_and_alias(
+            vault_root,
+            &updated.path,
+            &old_title,
+            &updated.title,
+        );
     }
     Ok(updated)
 }
 
 /// Set `is_read` for a paper path; returns the updated row.
 pub fn set_is_read(vault_root: &Path, path: &str, is_read: bool) -> Result<PaperRecord, AppError> {
-    let path = path.replace('\\', "/").trim_matches('/').to_string();
-    let Some(mut row) = get_by_path(vault_root, &path)? else {
-        return Err(AppError::message("paper not found in catalog"));
-    };
-    row.is_read = is_read;
-    row.updated_at = crate::time::now_rfc3339_millis();
-    upsert_paper(vault_root, &row)
+    mutate_paper(vault_root, path, |row| {
+        row.is_read = is_read;
+        Ok(())
+    })
 }
 
 /// Replace tags for a paper path; returns the updated row.
 /// Tags are trimmed, empty strings dropped, and de-duplicated case-insensitively
 /// (first occurrence keeps its original casing).
 pub fn set_tags(vault_root: &Path, path: &str, tags: &[PaperTag]) -> Result<PaperRecord, AppError> {
-    let path = path.replace('\\', "/").trim_matches('/').to_string();
-    let Some(mut row) = get_by_path(vault_root, &path)? else {
-        return Err(AppError::message("paper not found in catalog"));
-    };
-    row.tags = normalize_tags(tags);
-    row.updated_at = crate::time::now_rfc3339_millis();
-    upsert_paper(vault_root, &row)
+    mutate_paper(vault_root, path, |row| {
+        row.tags = normalize_tags(tags);
+        Ok(())
+    })
 }
 
 /// Append tags to a paper (trim + case-insensitive dedupe). Returns the updated row.
 pub fn add_tags(vault_root: &Path, path: &str, tags: &[PaperTag]) -> Result<PaperRecord, AppError> {
-    let path = path.replace('\\', "/").trim_matches('/').to_string();
-    let Some(mut row) = get_by_path(vault_root, &path)? else {
-        return Err(AppError::message("paper not found in catalog"));
-    };
-    let mut next = row.tags.clone();
-    next.extend(tags.iter().cloned());
-    row.tags = normalize_tags(&next);
-    row.updated_at = crate::time::now_rfc3339_millis();
-    upsert_paper(vault_root, &row)
+    mutate_paper(vault_root, path, |row| {
+        row.tags.extend(tags.iter().cloned());
+        row.tags = normalize_tags(&row.tags);
+        Ok(())
+    })
 }
 
 /// Remove tags from a paper (case-insensitive). Returns the updated row.
@@ -1040,19 +1170,43 @@ pub fn remove_tags(
     path: &str,
     tags: &[String],
 ) -> Result<PaperRecord, AppError> {
-    let path = path.replace('\\', "/").trim_matches('/').to_string();
-    let Some(mut row) = get_by_path(vault_root, &path)? else {
-        return Err(AppError::message("paper not found in catalog"));
-    };
-    let drop: Vec<String> = tags
-        .iter()
-        .map(|t| t.trim().to_string())
-        .filter(|t| !t.is_empty())
-        .collect();
-    row.tags
-        .retain(|existing| !drop.iter().any(|d| d.eq_ignore_ascii_case(&existing.name)));
-    row.updated_at = crate::time::now_rfc3339_millis();
-    upsert_paper(vault_root, &row)
+    mutate_paper(vault_root, path, |row| {
+        let drop: Vec<String> = tags
+            .iter()
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect();
+        row.tags
+            .retain(|existing| !drop.iter().any(|d| d.eq_ignore_ascii_case(&existing.name)));
+        Ok(())
+    })
+}
+
+/// Keep the read/patch/write under one SQLite write reservation, including
+/// writers in other processes (e.g. CLI alongside desktop). A deferred
+/// transaction would allow a stale read before acquiring the write lock.
+fn mutate_paper(
+    vault_root: &Path,
+    path: &str,
+    patch: impl FnOnce(&mut PaperRecord) -> Result<(), AppError>,
+) -> Result<PaperRecord, AppError> {
+    let path = crate::fs::normalize_rel_separators(path);
+    let persisted = with_catalog(vault_root, |conn| {
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let mut row =
+            get_conn(&tx, &path)?.ok_or_else(|| AppError::message("paper not found in catalog"))?;
+        patch(&mut row)?;
+        row.updated_at = crate::time::now_rfc3339_millis();
+        upsert_conn(&tx, &row)?;
+        let persisted =
+            get_conn(&tx, &path)?.ok_or_else(|| AppError::message("paper not found in catalog"))?;
+        tx.commit()?;
+        Ok(persisted)
+    })?;
+    // Projection stays best-effort and outside the transaction, as for upsert.
+    super::sidecar::write_sidecar(vault_root, &persisted);
+    Ok(persisted)
 }
 
 /// Catalog-wide tag inventory entry (name + optional color + count).
@@ -1129,18 +1283,18 @@ pub fn normalize_tags(tags: &[PaperTag]) -> Vec<PaperTag> {
 /// Snapshot the paper row at `path` and any papers nested under `path/`.
 /// Used by the recycle bin so a delete can be undone (see `services::trash`).
 pub fn list_under_path(vault_root: &Path, path: &str) -> Result<Vec<PaperRecord>, AppError> {
-    let path = path.replace('\\', "/").trim_matches('/').to_string();
+    let path = crate::fs::normalize_rel_separators(path);
     if path.is_empty() {
         return Ok(Vec::new());
     }
-    let like = format!("{path}/%");
+    let like = crate::sqlite::descendant_path_pattern(&path);
     with_catalog(vault_root, |conn| {
         let mut stmt = conn
             .prepare(&format!(
                 r#"
             SELECT {PAPER_COLUMNS}
             FROM papers
-            WHERE path = ?1 OR path LIKE ?2
+            WHERE path = ?1 OR path LIKE ?2 ESCAPE '!'
             ORDER BY path ASC
             "#,
             ))
@@ -1157,20 +1311,20 @@ pub fn list_under_path(vault_root: &Path, path: &str) -> Result<Vec<PaperRecord>
 /// Delete a paper row and any papers nested under `path/` (org folder delete).
 /// Returns the number of catalog rows removed.
 pub fn delete_under_path(vault_root: &Path, path: &str) -> Result<usize, AppError> {
-    let path = path.replace('\\', "/").trim_matches('/').to_string();
+    let path = crate::fs::normalize_rel_separators(path);
     if path.is_empty() {
         return Err(AppError::message("path is required"));
     }
-    let like = format!("{path}/%");
+    let like = crate::sqlite::descendant_path_pattern(&path);
     with_catalog(vault_root, |conn| {
         let n = conn
             .execute(
-                "DELETE FROM papers WHERE path = ?1 OR path LIKE ?2",
+                "DELETE FROM papers WHERE path = ?1 OR path LIKE ?2 ESCAPE '!'",
                 params![path, like],
             )
             .map_err(AppError::from)?;
         conn.execute(
-            "DELETE FROM pdf_page_counts WHERE path = ?1 OR path LIKE ?2",
+            "DELETE FROM pdf_page_counts WHERE path = ?1 OR path LIKE ?2 ESCAPE '!'",
             params![path, like],
         )
         .map_err(AppError::from)?;
@@ -1181,30 +1335,33 @@ pub fn delete_under_path(vault_root: &Path, path: &str) -> Result<usize, AppErro
 /// Move a paper folder (and any papers nested under it) in the catalog by
 /// rewriting the `from` path prefix to `to`. Returns the number of rows updated.
 pub fn move_under_path(vault_root: &Path, from: &str, to: &str) -> Result<usize, AppError> {
-    let from = from.replace('\\', "/").trim_matches('/').to_string();
-    let to = to.replace('\\', "/").trim_matches('/').to_string();
+    let from = crate::fs::normalize_rel_separators(from);
+    let to = crate::fs::normalize_rel_separators(to);
     if from.is_empty() || to.is_empty() {
         return Err(AppError::message("from and to are required"));
     }
-    let like = format!("{from}/%");
+    let like = crate::sqlite::descendant_path_pattern(&from);
     let now = crate::time::now_rfc3339_millis();
     // Exact row -> `to`; nested rows -> `to` + the suffix after `from`.
     // substr uses a 1-based CHARACTER index so non-ASCII folder names are safe.
     let offset = from.chars().count() as i64 + 1;
     with_catalog(vault_root, |conn| {
-        let n = conn
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)?;
+        let n = tx
             .execute(
                 "UPDATE papers SET path = ?1 || substr(path, ?2), updated_at = ?3 \
-                 WHERE path = ?4 OR path LIKE ?5",
+                 WHERE path = ?4 OR path LIKE ?5 ESCAPE '!'",
                 params![to, offset, now, from, like],
             )
             .map_err(AppError::from)?;
-        conn.execute(
+        tx.execute(
             "UPDATE pdf_page_counts SET path = ?1 || substr(path, ?2) \
-             WHERE path = ?3 OR path LIKE ?4",
+             WHERE path = ?3 OR path LIKE ?4 ESCAPE '!'",
             params![to, offset, from, like],
         )
         .map_err(AppError::from)?;
+        tx.commit()?;
         Ok(n)
     })
 }
@@ -1280,7 +1437,7 @@ pub fn set_page_counts(vault_root: &Path, counts: &[(String, i64)]) -> Result<()
 /// an empty one upserts a row whose sidecar would land on the vault root.
 fn upsert_conn(conn: &Connection, r: &PaperRecord) -> Result<PaperRecord, AppError> {
     let mut r = r.clone();
-    r.path = r.path.replace('\\', "/").trim_matches('/').to_string();
+    r.path = crate::fs::normalize_rel_separators(&r.path);
     if r.path.is_empty() {
         return Err(AppError::message(format!(
             "paper record missing vault-relative path (id `{}`)",
@@ -1492,6 +1649,82 @@ mod tests {
     }
 
     #[test]
+    fn path_prefix_crud_treats_wildcards_and_escape_as_literals() {
+        let root = tempfile::tempdir().unwrap();
+        let conn = ensure_catalog(root.path()).unwrap();
+        let from = "papers/a%_!论文";
+        let to = "papers/moved%_!论文";
+        let matching = [
+            from.to_string(),
+            format!("{from}/child"),
+            format!("{from}/child/deep"),
+        ];
+        let siblings = [
+            "papers/aXY!论文/child",
+            "papers/a%_!论文-more/child",
+            "papers/a%_论文/child",
+            "papers/other/a%_!论文/child",
+            "papers/movedXY!论文/child",
+            "papers/moved%_!论文-more/child",
+        ];
+        for path in matching.iter().map(String::as_str).chain(siblings) {
+            insert(&conn, path);
+            set_page_counts(root.path(), &[(path.to_string(), 7)]).unwrap();
+        }
+        let source_windows = from.replace('/', "\\");
+        let listed = list_under_path(root.path(), &source_windows).unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|row| row.path.as_str())
+                .collect::<Vec<_>>(),
+            matching.iter().map(String::as_str).collect::<Vec<_>>()
+        );
+        assert_eq!(
+            move_under_path(root.path(), &source_windows, &to.replace('/', "\\")).unwrap(),
+            3
+        );
+        for path in &matching {
+            let moved = path.replacen(from, to, 1);
+            assert!(get_by_path(root.path(), path).unwrap().is_none());
+            assert!(get_by_path(root.path(), &moved).unwrap().is_some());
+            assert_eq!(
+                conn.query_row(
+                    "SELECT page_count FROM pdf_page_counts WHERE path=?1",
+                    [&moved],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                7
+            );
+        }
+        assert_eq!(
+            delete_under_path(root.path(), &to.replace('/', "\\")).unwrap(),
+            3
+        );
+        assert!(list_under_path(root.path(), to).unwrap().is_empty());
+        for path in siblings {
+            assert!(get_by_path(root.path(), path).unwrap().is_some());
+            assert_eq!(
+                conn.query_row(
+                    "SELECT page_count FROM pdf_page_counts WHERE path=?1",
+                    [path],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                7
+            );
+        }
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM pdf_page_counts", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            siblings.len() as i64
+        );
+        super::super::evict_catalog_conn(root.path());
+    }
+
+    #[test]
     fn move_under_path_rewrites_prefix() {
         let dir = env::temp_dir().join(format!("agentero-move-test-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -1532,6 +1765,103 @@ mod tests {
     }
 
     #[test]
+    fn paper_patch_reserves_writer_before_read_modify_write() {
+        let dir = env::temp_dir().join(format!("agentero-patch-lock-{}", uuid::Uuid::new_v4()));
+        let other = ensure_catalog(&dir).unwrap();
+        insert(&other, "papers/x");
+        other.busy_timeout(std::time::Duration::ZERO).unwrap();
+
+        let updated = mutate_paper(&dir, "papers\\x", |row| {
+            // An independent connection models a CLI writer. The reservation
+            // must already exist while a patch computes from the current row.
+            let err = other.execute_batch("BEGIN IMMEDIATE").unwrap_err();
+            assert_eq!(
+                err.sqlite_error_code(),
+                Some(rusqlite::ErrorCode::DatabaseBusy)
+            );
+            row.is_read = true;
+            Ok(())
+        })
+        .unwrap();
+        assert!(updated.is_read);
+        assert_eq!(updated.path, "papers/x");
+        assert!(get_conn(&other, "papers/x").unwrap().unwrap().is_read);
+
+        // Both success and validation failure release the write reservation.
+        let err = mutate_paper(&dir, "papers/x", |row| {
+            row.is_read = false;
+            Err(AppError::message("invalid patch"))
+        });
+        assert!(err.is_err());
+        other.execute_batch("BEGIN IMMEDIATE; COMMIT;").unwrap();
+        assert!(get_conn(&other, "papers/x").unwrap().unwrap().is_read);
+        super::super::evict_catalog_conn(&dir);
+        drop(other);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_paper_patches_preserve_fields_and_tag_sets() {
+        use std::sync::{Arc, Barrier};
+        let dir = env::temp_dir().join(format!(
+            "agentero-patch-concurrent-{}",
+            uuid::Uuid::new_v4()
+        ));
+        let conn = ensure_catalog(&dir).unwrap();
+        insert(&conn, "papers/x");
+        drop(conn);
+        let count = 32;
+        let initial: Vec<_> = (0..count)
+            .map(|i| PaperTag::new(format!("remove-{i}")))
+            .collect();
+        set_tags(&dir, "papers/x", &initial).unwrap();
+        let barrier = Arc::new(Barrier::new(4));
+        std::thread::scope(|scope| {
+            for worker in 0..4 {
+                let dir = &dir;
+                let barrier = Arc::clone(&barrier);
+                scope.spawn(move || {
+                    for i in 0..count {
+                        barrier.wait();
+                        match worker {
+                            0 => {
+                                add_tags(dir, "papers/x", &[PaperTag::new(format!("add-{i}"))])
+                                    .unwrap();
+                            }
+                            1 => {
+                                remove_tags(dir, "papers/x", &[format!("REMOVE-{i}")]).unwrap();
+                            }
+                            2 => {
+                                update_meta(
+                                    dir,
+                                    "papers/x",
+                                    &PaperMetaPatch {
+                                        publication: Some(format!("Journal {i}")),
+                                        ..Default::default()
+                                    },
+                                )
+                                .unwrap();
+                            }
+                            _ => {
+                                set_is_read(dir, "papers/x", true).unwrap();
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        let row = get_by_path(&dir, "papers/x").unwrap().unwrap();
+        assert!(row.is_read);
+        assert_eq!(row.publication.as_deref(), Some("Journal 31"));
+        assert_eq!(row.tags.len(), count);
+        for i in 0..count {
+            assert!(row.tags.iter().any(|tag| tag.name == format!("add-{i}")));
+        }
+        super::super::evict_catalog_conn(&dir);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn update_meta_patches_fields_and_syncs_aliases() {
         let dir = env::temp_dir().join(format!("agentero-update-meta-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -1559,7 +1889,7 @@ mod tests {
             &PaperMetaPatch {
                 title: Some("New Title".into()),
                 authors: Some(vec![" A ".into(), "".into(), "B".into()]),
-                year: Some("2024".into()),
+                date: Some("2024-06-12".into()),
                 publication: Some("NeurIPS".into()),
                 ..Default::default()
             },
@@ -1567,6 +1897,8 @@ mod tests {
         .unwrap();
         assert_eq!(row.title, "New Title");
         assert_eq!(row.authors, vec!["A".to_string(), "B".to_string()]);
+        assert_eq!(row.date.as_deref(), Some("2024-06-12"));
+        // `year` is derived from the date.
         assert_eq!(row.year, Some(2024));
         assert_eq!(row.publication.as_deref(), Some("NeurIPS"));
         assert_eq!(row.doi.as_deref(), Some("10.1/old")); // untouched
@@ -1577,18 +1909,42 @@ mod tests {
         assert!(notes.contains("Old Title"));
         assert!(notes.contains("New Title"));
 
-        // Empty string clears a column; empty year clears year.
+        // Partial precision is kept as typed (padded); ISO timestamps accepted.
+        let row = update_meta(
+            &dir,
+            "papers/x",
+            &PaperMetaPatch {
+                date: Some(" 2019-7 ".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(row.date.as_deref(), Some("2019-07"));
+        assert_eq!(row.year, Some(2019));
+        let row = update_meta(
+            &dir,
+            "papers/x",
+            &PaperMetaPatch {
+                date: Some("2017-06-12T00:00:00Z".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(row.date.as_deref(), Some("2017-06-12"));
+
+        // Empty string clears a column; empty date clears date and year.
         let row = update_meta(
             &dir,
             "papers/x",
             &PaperMetaPatch {
                 doi: Some("  ".into()),
-                year: Some("".into()),
+                date: Some("".into()),
                 ..Default::default()
             },
         )
         .unwrap();
         assert_eq!(row.doi, None);
+        assert_eq!(row.date, None);
         assert_eq!(row.year, None);
 
         // Validation errors.
@@ -1601,41 +1957,21 @@ mod tests {
             },
         )
         .is_err());
-        assert!(update_meta(
-            &dir,
-            "papers/x",
-            &PaperMetaPatch {
-                year: Some("99".into()),
-                ..Default::default()
-            },
-        )
-        .is_err());
-        assert!(update_meta(&dir, "papers/missing", &PaperMetaPatch::default()).is_err());
-
-        let _ = fs::remove_dir_all(&dir);
-    }
-
-    #[test]
-    fn list_missing_publication_filters_null_and_empty() {
-        let dir = env::temp_dir().join(format!("agentero-missing-pub-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
-        fs::create_dir_all(&dir).unwrap();
-        {
-            let conn = ensure_catalog(&dir).unwrap();
-            conn.execute_batch(
-                "INSERT INTO papers (path, id, type, title, publication, added_at, updated_at) VALUES \
-                 ('papers/a', 'a', 'article', 'A', 'NeurIPS', 't', 't'), \
-                 ('papers/b', 'b', 'article', 'B', NULL, 't', 't'), \
-                 ('papers/c', 'c', 'article', 'C', '', 't', 't'), \
-                 ('papers/d', 'd', 'article', 'D', '  ', 't', 't');",
-            )
-            .unwrap();
+        for bad in ["99", "n.d.", "2024-13", "2024-02-30", "12000"] {
+            assert!(
+                update_meta(
+                    &dir,
+                    "papers/x",
+                    &PaperMetaPatch {
+                        date: Some(bad.into()),
+                        ..Default::default()
+                    },
+                )
+                .is_err(),
+                "{bad} should be rejected"
+            );
         }
-
-        let rows = list_missing_publication(&dir).unwrap();
-        let mut paths: Vec<_> = rows.iter().map(|r| r.path.as_str()).collect();
-        paths.sort();
-        assert_eq!(paths, vec!["papers/b", "papers/c", "papers/d"]);
+        assert!(update_meta(&dir, "papers/missing", &PaperMetaPatch::default()).is_err());
 
         let _ = fs::remove_dir_all(&dir);
     }

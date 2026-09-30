@@ -247,6 +247,16 @@ export function GeneralPane({
 					/>
 				</SettingsRow>
 				<SettingsRow
+					label={t("general.autoIngest.label")}
+					htmlFor="auto-ingest"
+				>
+					<Switch
+						id="auto-ingest"
+						checked={settings.autoIngest}
+						onCheckedChange={(v) => patch({ autoIngest: v })}
+					/>
+				</SettingsRow>
+				<SettingsRow
 					label={t("general.replaceCurrentTabOnOpenPaper.label")}
 					htmlFor="replace-current-tab-on-open-paper"
 				>
@@ -536,13 +546,7 @@ function PrivacySettingsBlock({
 						onClick={() => {
 							void clearUsage()
 								.then(() => notifySuccess(t("general.privacy.clearUsage.done")))
-								.catch((e) =>
-									notifyError(
-										e instanceof Error
-											? e.message
-											: t("general.privacy.clearUsage.done"),
-									),
-								);
+								.catch((e) => notifyError(errorText(e)));
 						}}
 					>
 						{t("general.privacy.clearUsage.action")}
@@ -882,6 +886,24 @@ function McpTunnelRows({
 	useEffect(() => {
 		void refresh();
 	}, [refresh]);
+
+	// Start stays disabled while the host still reports BinaryMissing.
+	// Poll so a brew install in another terminal is picked up without
+	// restarting Agentero or reopening this page.
+	useEffect(() => {
+		if (status?.phase !== "binaryMissing") return;
+		const id = window.setInterval(() => {
+			void refresh();
+		}, 2000);
+		const onFocus = () => {
+			void refresh();
+		};
+		window.addEventListener("focus", onFocus);
+		return () => {
+			window.clearInterval(id);
+			window.removeEventListener("focus", onFocus);
+		};
+	}, [status?.phase, refresh]);
 
 	useTauriEvent(events.mcpTunnelStatus, (payload) => {
 		setStatus(payload);

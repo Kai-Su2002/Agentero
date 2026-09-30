@@ -37,7 +37,14 @@ import { useLayoutModelPrefetch } from "@/hooks/use-layout-model-prefetch";
 import { useMcpSync } from "@/hooks/use-mcp-sync";
 import { useNativeMenuEvents } from "@/hooks/use-native-menu-events";
 import { useAnyModalOverlayOpen } from "@/hooks/use-overlay-registration";
-import { SIDEBAR_DEFAULT_PX, useShellLayout } from "@/hooks/use-shell-layout";
+import {
+	RAIL_COLLAPSED_MAX_PX,
+	RIGHT_SIDEBAR_MAX_RATIO,
+	RIGHT_SIDEBAR_MIN_PX,
+	SIDEBAR_MAX_RATIO,
+	SIDEBAR_MIN_PX,
+	useShellLayout,
+} from "@/hooks/use-shell-layout";
 import { useVaultFileEvents } from "@/hooks/use-vault-file-events";
 import {
 	agentChromeStore,
@@ -59,6 +66,10 @@ import { scheduleLibraryRefresh } from "@/lib/paper/library-store";
 import { UI_SCALE_PRESETS } from "@/lib/settings";
 import { getSettings, patchSettings } from "@/lib/settings/react-store";
 import {
+	commitShellRailWidths,
+	RAIL_RECORD_MIN_PX,
+} from "@/lib/shell/layout-persist";
+import {
 	openSettingsWindow,
 	toggleSettingsWindow,
 } from "@/lib/shell/settings-window";
@@ -69,6 +80,7 @@ import {
 	setRightSidebarOpenState,
 	setSidebarCollapsedState,
 	toggleSidebar,
+	uiStore,
 } from "@/lib/shell/ui-store";
 import { openRightTab, toggleChat } from "@/lib/shell/ui-window-actions";
 import { toggleBorderlessFullscreen } from "@/lib/shell/window-fullscreen";
@@ -201,6 +213,7 @@ export default function App() {
 	useExternalFileDrop();
 	// First-vault highlight tour (driver.js) + Settings replay listener.
 	useFeatureTour();
+	const vaultPath = useVaultStore((s) => s.vaultPath);
 	const {
 		sidebarPanelRef,
 		rightSidebarPanelRef,
@@ -209,11 +222,12 @@ export default function App() {
 		editorPaneRef,
 		leftWidthPxRef,
 		rightWidthPxRef,
+		initialLeftPx,
+		initialRightPx,
 		animatingRailRef,
 		cancelRailAnimation,
-	} = useShellLayout();
+	} = useShellLayout(vaultPath);
 
-	const vaultPath = useVaultStore((s) => s.vaultPath);
 	const sidebarCollapsed = useUiStore((s) => s.sidebarCollapsed);
 	const rightSidebarOpen = useUiStore((s) => s.rightSidebarOpen);
 
@@ -391,6 +405,32 @@ export default function App() {
 		onCloseTabOrWindow: closeTabOrWindow,
 	});
 
+	// Persist a completed user resize into the active layout's width slot.
+	// Ratios are stored as fractions of the window width — the same base
+	// the restore path (railPxFromRatio) uses — so measured panel px map
+	// 1:1 onto the saved values. Sub-threshold px (rails dragged shut)
+	// keep the previously remembered width.
+	const commitUserRailPx = (leftPx?: number, rightPx?: number) => {
+		const ratio = (px?: number) =>
+			px !== undefined && px >= RAIL_RECORD_MIN_PX
+				? px / window.innerWidth
+				: undefined;
+		commitShellRailWidths(
+			{ leftRatio: ratio(leftPx), rightRatio: ratio(rightPx) },
+			uiStore.getState().lastAppliedPreset ?? "custom",
+			window.innerWidth,
+		);
+	};
+	// Double-click resets the adjacent rail to its session default via an
+	// imperative resize (isUserInteraction stays false), so persist the
+	// known reset target directly instead of racing a DOM read-back.
+	const commitRailReset = (side: "left" | "right") => {
+		commitUserRailPx(
+			side === "left" ? initialLeftPx : undefined,
+			side === "right" ? initialRightPx : undefined,
+		);
+	};
+
 	return (
 		<WikiNavProvider>
 			<div className="flex h-dvh max-h-dvh flex-col overflow-hidden bg-background text-foreground">
@@ -404,15 +444,30 @@ export default function App() {
 					<ResizableGroup
 						orientation="horizontal"
 						className="h-full min-h-0 flex-1 overflow-hidden"
+						onLayoutChanged={(_nextLayout, meta) => {
+							// Only genuine user resizes (drag release / keyboard) update
+							// the remembered widths; mount echoes, window resizes and
+							// programmatic preset applies are filtered out here.
+							if (!meta.isUserInteraction) return;
+							// Entering custom snapshots the rail flags; widths commit
+							// from measured px so save and restore share one base.
+							setLayoutMode("custom");
+							commitUserRailPx(
+								vaultPath
+									? sidebarPanelRef.current?.getSize().inPixels
+									: undefined,
+								rightSidebarPanelRef.current?.getSize().inPixels,
+							);
+						}}
 					>
 						{vaultPath ? (
 							<Fragment>
 								<ResizablePanel
 									id="sidebar"
 									panelRef={sidebarPanelRef}
-									defaultSize={SIDEBAR_DEFAULT_PX}
-									minSize={160}
-									maxSize="30%"
+									defaultSize={sidebarCollapsed ? 0 : initialLeftPx}
+									minSize={SIDEBAR_MIN_PX}
+									maxSize={`${Math.round(SIDEBAR_MAX_RATIO * 100)}%`}
 									collapsible
 									collapsedSize={0}
 									// Keep pixel width when the right rail or Notes column toggles.
@@ -420,27 +475,42 @@ export default function App() {
 									className="min-h-0 overflow-hidden"
 									onResize={(size) => {
 										// Programmatic collapse/expand transition in flight.
-										if (animatingRailRef.current === "left") return;
-										setLayoutMode("custom");
+										if (
+											animatingRailRef.current === "left" ||
+											animatingRailRef.current === "both"
+										) {
+											return;
+										}
 										// Only mark collapsed after a real collapse, never mid-drag.
-										if (size.inPixels <= 1) setSidebarCollapsedState(true);
-										else if (size.inPixels >= 80) {
+										if (size.inPixels <= RAIL_COLLAPSED_MAX_PX) {
+											setSidebarCollapsedState(true);
+										} else if (size.inPixels >= RAIL_RECORD_MIN_PX) {
 											setSidebarCollapsedState(false);
 											leftWidthPxRef.current = size.inPixels;
 										}
 									}}
 								>
+									{/*
+									  `isolate` (stacking context) separates the rail from the PDF
+									  pane, but a whole-rail `transform-gpu` GPU layer goes
+									  unpainted in WKWebView after paper open / tab switch /
+									  import and only recovers on scroll. Rows use `top`, not
+									  `translateY`, so no compositing layer is needed here.
+									*/}
 									<aside
 										ref={sidebarAsideRef}
 										data-vault-sidebar
-										className="flex h-full min-h-0 flex-col overflow-hidden bg-sidebar isolate transform-gpu"
+										className="flex h-full min-h-0 flex-col overflow-hidden bg-sidebar isolate"
 									>
 										<VaultSidebar />
 									</aside>
 								</ResizablePanel>
 
 								{sidebarCollapsed ? null : (
-									<ResizableHandle onPointerDown={cancelRailAnimation} />
+									<ResizableHandle
+										onPointerDown={cancelRailAnimation}
+										onDoubleClick={() => commitRailReset("left")}
+									/>
 								)}
 							</Fragment>
 						) : null}
@@ -470,24 +540,32 @@ export default function App() {
 
 						{/* Right sidebar: always mounted + collapsible (same as left). */}
 						{rightSidebarOpen ? (
-							<ResizableHandle onPointerDown={cancelRailAnimation} />
+							<ResizableHandle
+								onPointerDown={cancelRailAnimation}
+								onDoubleClick={() => commitRailReset("right")}
+							/>
 						) : null}
 						<ResizablePanel
 							id="right-sidebar"
 							panelRef={rightSidebarPanelRef}
-							defaultSize={0}
-							minSize={260}
-							maxSize="50%"
+							defaultSize={rightSidebarOpen ? initialRightPx : 0}
+							minSize={RIGHT_SIDEBAR_MIN_PX}
+							maxSize={`${Math.round(RIGHT_SIDEBAR_MAX_RATIO * 100)}%`}
 							collapsible
 							collapsedSize={0}
 							groupResizeBehavior="preserve-pixel-size"
 							className="min-h-0 overflow-hidden"
 							onResize={(size) => {
 								// Programmatic collapse/expand transition in flight.
-								if (animatingRailRef.current === "right") return;
-								setLayoutMode("custom");
-								if (size.inPixels <= 1) setRightSidebarOpenState(false);
-								else if (size.inPixels >= 80) {
+								if (
+									animatingRailRef.current === "right" ||
+									animatingRailRef.current === "both"
+								) {
+									return;
+								}
+								if (size.inPixels <= RAIL_COLLAPSED_MAX_PX) {
+									setRightSidebarOpenState(false);
+								} else if (size.inPixels >= RAIL_RECORD_MIN_PX) {
 									setRightSidebarOpenState(true);
 									rightWidthPxRef.current = size.inPixels;
 								}

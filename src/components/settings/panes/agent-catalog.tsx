@@ -153,12 +153,14 @@ function catalogTemplateFromId(templateId: string): AgentTemplate {
 		case "hermes":
 		case "claude-acp":
 		case "codex-acp":
+		case "antigravity-acp":
 		case "qodercli":
 		case "grok-build":
 		case "pi":
 		case "dsh":
 		case "kimi-code":
 		case "zcode":
+		case "minimax-code":
 			return templateId;
 		default:
 			return "custom";
@@ -174,9 +176,7 @@ export function buildDefaultAgentChoices(
 
 	for (const entry of scan.entries) {
 		const needsInstall = showInstallAgent(entry) || showInstallAcp(entry);
-		const canUse =
-			(entry.acpCommandAvailable || entry.acpStatus === "ready") &&
-			!needsInstall;
+		const canUse = entry.acpCommandAvailable && !needsInstall;
 		if (!canUse) continue;
 		if (entry.registeredId) seenAgentIds.add(entry.registeredId);
 		choices.push({
@@ -227,7 +227,9 @@ export function patchCatalogProbe(
 	return {
 		...scan,
 		entries: scan.entries.map((entry) => {
-			if (entry.templateId !== templateId) return entry;
+			if (entry.templateId !== templateId || !entry.acpCommandAvailable) {
+				return entry;
+			}
 			return {
 				...entry,
 				registeredId: entry.registeredId ?? result.agentId,

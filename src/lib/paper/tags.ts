@@ -97,13 +97,23 @@ export function tagName(t: PaperTagInput): string {
 	return typeof t === "string" ? t : t.name;
 }
 
-export function tagColorOf(t: PaperTagInput): TagColorId | undefined {
-	if (typeof t === "string") return undefined;
-	return isTagColorId(t.color) ? t.color : undefined;
-}
-
 /** Coerce API/catalog tags (string[] or mixed) into PaperTag[]. */
 export function coercePaperTags(tags: unknown): PaperTag[] {
 	if (!Array.isArray(tags)) return [];
 	return normalizePaperTags(tags as PaperTagInput[]);
+}
+
+/** Change only one existing tag, retaining invisible provenance tags. */
+export function withPaperTagColor(
+	tags: unknown,
+	name: string,
+	color: TagColorId | null,
+): PaperTag[] {
+	return coercePaperTags(tags).map((tag) =>
+		tag.name.toLocaleLowerCase() === name.toLocaleLowerCase()
+			? color
+				? { ...tag, color }
+				: { name: tag.name }
+			: tag,
+	);
 }

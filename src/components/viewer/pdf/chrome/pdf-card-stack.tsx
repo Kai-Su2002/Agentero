@@ -1,6 +1,5 @@
 import { AnimatePresence } from "motion/react";
 import { createPortal } from "react-dom";
-import { SelectionCopiedLabel } from "@/components/ui/selection-copied-label";
 import { AskPopover } from "@/components/viewer/pdf/cards/ask-popover";
 import {
 	type CitationPreviewImportMenu,
@@ -16,7 +15,6 @@ import type {
 	CrossrefPreviewState,
 	SelectionMenuState,
 } from "@/components/viewer/pdf/types";
-import { cn } from "@/lib/core/utils";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import type { PdfAskThread } from "@/lib/pdf/ask";
 import type { HighlightColor } from "@/lib/pdf/highlight/palette";
@@ -29,12 +27,11 @@ type PdfCardStackProps = {
 		onAsk: () => void;
 		onAddToChat: () => void;
 		onTranslate: () => void;
+		onCopy?: () => Promise<boolean>;
 		/** Hide highlight / translate (no marks/ to persist into); keep Ask. */
 		showHighlight?: boolean;
 		showTranslate?: boolean;
 	};
-	/** Transient screen position for the auto-copy confirmation label. */
-	copiedLabelPos: { x: number; y: number } | null;
 	citationPreview: {
 		state: CitationPreviewState | null;
 		importMenu?: CitationPreviewImportMenu;
@@ -70,17 +67,22 @@ type PdfCardStackProps = {
 		streaming: boolean;
 		error: string | null;
 		onOpenSettings: () => void;
+		onTogglePin?: () => void;
 		onHide: () => void;
-		onDelete: () => void;
 	};
 	visual: {
 		trace: PdfVisualSessionTrace | null;
 		onHide: () => void;
 		onDelete: () => void;
 	};
-	/** Privacy mode: fade the floating cards while the window is unfocused. */
-	hidden?: boolean;
 };
+
+/** Stable across scroll re-place; changes when the selection itself changes. */
+function selectionMenuInstanceKey(state: SelectionMenuState): string {
+	const rect = state.anchor.rects[0];
+	if (!rect) return String(state.anchor.page);
+	return `${state.anchor.page}:${rect.x}:${rect.y}:${rect.w}:${rect.h}`;
+}
 
 /**
  * Floating cards of the viewer, portaled to `document.body` so page transforms
@@ -88,7 +90,6 @@ type PdfCardStackProps = {
  */
 export function PdfCardStack({
 	selectionMenu,
-	copiedLabelPos,
 	citationPreview,
 	crossrefPreview,
 	cardScreen,
@@ -97,31 +98,23 @@ export function PdfCardStack({
 	ask,
 	translate,
 	visual,
-	hidden = false,
 }: PdfCardStackProps) {
 	if (typeof document === "undefined") return null;
 
 	return createPortal(
-		<div
-			className={cn(
-				"transition-opacity duration-150",
-				hidden && "pointer-events-none opacity-0",
-			)}
-		>
+		<div>
 			{selectionMenu.state ? (
 				<SelectionMenu
+					key={selectionMenuInstanceKey(selectionMenu.state)}
 					screen={selectionMenu.state.screen}
 					onHighlight={selectionMenu.onHighlight}
 					onAsk={selectionMenu.onAsk}
 					onAddToChat={selectionMenu.onAddToChat}
 					onTranslate={selectionMenu.onTranslate}
+					onCopy={selectionMenu.onCopy}
 					showHighlight={selectionMenu.showHighlight}
 					showTranslate={selectionMenu.showTranslate}
 				/>
-			) : null}
-
-			{copiedLabelPos ? (
-				<SelectionCopiedLabel x={copiedLabelPos.x} y={copiedLabelPos.y} />
 			) : null}
 
 			{citationPreview.state ? (
@@ -176,9 +169,10 @@ export function PdfCardStack({
 						result={translate.record.result ?? ""}
 						streaming={translate.streaming}
 						error={translate.error ?? translate.record.error ?? null}
+						pinned={translate.record.pinned}
+						onTogglePin={translate.onTogglePin}
 						onOpenSettings={translate.onOpenSettings}
 						onHide={translate.onHide}
-						onDelete={translate.onDelete}
 						onPointerEnter={onCardHoverEnter}
 						onPointerLeave={onCardHoverLeave}
 					/>

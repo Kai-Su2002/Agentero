@@ -5,6 +5,7 @@ mod bindings_test;
 // `pub(crate)`: the mirror-shape anti-drift tests live in the owning modules
 // of the private payload structs and reference the mirrors from here. Test
 // builds only — the module does not exist otherwise.
+pub(crate) mod command_util;
 #[cfg(test)]
 pub(crate) mod events_contract;
 mod handlers;
@@ -140,6 +141,7 @@ pub fn run() {
         let remote_registry = Arc::new(RemoteRegistry::new());
         builder = builder
             .manage(FsWatchController::new())
+            .manage(crate::features::paper::ingest::IngestQueue::default())
             .manage(Arc::new(ConnectorController::new()))
             .manage(Arc::new(McpController::new()))
             .manage(Arc::new(McpTunnelController::new()))
@@ -178,6 +180,9 @@ pub fn run() {
     }
 
     builder = builder.setup(|app| {
+        // Bundled ACP adapter tier (offline fallback): record the packaged
+        // adapters root before any catalog scan / spawn path can consult it.
+        crate::features::agent::registry::bundled::init(app.handle());
         // JobCenter runner registry: business domains own their executors and
         // register them here at assembly time (P2 runner-registry refactor).
         // JobCenter itself lives in features/jobs, alongside the domains it
@@ -346,6 +351,7 @@ pub fn run() {
         {
             let tunnel = app.state::<Arc<McpTunnelController>>();
             tunnel.set_app_handle(app.handle().clone());
+            tunnel.schedule_startup_sweep();
         }
         log::info!(
             target: "agentero::op",

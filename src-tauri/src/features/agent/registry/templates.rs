@@ -1,6 +1,40 @@
 use crate::features::agent::models::{AgentTemplate, AgentTemplateInfo};
+use std::path::PathBuf;
 
-/// Preset command templates only — binaries are never bundled with Agentero.
+/// Directory owned by Agentero for the official Antigravity ACP package.
+pub fn antigravity_install_dir() -> PathBuf {
+    dirs::data_local_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Agentero")
+        .join("agents")
+        .join("antigravity-acp")
+}
+
+/// File name of the ACP server inside the managed directory (the Windows
+/// archive ships an `.exe`, the other platforms a `.par`).
+pub fn antigravity_server_name() -> &'static str {
+    if cfg!(windows) {
+        "agy_acp_server.exe"
+    } else {
+        "agy_acp_server.par"
+    }
+}
+
+pub fn antigravity_command() -> String {
+    let name = antigravity_server_name();
+    let managed = antigravity_install_dir().join(name);
+    if managed.is_file() {
+        managed.display().to_string()
+    } else {
+        name.to_string()
+    }
+}
+
+/// Preset command templates only — host binaries are never bundled with
+/// Agentero. The Claude/Codex ACP adapters are the one exception to "nothing
+/// bundled": their JS-only trees ship as app resources as an offline fallback
+/// (see `registry::bundled`; a PATH-installed adapter always wins).
 ///
 /// `detect_command` is used for "installed on PATH" status when the ACP entrypoint
 /// differs (e.g. Claude/Codex via npx adapters still want to show the host CLI).
@@ -18,6 +52,15 @@ pub const CLAUDE_ACP_INSTALL_COMMAND: &str = if cfg!(windows) {
     "npm i -g @agentclientprotocol/claude-agent-acp --prefix \"$HOME/.local\""
 };
 
+/// Codex ACP adapter — same Unix user-prefix reasoning as the Claude adapter.
+/// Was the last adapter still installed into the (often root-owned) global
+/// npm prefix on Unix, where `npm i -g` fails with EPERM unless run via sudo.
+pub const CODEX_ACP_INSTALL_COMMAND: &str = if cfg!(windows) {
+    "npm i -g @agentclientprotocol/codex-acp@latest"
+} else {
+    "npm i -g @agentclientprotocol/codex-acp@latest --prefix \"$HOME/.local\""
+};
+
 /// Community `pi-acp` adapter — pi itself has no native ACP mode, the adapter
 /// spawns `pi --mode rpc`. Same prefix reasoning as the Claude adapter above.
 pub const PI_ACP_INSTALL_COMMAND: &str = if cfg!(windows) {
@@ -30,26 +73,19 @@ pub const PI_ACP_INSTALL_COMMAND: &str = if cfg!(windows) {
 /// so the silent lifecycle uses npm (what that script ultimately runs) everywhere.
 pub const PI_HOST_INSTALL_COMMAND: &str = "npm i -g @earendil-works/pi-coding-agent@latest";
 
-/// Managed launcher directory for the dsh ACP demo server. The server resolves
-/// its cordis.yml, plugin modules, `.env` and session persistence relative to
-/// this directory, and ACP stdio spawns have no cwd field — so both the install
-/// lifecycle and the launch command `cd` here first.
-pub fn dsh_launcher_dir() -> std::path::PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        let base = std::env::var_os("USERPROFILE")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|| std::path::PathBuf::from("C:\\"));
-        base.join(".agentero").join("dsh-acp")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = std::env::var_os("HOME")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_default();
-        home.join(".agentero").join("dsh-acp")
-    }
-}
+/// Host dsh CLI (DeepSeek Harness). ACP ships as a built-in profile
+/// (`dsh --profile acp`, 0.1.2+); the standalone `@deepseek-ai/dsh-acp-demo`
+/// package stopped at 0.1.1-rc.2. Same user-prefix reasoning as the Claude
+/// adapter above.
+pub const DSH_INSTALL_COMMAND: &str = if cfg!(windows) {
+    "npm i -g @deepseek-ai/dsh@latest"
+} else {
+    "npm i -g @deepseek-ai/dsh@latest --prefix \"$HOME/.local\""
+};
+
+/// MiniMax Code native ACP CLI (`mcode acp`). The package ships native SQLite
+/// dependencies, so npm must run install scripts and include optional deps.
+pub const MINIMAX_CODE_INSTALL_COMMAND: &str = "npm install --global @minimax-ai/code@latest --ignore-scripts=false --include=optional --allow-scripts=@minimax-ai/code,better-sqlite3 --registry https://registry.npmjs.org/ --foreground-scripts";
 
 /// Default install directory of the official Kimi Code installer (single
 /// binary, written into the shell rc). Used for uninstall cleanup.
@@ -68,39 +104,6 @@ pub fn kimi_launcher_dir() -> std::path::PathBuf {
             .unwrap_or_default();
         home.join(".kimi-code")
     }
-}
-
-/// Home-level npm root shim: if the user has `~/package.json`, npm walks up
-/// from the launcher dir and lands packages in `~/node_modules` (off PATH).
-pub fn dsh_home_entrypoint() -> Option<std::path::PathBuf> {
-    #[cfg(target_os = "windows")]
-    {
-        let home = std::env::var_os("USERPROFILE").map(std::path::PathBuf::from)?;
-        for name in ["dsh-acp-demo.cmd", "dsh-acp-demo"] {
-            let shim = home.join("node_modules").join(".bin").join(name);
-            if shim.exists() {
-                return Some(shim);
-            }
-        }
-        None
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let home = std::env::var_os("HOME").map(std::path::PathBuf::from)?;
-        let shim = home.join("node_modules").join(".bin").join("dsh-acp-demo");
-        shim.exists().then_some(shim)
-    }
-}
-
-/// "dsh installed" check: npm shims live in the launcher's `node_modules/.bin`
-/// (Unix symlink, Windows `.cmd` batch next to the bash shim) or in the
-/// home-level npm root. PATH-based installs are checked separately via
-/// `resolve_command("dsh-acp-demo")`.
-pub fn dsh_entrypoint_exists() -> bool {
-    let bin = dsh_launcher_dir().join("node_modules").join(".bin");
-    bin.join("dsh-acp-demo").exists()
-        || bin.join("dsh-acp-demo.cmd").exists()
-        || dsh_home_entrypoint().is_some()
 }
 
 /// Community `zcode-acp-server` adapter — bridges the headless `zcode
@@ -293,9 +296,9 @@ pub fn builtin_templates() -> Vec<AgentTemplateInfo> {
             args: vec!["acp".to_string()],
             detect_command: Some("opencode".to_string()),
             install_hint: (if cfg!(windows) {
-                "npm i -g opencode  ·  https://opencode.ai"
+                "npm i -g @opencode/cli  ·  https://opencode.ai/v2"
             } else {
-                "brew install opencode  ·  https://opencode.ai"
+                "brew install anomalyco/tap/opencode-v2  ·  https://opencode.ai/v2"
             })
             .to_string(),
             install_command: None,
@@ -334,10 +337,34 @@ pub fn builtin_templates() -> Vec<AgentTemplateInfo> {
             command: "codex-acp".to_string(),
             args: vec![],
             detect_command: Some("codex".to_string()),
-            install_hint: "npm i -g @agentclientprotocol/codex-acp  ·  needs Codex CLI auth"
-                .to_string(),
-            install_command: Some("npm i -g @agentclientprotocol/codex-acp".to_string()),
+            install_hint: format!(
+                "{CODEX_ACP_INSTALL_COMMAND}  ·  needs Codex CLI auth"
+            ),
+            install_command: Some(CODEX_ACP_INSTALL_COMMAND.to_string()),
             login_command: Some("codex login".to_string()),
+        },
+        // The official registry has no macOS Intel build.
+        #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+        AgentTemplateInfo {
+            id: AgentTemplate::AntigravityAcp.as_str().to_string(),
+            name: "Antigravity".to_string(),
+            description: "Google Antigravity via its official ACP server.".to_string(),
+            command: antigravity_command(),
+            // Match the launch arguments published in the official ACP registry.
+            args: if cfg!(target_os = "linux") {
+                vec!["--uid=".to_string()]
+            } else {
+                vec![]
+            },
+            detect_command: None,
+            install_hint: "Download the official ACP server into Agentero's managed directory; \
+                localharness_external is kept beside it. \
+                https://antigravity.google/docs/ide/extensions/zed"
+                .to_string(),
+            // Antigravity is installed by the local Registry-aware lifecycle
+            // path. There is no equivalent shell command for remote hosts.
+            install_command: None,
+            login_command: None,
         },
         AgentTemplateInfo {
             id: AgentTemplate::Hermes.as_str().to_string(),
@@ -386,34 +413,19 @@ pub fn builtin_templates() -> Vec<AgentTemplateInfo> {
             id: AgentTemplate::Dsh.as_str().to_string(),
             name: "Dsh".to_string(),
             description:
-                "DeepSeek Harness automation ACP demo (`@deepseek-ai/dsh-acp-demo`), npm-installed into ~/.agentero/dsh-acp."
+                "DeepSeek Harness with native ACP (`dsh --profile acp`, built-in profile)."
                     .to_string(),
-            // The server resolves cordis.yml / plugins / .env from its own dir;
-            // ACP stdio spawns have no cwd, so launch through a shell cd. Prefer
-            // the app-managed local install, then a home-level npm root (when
-            // `~/package.json` walks npm up), then a global install on PATH.
-            command: if cfg!(windows) { "cmd" } else { "bash" }.to_string(),
-            args: if cfg!(windows) {
-                vec![
-                    "/D".to_string(),
-                    "/C".to_string(),
-                    "cd /d \"%USERPROFILE%\\.agentero\\dsh-acp\" && if exist node_modules\\.bin\\dsh-acp-demo.cmd (node_modules\\.bin\\dsh-acp-demo.cmd --config cordis.yml) else (if exist \"%USERPROFILE%\\node_modules\\.bin\\dsh-acp-demo.cmd\" (\"%USERPROFILE%\\node_modules\\.bin\\dsh-acp-demo.cmd\" --config cordis.yml) else (dsh-acp-demo --config cordis.yml))".to_string(),
-                ]
-            } else {
-                vec![
-                    "-c".to_string(),
-                    "cd \"$HOME/.agentero/dsh-acp\" && if [ -x ./node_modules/.bin/dsh-acp-demo ]; then exec ./node_modules/.bin/dsh-acp-demo --config cordis.yml; elif [ -x \"$HOME/node_modules/.bin/dsh-acp-demo\" ]; then exec \"$HOME/node_modules/.bin/dsh-acp-demo\" --config cordis.yml; else exec dsh-acp-demo --config cordis.yml; fi".to_string(),
-                ]
-            },
-            detect_command: Some("node".to_string()),
+            // ACP is a built-in profile of the umbrella CLI (0.1.2+); the
+            // profile auto-initializes on first boot and reads credentials
+            // through the official CLI's layered env (~/.dsh/.env).
+            command: "dsh".to_string(),
+            args: vec!["--profile".to_string(), "acp".to_string()],
+            detect_command: Some("dsh".to_string()),
             install_hint: format!(
-                "Install button runs `npm i` of the dsh-acp-demo stack into ~/.agentero/dsh-acp. \
-                 `npm i -g @deepseek-ai/dsh` is the umbrella CLI without ACP — install \
-                 @deepseek-ai/dsh-acp-demo instead. Needs Node 22.19+ and DEEPSEEK_API_KEY \
-                 in {}/.env  ·  https://github.com/deepseek-ai/deepseek-harness",
-                dsh_launcher_dir().display()
+                "{DSH_INSTALL_COMMAND}  ·  needs Node 22.19+ and DEEPSEEK_API_KEY in ~/.dsh/.env \
+                 (or the launch environment)  ·  https://github.com/deepseek-ai/deepseek-harness"
             ),
-            install_command: None,
+            install_command: Some(DSH_INSTALL_COMMAND.to_string()),
             login_command: None,
         },
         AgentTemplateInfo {
@@ -454,6 +466,22 @@ pub fn builtin_templates() -> Vec<AgentTemplateInfo> {
             login_command: None,
         },
         AgentTemplateInfo {
+            id: AgentTemplate::MinimaxCode.as_str().to_string(),
+            name: "MiniMax Code".to_string(),
+            description:
+                "MiniMax Code CLI with native ACP (`mcode acp`). Log in once with `mcode login`."
+                    .to_string(),
+            command: "mcode".to_string(),
+            args: vec!["acp".to_string()],
+            detect_command: Some("mcode".to_string()),
+            install_hint: format!(
+                "{MINIMAX_CODE_INSTALL_COMMAND}  ·  needs Node 22.19+ (or 24+)  ·  \
+                 https://agent.minimax.io/docs/cli/quick-start"
+            ),
+            install_command: Some(MINIMAX_CODE_INSTALL_COMMAND.to_string()),
+            login_command: Some("mcode login".to_string()),
+        },
+        AgentTemplateInfo {
             id: AgentTemplate::Custom.as_str().to_string(),
             name: "Custom".to_string(),
             description: "Any ACP-compatible command + args.".to_string(),
@@ -482,12 +510,14 @@ pub fn template_from_id(id: &str) -> AgentTemplate {
         "hermes" => AgentTemplate::Hermes,
         "claude-acp" => AgentTemplate::ClaudeAcp,
         "codex-acp" => AgentTemplate::CodexAcp,
+        "antigravity-acp" => AgentTemplate::AntigravityAcp,
         "qodercli" => AgentTemplate::QoderCli,
         "grok-build" => AgentTemplate::GrokBuild,
         "pi" => AgentTemplate::Pi,
         "dsh" => AgentTemplate::Dsh,
         "kimi-code" => AgentTemplate::KimiCode,
         "zcode" => AgentTemplate::Zcode,
+        "minimax-code" => AgentTemplate::MinimaxCode,
         _ => AgentTemplate::Custom,
     }
 }

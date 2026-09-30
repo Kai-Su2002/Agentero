@@ -2,7 +2,7 @@
 
 use crate::core::error::AppError;
 use crate::features::agent::acp::client::{
-    acp_err, acp_terminals, cancelled_payload, client_initialize_request, simplified_agent_cwd,
+    acp_err, acp_terminals, agent_spawn_cwd, cancelled_payload, client_initialize_request,
     timed_acp_initialize, timed_acp_request, to_acp_agent, wait_for_cancellation,
 };
 use crate::features::agent::acp::interaction::PermissionPolicy;
@@ -108,6 +108,15 @@ enum TurnPhase<T> {
     Cancelled(AgentResultPayload),
 }
 
+/// True when `session/prompt` never left the process. The pooled connection
+/// is dead; the turn must be retried on a fresh process via `session/load`
+/// instead of failing and dropping the conversation.
+pub(crate) fn prompt_was_not_delivered(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("connection is no longer running")
+        || lower.contains("failed to send outgoing request")
+}
+
 /// Error from the prompt phase tagged by whether the `PromptRequest` was
 /// already dispatched: only pre-prompt failures let the pooled path hand off
 /// to the cold retry; post-prompt failures are terminal.
@@ -145,7 +154,7 @@ fn emit_run_failed(app: &AgentEventEmitter, session_id: &str, error: &impl std::
 
 /// Prompt-assembly phase: resolve skill instructions, template the prompt, and
 /// pick the working directory. Emits `agent:failed` and errors when a selected
-/// local skill cannot be loaded.
+/// local skill cannot be loaded or the spawn cwd cannot be resolved.
 async fn prepare_run_turn(params: &RunOnceParams) -> Result<RunTurnPrep, AppError> {
     let skill_style = skill_mention_style(&params.desc.template);
     let skill_instructions = if params.is_acp_command {
@@ -195,16 +204,13 @@ async fn prepare_run_turn(params: &RunOnceParams) -> Result<RunTurnPrep, AppErro
         )
     };
     let prompt_images = params.images.clone();
-    let cwd = simplified_agent_cwd(&if let Some(ref r) = params.remote {
-        r.agent_cwd()
-    } else {
-        params
-            .vault_path
-            .as_ref()
-            .map(PathBuf::from)
-            .filter(|p| p.is_dir())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-    });
+    let cwd = match agent_spawn_cwd(params.remote.as_deref(), params.vault_path.as_deref()) {
+        Ok(cwd) => cwd,
+        Err(error) => {
+            emit_run_failed(&params.app, &params.session_id, &error);
+            return Err(error);
+        }
+    };
     Ok(RunTurnPrep {
         full_prompt,
         prompt_images,
@@ -222,9 +228,6 @@ pub(crate) struct RunOnceContext {
     agent_id: String,
     /// pi-acp forwards a CLI startup banner that must be dropped from the stream.
     is_pi: bool,
-    /// dsh keeps sessions in-process and never advertises resume/load, so a
-    /// requested continue degrades to a fresh session — always stream live.
-    dsh_fresh_sessions: bool,
     content_buf: Arc<Mutex<String>>,
     thought_buf: Arc<Mutex<String>>,
     coalescer: StreamCoalescer,
@@ -239,7 +242,6 @@ pub(crate) struct RunOnceContext {
 
 impl RunOnceContext {
     fn new(params: &RunOnceParams, cwd: std::path::PathBuf) -> Self {
-        let dsh_fresh_sessions = matches!(params.desc.template, AgentTemplate::Dsh);
         // Merge token-storm chunks into ~25 emits/s (Windows webview jank source).
         // Payload shape is unchanged: same event, longer `chunk`, lower rate.
         let coalescer = StreamCoalescer::new(STREAM_COALESCE_WINDOW, {
@@ -262,13 +264,10 @@ impl RunOnceContext {
             message_id: params.message_id.clone(),
             agent_id: params.desc.id.clone(),
             is_pi: matches!(params.desc.template, AgentTemplate::Pi),
-            dsh_fresh_sessions,
             content_buf: Arc::new(Mutex::new(String::new())),
             thought_buf: Arc::new(Mutex::new(String::new())),
             coalescer,
-            live_stream: Arc::new(AtomicBool::new(
-                params.resume_session_id.is_none() || dsh_fresh_sessions,
-            )),
+            live_stream: Arc::new(AtomicBool::new(params.resume_session_id.is_none())),
             stop_reason: Arc::new(Mutex::new(None)),
             terminals: acp_terminals(Some(cwd)),
         }
@@ -524,7 +523,16 @@ impl RunOnceContext {
         let prompt_response = tokio::select! {
             response = connection
                 .send_request(PromptRequest::new(session_id.clone(), content_blocks.clone()))
-                .block_task() => response.map_err(|e| PromptPhaseError::post_prompt(acp_err(format!("prompt: {e}")))),
+                .block_task() => response.map_err(|e| {
+                    let wrapped = format!("prompt: {e}");
+                    // Send failed before the agent saw the turn. Hand off so a
+                    // new process can session/load and deliver the same prompt.
+                    if prompt_was_not_delivered(&wrapped) {
+                        PromptPhaseError::pre_prompt(acp_err(wrapped))
+                    } else {
+                        PromptPhaseError::post_prompt(acp_err(wrapped))
+                    }
+                }),
             () = wait_for_cancellation(cancellation) => {
                 let _ = connection
                     .send_notification(CancelNotification::new(session_id.clone()));
@@ -568,18 +576,9 @@ impl RunOnceContext {
             .is_some();
         let can_load = init.agent_capabilities.load_session;
 
-        // dsh never advertises session/resume or session/load (sessions
-        // die with the process), so continue degrades to a fresh session
-        // instead of erroring out.
         let resume_id = if let Some(rid) = &resume_session_id {
             if can_resume || can_load {
                 resume_session_id
-            } else if self.dsh_fresh_sessions {
-                log::debug!(
-                    target: "agentero::agent",
-                    "dsh cannot resume {rid}: starting a fresh session"
-                );
-                None
             } else {
                 return Err(acp_err(format!(
                     "Agent does not support continuing session {rid} \
@@ -846,11 +845,11 @@ impl RunOnceContext {
     }
 }
 
-/// dsh keeps sessions in-process and never advertises resume/load, so pooling
-/// would change its "continue degrades to a fresh session" semantics; every
-/// other template can reuse a warm connection.
-fn poolable_template(template: &AgentTemplate) -> bool {
-    !matches!(template, AgentTemplate::Dsh)
+/// Every template can reuse a warm connection — the current `dsh --profile
+/// acp` advertises session list/resume, so pooling no longer changes its
+/// continue semantics.
+fn poolable_template(_template: &AgentTemplate) -> bool {
+    true
 }
 
 /// Terminal outcome of a pooled run: `Done` finishes the run (result or
@@ -1057,6 +1056,16 @@ pub fn new_ids() -> (String, String) {
 mod cancelled_payload_tests {
     use crate::features::agent::acp::client::cancelled_payload;
     use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn undelivered_prompt_is_retryable() {
+        assert!(super::prompt_was_not_delivered(
+            "prompt: Internal error: \"failed to send outgoing request session/prompt: connection is no longer running\""
+        ));
+        assert!(!super::prompt_was_not_delivered(
+            "prompt: model rejected the request"
+        ));
+    }
 
     #[test]
     fn preserves_provider_session_id_after_cancel() {

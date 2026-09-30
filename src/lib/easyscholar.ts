@@ -8,7 +8,11 @@
 import { commands, type Json } from "@/lib/core/bindings";
 import { callApi } from "@/lib/core/ipc";
 import { isTauri } from "@/lib/core/tauri";
-import type { PaperTag, PaperTagInput } from "@/lib/paper/tags";
+import {
+	coercePaperTags,
+	type PaperTag,
+	type PaperTagInput,
+} from "@/lib/paper/tags";
 import type { TagColorId } from "@/lib/ui/tag-colors";
 
 export const EASY_SCHOLAR_TAG_PREFIX = "#easyscholar:";
@@ -145,14 +149,28 @@ export function buildEasyScholarTags(
 	return tags;
 }
 
+/** Refresh generated tags while retaining each existing same-name color (including no color). */
+export function mergeEasyScholarTags(
+	existing: unknown,
+	generated: readonly PaperTagInput[],
+): PaperTag[] {
+	const tags = coercePaperTags(existing);
+	const colors = new Map(
+		tags.map((tag) => [tag.name.toLocaleLowerCase(), tag.color]),
+	);
+	return [
+		...tags.filter((tag) => !isEasyScholarTag(tag.name)),
+		...coercePaperTags(generated).map((tag) =>
+			colors.has(tag.name.toLocaleLowerCase())
+				? { ...tag, color: colors.get(tag.name.toLocaleLowerCase()) }
+				: tag,
+		),
+	];
+}
+
 /** Whether a tag belongs to the EasyScholar namespace. */
 export function isEasyScholarTag(tag: string): boolean {
 	return tag.trim().toLocaleLowerCase().startsWith(EASY_SCHOLAR_TAG_PREFIX);
-}
-
-/** Strip EasyScholar tags from a list while preserving user tags. */
-export function removeEasyScholarTags(tags: PaperTag[]): PaperTag[] {
-	return tags.filter((tag) => !isEasyScholarTag(tag.name));
 }
 
 /**

@@ -20,12 +20,6 @@
 			"rejectAlways": "Always reject"
 		}
 	},
-	"elicitation": {
-		"title": "Agent needs your input",
-		"submit": "Submit answers",
-		"cancel": "Cancel"
-	},
-	"missing": " (missing)",
 	"switchAgent": "Switch ACP agent",
 	"configBar": {
 		"label": "Model and session options"
@@ -43,8 +37,6 @@
 		"description": "Recent ACP sessions in this chat.",
 		"empty": "No sessions yet.",
 		"restoring": "Restoring session…",
-		"includeExternal": "External",
-		"includeExternalToggle": "Include all sessions",
 		"status": {
 			"running": "Running",
 			"completed": "Completed",
@@ -53,7 +45,6 @@
 		}
 	},
 	"tabs": {
-		"open": "Open conversation {{number}}",
 		"new": "Start a new conversation"
 	},
 	"agentMenu": {
@@ -63,10 +54,15 @@
 	},
 	"composer": {
 		"placeholder": "How can I help you today?",
-		"interruptHint": "Press Esc to interrupt",
 		"queueLabel": "Queued",
 		"queueRemove": "Remove from queue",
 		"contextInstruction": "Read these Vault files before answering when relevant:",
+		"plazaContextInstruction": "Plaza entries referenced with @ (not yet in the Vault):",
+		"plazaEntryUnavailable": "Entry metadata is unavailable (no longer in the Plaza cache). Ask the user to re-reference it from the Plaza tab.",
+		"plazaScratchInstruction": "Full texts are provided as read-only scratch copies outside the Vault. Read the listed files directly; do not download papers or write anything into the Vault unless the user explicitly asks to import a paper.",
+		"plazaCollectionTitle": "Today's recommendations ({{count}})",
+		"plazaCollectionInstruction": "Above is the abstract catalog of today's recommended papers. Triage from the abstracts alone: if filtering / comparing is enough to answer, give the final report directly. Only when a question requires deep reading, output `NEED_FULLTEXT <arXiv id> ...` (at most {{max}} ids) as the FIRST line of your reply and stop — the system will supply those full texts automatically. Do not fetch or download these papers yourself.",
+		"plazaFulltextFollowup": "Full texts have been retrieved (see context). Please complete the final report based on them.",
 		"resizeHandle": "Resize composer height",
 		"removeContext": "Remove {{path}} from context",
 		"removeSkill": "Remove ${{skill}} from context",
@@ -105,7 +101,6 @@
 		"mentionEnterFolder": "Open {{name}}",
 		"mentionBack": "Back to parent folder",
 		"mentionEmptyFolder": "No items in this folder",
-		"fast": "Fast",
 		"fastToggle": "Toggle Fast mode",
 		"collaborationTooltip": "Session mode",
 		"collaboration": {
@@ -162,7 +157,6 @@
 		"expand": "Expand questionnaire"
 	},
 	"citation": {
-		"vaultPath": "Vault path referenced by agent",
 		"resolveFailed": "Could not open citation: {{source}}",
 		"figureNotFound": "Figure not found: {{source}}",
 		"sectionNotFound": "Section not found: {{source}}",
@@ -180,15 +174,12 @@
 		"addToFavorites": "Add to favorites",
 		"removeFromFavorites": "Remove from favorites",
 		"selectTooltip": "Select model (ACP)",
-		"reportedTooltip": "Models appear after your agent reports them",
 		"customOrReportedTooltip": "Search or type a custom model id (third-party / gateway)",
 		"loading": "Loading…",
 		"button": "Model",
-		"searchPlaceholder": "Search models…",
 		"searchOrCustomPlaceholder": "Search or type a model id…",
 		"customGroup": "Custom",
 		"useCustom": "Use “{{id}}”",
-		"emptyNone": "No models yet. Run once so the ACP agent can advertise models.",
 		"emptyNoneCustom": "No models yet. Type a model id above to use a third-party model.",
 		"emptyNoMatch": "No match. Type a full model id to use it as custom."
 	},

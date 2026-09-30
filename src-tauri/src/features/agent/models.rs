@@ -13,6 +13,8 @@ pub enum AgentTemplate {
     Hermes,
     ClaudeAcp,
     CodexAcp,
+    /// Google Antigravity's official ACP server (separate from the retired `agy-acp` adapter).
+    AntigravityAcp,
     /// Qoder CLI native ACP (`qodercli --acp`).
     /// Docs: https://docs.qoder.com/en/cli/acp
     QoderCli,
@@ -22,8 +24,7 @@ pub enum AgentTemplate {
     /// Pi coding agent via the community `pi-acp` adapter (pi has no native ACP).
     /// Docs: https://pi.dev · https://github.com/svkozak/pi-acp
     Pi,
-    /// DeepSeek Harness automation ACP server (`@deepseek-ai/dsh-acp-demo`),
-    /// npm-installed into a managed launcher directory (no repo checkout).
+    /// DeepSeek Harness umbrella CLI with native ACP (`dsh --profile acp`).
     /// Docs: https://github.com/deepseek-ai/deepseek-harness
     Dsh,
     /// Moonshot Kimi Code CLI with native ACP (`kimi acp`).
@@ -34,6 +35,9 @@ pub enum AgentTemplate {
     /// (`~/.zcode`); the adapter auto-discovers the app-bundled CLI.
     /// Docs: https://github.com/william0wang/zcode-acp
     Zcode,
+    /// MiniMax Code CLI with native ACP (`mcode acp`).
+    /// Docs: https://agent.minimax.io/docs/cli/quick-start
+    MinimaxCode,
     Custom,
 }
 
@@ -49,12 +53,14 @@ impl<'de> serde::Deserialize<'de> for AgentTemplate {
             "hermes" => Self::Hermes,
             "claude-acp" => Self::ClaudeAcp,
             "codex-acp" => Self::CodexAcp,
+            "antigravity-acp" => Self::AntigravityAcp,
             "qodercli" => Self::QoderCli,
             "grok-build" => Self::GrokBuild,
             "pi" => Self::Pi,
             "dsh" => Self::Dsh,
             "kimi-code" => Self::KimiCode,
             "zcode" => Self::Zcode,
+            "minimax-code" => Self::MinimaxCode,
             "custom" => Self::Custom,
             other => {
                 return Err(serde::de::Error::custom(format!(
@@ -73,26 +79,16 @@ impl AgentTemplate {
             Self::Hermes => "hermes",
             Self::ClaudeAcp => "claude-acp",
             Self::CodexAcp => "codex-acp",
+            Self::AntigravityAcp => "antigravity-acp",
             Self::QoderCli => "qodercli",
             Self::GrokBuild => "grok-build",
             Self::Pi => "pi",
             Self::Dsh => "dsh",
             Self::KimiCode => "kimi-code",
             Self::Zcode => "zcode",
+            Self::MinimaxCode => "minimax-code",
             Self::Custom => "custom",
         }
-    }
-
-    /// Templates that launch through a community ACP adapter (rather than a
-    /// native ACP mode) may ignore the `NewSessionRequest` cwd and fall back to
-    /// the process cwd. For these agents we wrap the local spawn in a shell
-    /// `cd` so the OS-level working directory matches the vault.
-    ///
-    /// Custom agents are also wrapped: users commonly specify a relative script
-    /// path in `args`, and the shell `cd` guarantees it resolves against the
-    /// configured working directory instead of an unspecified process cwd.
-    pub fn needs_local_cwd_shell_wrap(&self) -> bool {
-        matches!(self, Self::Pi | Self::Custom)
     }
 }
 
@@ -250,6 +246,13 @@ pub struct CatalogEntry {
     pub resolved_path: Option<String>,
     /// ACP entrypoint command found — ACP layer (may equal host for native ACP agents).
     pub acp_command_available: bool,
+    /// Bundled ACP adapter tier present in app resources (offline fallback;
+    /// a PATH-installed adapter still wins over it).
+    #[serde(default)]
+    pub acp_bundled: bool,
+    /// Version of the bundled adapter (from the staging manifest), when staged.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub acp_bundled_version: Option<String>,
     pub acp_status: CatalogAcpStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub registered_id: Option<String>,
@@ -263,7 +266,7 @@ pub struct CatalogEntry {
     /// Normalized local host CLI version (`detect_command --version`), when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub installed_version: Option<String>,
-    /// Target version the silent updater can reach (npm latest or dsh pin).
+    /// Target version the silent updater can reach (npm latest).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub latest_version: Option<String>,
     /// True only when a newer silent-update target is known. Settings shows

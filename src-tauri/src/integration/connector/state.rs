@@ -222,11 +222,7 @@ impl ConnectorController {
 
     pub fn set_parent_dir(&self, parent_dir: String) {
         if let Ok(mut g) = self.inner.lock() {
-            let trimmed = parent_dir
-                .trim()
-                .replace('\\', "/")
-                .trim_matches('/')
-                .to_string();
+            let trimmed = crate::core::fs::normalize_rel_separators(parent_dir.trim());
             if !trimmed.is_empty() {
                 g.parent_dir = trimmed;
             }
@@ -355,7 +351,7 @@ impl ConnectorController {
                 .await
                 .map_err(|e| {
                     if e.kind() == std::io::ErrorKind::AddrInUse {
-                        AppError::message("请先退出本地Zotero".to_string())
+                        AppError::message("Please quit the local Zotero app first".to_string())
                     } else {
                         AppError::message(format!("Failed to bind 127.0.0.1:{port}: {e}"))
                     }
@@ -763,8 +759,8 @@ impl ConnectorController {
         let index = app
             .state::<crate::features::vault::rename::WikiIndexState>()
             .handle();
-        let result = crate::features::paper::catalog::commands::paper_move_service(
-            crate::features::paper::catalog::commands::PaperMoveArgs {
+        let result = crate::features::paper::catalog::service::paper_move_service(
+            crate::features::paper::catalog::service::PaperMoveArgs {
                 vault_path: vault_handle.to_string(),
                 from_rel: from.to_string(),
                 dest_parent_rel: parent.to_string(),

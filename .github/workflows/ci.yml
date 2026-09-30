@@ -50,6 +50,10 @@ jobs:
           set -euo pipefail
           case "${{ matrix.task }}" in
             quality)
+              node --test scripts/sync-atomgit-release.test.mjs
+              # Stage the bundled ACP adapter trees so a broken staging script
+              # (or a hostile upstream release) fails the PR, not the release build.
+              pnpm adapters:stage
               pnpm exec biome ci .
               pnpm typecheck
               pnpm deps:check
@@ -82,6 +86,14 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v5
+        if: matrix.task != 'cli-tests'
+        with:
+          node-version: 22
+          package-manager-cache: false
+      - name: Stage bundled ACP adapters
+        if: matrix.task != 'cli-tests'
+        run: node scripts/prepare-adapters.mjs
       - name: Provision PDFium
         shell: bash
         run: |
@@ -123,7 +135,9 @@ jobs:
               cargo test -p agentero
               ;;
             cli-tests)
-              cargo test -p agentero-cli
+              # Dependency builds do not run agentero-core's own tests. Keep
+              # both headless packages in this job to share PDFium and artifacts.
+              cargo test -p agentero-core -p agentero-cli
               cargo build -p agentero-cli
               ;;
             *)

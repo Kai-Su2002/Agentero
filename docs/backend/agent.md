@@ -7,45 +7,63 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
 - Crate：`agent-client-protocol`（及 Codex 的 npm ACP 适配器进程）。
 - ACP `initialize` 在 run / warm / 历史 list / load 四处统一最多等待 30 秒（设置页
   探针同样保留 30 秒总预算），覆盖 BYOA 冷启动；其余 session RPC 保持 15 秒预算。
-- 会话 `cwd` = 当前 Vault 根（远程则为远端 Vault 根），下发给 Agent 前经
-  `simplified_agent_cwd` 归一一次（run / warm / list / load 四处入口）：Windows 把
-  canonicalize 出的 `\?\D:\...` 还原为 `D:\...`，否则 Agent 把该路径转交给 MSYS2
-  shell（Git Bash）时无法 `cd`，POSIX cwd 也会初始化错误，`mktemp`/`cd` 报 ENOENT；
-  扩展 UNC（`\?\UNC\...`）与 POSIX 路径保持不变，远程历史入口不做本地路径转换。详见
+- 会话 `cwd` = 当前 Vault 根（远程则为远端 Vault 根）。run / warm / list / load
+  统一由 `agent_spawn_cwd()` 选择路径，并在内部调用 `core::process::windows_shell_path` 归一；history
+  不再二次归一。Windows 把 canonicalize 出的 `\\?\D:\...` 还原为 `D:\...`，避免 Agent
+  转交给 MSYS2 shell（Git Bash）时 `mktemp` / `cd` 报 ENOENT；扩展 UNC
+  （`\\?\UNC\...`）与 SSH 的 POSIX 路径保持不变。详见
   [bug_fix/hermes-terminal-pending-msys2-hang.md](../bug_fix/hermes-terminal-pending-msys2-hang.md)。
-- 本地 Pi / 自定义 Agent 仍先经 shell 切到 Vault，其 `cmd.exe` 包装对同一前缀再剥一次
-  （幂等），避免 CMD 把 `\?\D:\...` 误判为 UNC（#458）。
-- Windows 的 cwd 与完整 Agent 命令通过环境变量展开，避免 Rust argv 转义破坏 CMD 内层引号；
-  cwd 环境变量始终携带双引号，防止无空格路径中的括号等 CMD 元字符被当作语法（#458）。
+- **Unix 本地 Agent 先经 shell 切到 Vault 或 scratch，再 exec**：ACP stdio
+  spawn 无 cwd 字段，Finder 启动的 macOS GUI 进程 cwd 是 `/`，不能让 Agent 将其作为启动
+  工作区并触发无关 TCC 弹窗（#570）。无模板例外——`dsh --profile acp` 也把启动 cwd
+  作为默认 workspace root，同样需要包装。
+- 本地 Vault 路径缺失或无效时，`agent_spawn_cwd()` 用 `agent_scratch_dir()`
+  （`…/agentero/agent-cwd`）兜底；数据目录不可写时改用系统临时目录下的
+  `agentero/agent-cwd` 专用子目录，两处均无法创建则在启动前明确报错，不回落到进程 cwd
+  或整个临时目录。**Unix 探针**也复用该入口：本地用
+  scratch，远端沿用目标自己的 Vault；SSH 路径不在本机检查。local-sim 新建连接前验证
+  目录存在，失效时明确报错，不悄悄切到 scratch。
+- **Windows 保留既有启动策略**：仅 Pi / Custom 的 run / warm / list / load 使用 `cmd /D /C`
+  包装，探针均直接启动配置的命令，不增加 `cmd` 层。ACP SDK 当前只在 Unix 清理进程组；
+  扩大 Windows 包装范围会让原生 `.exe` 不再是可直接强杀的子进程，并使 UNC Vault 落入
+  CMD 不支持的 `cd /d` 路径。因此 #570 不在 Windows 推广包装；既有 Pi / Custom 以及
+  自带 launcher 的进程树清理限制仍需另行解决。
+- Windows Pi / Custom 包装的 cwd 与完整 Agent 命令通过环境变量展开，cwd 始终携带双引号，
+  防止无空格路径中的括号等 CMD 元字符被当作语法；盘符扩展前缀再幂等剥除一次（#458）。
+  该旧包装仍不支持 UNC cwd，不能将其他模板保持直启等同于所有 Windows Agent 都支持 UNC。
 - **Login-shell 环境注入**：本地 ACP agent 启动时会合并当前进程环境变量、用户 login-shell
   环境变量（`SHELL -lic 'env -0'`）以及 `AgentDescriptor.env`。这样 macOS/Linux 上从
   GUI 启动 Agentero 也能读到 `.zshrc` / `.bashrc` 里 `export` 的 `OPENAI_API_KEY`、
   `OPENAI_BASE_URL` 等变量；`AgentDescriptor.env` 优先级最高，可覆盖 shell 值（#478）。
-- 统一接口：OpenCode、OpenClaw、Hermes、Claude ACP、Codex ACP、Qoder、Grok、Pi、Dsh（DeepSeek Harness）、Kimi Code、ZCode、自定义 `command`/`args`/`env`。
-- Dsh：ACP 服务端是 `@deepseek-ai/dsh-acp-demo`（npm 包），与依赖插件一起固定
-  `0.1.1-rc.2`。安装/启动三处入口，检测按序回退：
-  1. App 管理目录 `~/.agentero/dsh-acp/node_modules/.bin/dsh-acp-demo`（设置页「安装」按钮，
-     Rust 写入默认 `cordis.yml` + 最小 `package.json` 后执行 `npm i`；`package.json`
-     防止 npm 沿目录树向上找到用户 `~/package.json` 把包装进 `~/node_modules`）；
-  2. 用户 home npm 根 `~/node_modules/.bin/dsh-acp-demo`（手动 `npm i` 且 home 有
-     `package.json` 时）；
-  3. PATH 上的全局 `dsh-acp-demo`（`npm i -g`）。注意：`npm i -g @deepseek-ai/dsh`
-     是 umbrella CLI，**不带** ACP 服务端，不作为检测目标。
-  - 启动走 shell 包装（`bash -c` / `cmd /C`）`cd` 进 launcher 目录后 exec——ACP stdio
-    spawn 无 cwd 字段，而 `cordis.yml`、`.env`、session 持久化都相对该目录解析。
-  - 会话在进程内，进程退出即失效，且不声明 `session/resume` / `session/load`：
-    多轮续聊降级为**每轮新会话**（单发式），Host 不再报「不支持继续会话」。
-  - API Key：在 launcher 目录 `.env` 写 `DEEPSEEK_API_KEY`，或在注册项 env 中
-    export。缺少时 prompt 报 `no API key for provider route "deepseek-official"`。
-    `dsh-acp-demo` 只读启动 cwd 的 `.env` + 启动环境：它**不读** `~/.dsh` 的
-    凭据存储（`.credentials.yaml` 需在 `cordis.yml` 挂载 credentials provider，
-    `~/.dsh/.env` 的 user-env 层只有官方 `dsh` CLI 的 `loadLayeredEnv` 加载），
-    所以官方 CLI/Web UI 里配过的 key 对 ACP 服务不可见，须复制到 launcher `.env`。
+- 统一接口：OpenCode、OpenClaw、Hermes、Claude ACP、Codex ACP、Antigravity ACP、Qoder、Grok、Pi、Dsh（DeepSeek Harness）、Kimi Code、ZCode、MiniMax Code、自定义 `command`/`args`/`env`。自定义项不探测安装器，保存后按同一 stdio 路径拉起；前端把参数字符串按空白拆开。设置表单用 `agent.form.hint` 说明这一约定。
+- Dsh：umbrella CLI `@deepseek-ai/dsh`（npm，需 0.1.2+）内置 ACP profile——
+  `dsh --profile acp` 以 ACP stdio 服务，首次启动从内置模板自动初始化 profile
+  （`$DSH_HOME/profiles/acp`），无需手写 `cordis.yml` 或受管 launcher 目录。
+  - 旧的独立包方案（`@deepseek-ai/dsh-acp-demo` 固定 `0.1.1-rc.2` + App 管理目录
+    `~/.agentero/dsh-acp`）已废弃：上游停止发布该包（配套插件已发到 `0.1.5-rc.2`
+    而 demo 停更，锁步 prerelease semver 无法混搭），uninstall 仍会清理该遗留目录。
+  - 安装/更新走 `npm i -g @deepseek-ai/dsh@latest`（Unix `--prefix "$HOME/.local"`），
+    检测/版本对比用 `dsh --version` vs npm latest，与其他 npm 模板一致。
+  - 会话：当前版本声明 `sessionCapabilities` 的 `close`/`list`/`resume`，多轮续聊
+    走标准 resume 路径，连接也可进入 warm 池。
+  - API Key：官方 CLI 的分层 env（`~/.dsh/.env` 等）由 `dsh` 自身加载，ACP
+    profile 同样受益；也可在注册项 env 中 export `DEEPSEEK_API_KEY`。
 - Kimi Code：原生 ACP（`kimi acp`）。官方 installer（`code.kimi.com/kimi-code/install.sh`）
   是单二进制、默认装入 `~/.kimi-code` 并写 PATH 进 shell rc；npm 包
   `@moonshot-ai/kimi-code`（需 Node 22.19+）作回退。`kimi upgrade` 是交互式的，静默
   `update` 重跑幂等的官方 installer。登录在终端完成（`kimi` → `/login`，OAuth 或
   Moonshot API key），skill 走 slash mention。
+- MiniMax Code：原生 ACP（`mcode acp`）。npm 包 `@minimax-ai/code`（需 Node 22.19+
+  或 24+）安装后提供 `mcode`，detect/ACP 入口同二进制，静默 install/update 走
+  `npm install --global @minimax-ai/code@latest --ignore-scripts=false
+  --include=optional --allow-scripts=@minimax-ai/code,better-sqlite3
+  --registry https://registry.npmjs.org/ --foreground-scripts`，登录命令为
+  `mcode login`，skill 走 slash mention。
+- Antigravity ACP：Google 官方 ACP server，安装和更新从 ACP Registry 的 manifest
+  读取当前版本及平台压缩包，不保留旧版本回退。压缩包解压到 Agentero 管理目录，并保留
+  `agy_acp_server` 与 `localharness_external`；macOS Intel 没有官方构建，因此不提供该预设。
+  Linux 启动时附带官方要求的 `--uid=` 参数。Registry 不可用或当前平台没有构建时直接报错；
+  远程主机不提供 shell 安装命令。
 - ZCode：host CLI 无原生 ACP，走社区适配器 `zcode-acp-server`（桥接无头
   `zcode app-server --stdio`，声明 `session/load` 续聊）。zcode CLI 内置在 ZCode
   桌面应用中、通常不在 PATH 上，适配器会自动发现桌面应用内置 CLI（或用 `ZCODE_BIN`
@@ -72,6 +90,43 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
   `## Context` / `## Skills` / `## Extensions` 清单）当作普通 agent message 推送。Host
   在本轮首个 message chunk 上识别该横幅并丢弃，不写入内容缓冲、不发 `agent:stream`，
   避免它出现在回答之前。
+- **内置 ACP 适配器（bundled 兜底层）**：`@agentclientprotocol/claude-agent-acp` 与
+  `@agentclientprotocol/codex-acp` 的纯 JS 依赖树（平台二进制裁掉，~39MB 未压缩）作为应用
+  资源随包分发，离线开箱即用。Host CLI（`claude` / `codex`）**永不内置**，仍由用户 PATH
+  或 lifecycle 安装。
+  - Staging：`scripts/prepare-adapters.mjs`（版本 pin 在脚本顶部常量；`pnpm adapters:stage`，
+    已挂入 `beforeDevCommand` / `beforeBuildCommand`），临时目录系统 npm
+    `--omit=optional --omit=dev --ignore-scripts` 安装到共享单树
+    `src-tauri/adapters/node_modules/` + `manifest.json`（id/package/version/entry/nodeMajor）；
+    护栏：无 symlink / 原生二进制、单文件 ≤5MB、总量 ≤80MB（`AGENTERO_ADAPTER_MAX_MB` 可调）。
+    该目录进 `.gitignore`，pin 不经 pnpm-lock（对应用是惰性数据）。
+  - CI：Rust `quality` / `agentero-tests` 任务各自准备 Node 22 并执行
+    `node scripts/prepare-adapters.mjs`；直接运行 Cargo 不触发 Tauri 前置命令，
+    TypeScript 任务的 staging 产物也不会跨 runner 共享。`cli-tests` 不依赖这些资源。
+    Rust 任务只需 Node/npm，`setup-node` 显式关闭包管理器自动缓存，避免根据
+    `package.json` 的 `packageManager` 字段调用未安装的 pnpm。
+  - 运行时（`registry/bundled.rs`）：`init` 在 app setup 时定位资源根（打包
+    `Resources/adapters`；dev 回退源码树），`adapter_at` 读 manifest。解析顺序全局唯一：
+    **PATH/lifecycle 安装的适配器永远优先**，`resolve_command` 命中即走原路径，miss 才回落
+    内置层。
+  - Spawn（`acp/client.rs plan_local_launch`）：内置层为 `node <abs>/dist/index.js
+    [descriptor args…]`，node 从合并后的 agent 环境（含 login-shell PATH）解析；Unix 的
+    `cd <vault> && exec` 包装（#570）自动覆盖 node 命令。裁剪后的适配器通过注入 env 找到
+    host CLI——claude 适配器 `CLAUDE_CODE_EXECUTABLE`、codex 适配器 `CODEX_PATH`——均
+    `or_insert`，用户在注册项 env 里显式配置的值永远优先。
+    Windows 下传给 Node 的入口脚本参数先经 `windows_shell_path` 去除本地盘符路径的
+    `\\?\` 前缀，避免安装包资源路径触发 Node 的 `EISDIR` 并在 ACP 握手前退出；
+    详见 [Windows 内置 ACP 启动失败](../bug_fix/windows-bundled-acp-node-path.md)。
+  - Node 门槛：claude-agent-acp 需 Node ≥22（manifest `nodeMajor`）；node 缺失或版本不足
+    时该层静默关闭（`bundled_spawnable` = false），catalog 的 `last_probe_error` 显示
+    `node_blocker_message` 提示，安装按钮回归 npm 路径。
+  - Lifecycle 跳过（`registry/lifecycle.rs`）：`bundled_tier_active`（PATH 无适配器且内置层
+    可 spawn）时 install/update 只装/升级 host，不再 npm 安装适配器；PATH 装上适配器后自动
+    恢复双装语义。uninstall 不受影响（npm 卸载只作用于 PATH 安装）。
+  - Catalog / registry：PATH 中的完整适配器优先；内置层仅在适配器、合格 Node 和 host CLI 均可用时计入 `acpCommandAvailable` / `available`。host 使用启动时的合并环境解析，显式 `CLAUDE_CODE_EXECUTABLE` / `CODEX_PATH` 优先且必须可执行；无效覆盖不回退其他 host。`binaryAvailable` / `resolvedPath` 同步反映该 host。
+    缺少依赖时不自动注册，已有注册及默认 ID 保留，但当前 Missing / unavailable 优先于历史探测成功，引导和聊天不能因旧注册记录重新放行。`acpBundled` / `acpBundledVersion` 仅表示资源来源（Settings「内置」徽标），不表示 Agent 已安装。远程（SSH）无内置层，行为不变。
+  - **macOS 打包陷阱**：`tauri.macos.conf.json` 的 `bundle.resources` 会整体覆盖主 conf，
+    必须同步包含 `adapters/**/*`，否则 macOS 包静默丢掉内置层。
 - 设置页会将 ACP 探测中的认证错误（如 `invalid_grant` / `failed to authenticate` /
   `authentication required` / `not logged in`）
   显示为「未登录」，其他握手或进程错误仍显示为「ACP 失败」。
@@ -130,6 +185,12 @@ Kimi Code ACP 会把 `Bash`/`Glob`/`Grep` 等工具实现为 `terminal/create`�
 声明 `loadSession: true`、**不**声明 `resume`；对 Grok 调用 `session/resume` 会
 `Method not found`，Host 应改走 `session/load`。
 
+暖连接上发 `session/prompt` 若得到 `connection is no longer running` /
+`failed to send outgoing request`，说明这一轮还没送到 Agent。Host 把这次失败
+当成 prompt 之前的错误：丢掉这条连接，换新进程，再用已有 provider session id
+走 `session/load` 重发同一条 prompt。下一轮如果没有可恢复的 provider session，
+或上一轮已经失败，前端会把屏幕上已有的对话附进 prompt，避免新会话丢掉上文。
+
 生成中取消时，只要 provider session 已创建或本轮正在恢复，取消结果仍携带 `providerSessionId`。前端保留该 ID，并写回视觉批注 mark，使下一条消息和重启后的 pin 续聊继续同一会话；在 `session/new` 返回前取消时尚无可恢复的 provider session。
 
 `session/load` 会把历史以 `SessionNotification` 回放。Host 在
@@ -166,8 +227,8 @@ cursor 不再推进（`next == prev`）时视为走完，避免死循环。
 | `agent_respond_permission` | 回答权限请求 |
 | `agent_respond_elicitation` | 回答 form elicitation（Codex `request_user_input`） |
 | `agent_respond_ask_user` | 回答 Grok `_x.ai/ask_user_question` |
-| `agent_run_tool_lifecycle` | 静默安装/升级/卸载 catalog CLI（及 Claude/Codex ACP 适配器）；本机 lifecycle 串行执行，设置页在对应 Agent 行内展示安装 / 扫描 / 探测进度（#250），Windows 使用唯一临时 `.bat` 并按 UTF-8/GBK 解码错误输出；安装失败会将 npm 缓存目录 EPERM 转成可操作的缓存迁移提示；Windows 探测 `.exe` 时校验 PE 头，避免把文本 shim 当作 16 位程序执行；`uninstall` 做 best-effort npm 卸载 + 受管目录删除（不改 shell rc），成功后联动删除 catalog 注册项；见 [api.md](api.md) 与 [#225](https://github.com/poco-ai/Agentero/issues/225) |
-| `agent_check_catalog_updates` | PATH scan + 版本对比：本地 `detect --version` vs npm latest（或 dsh pin）；写入 `installedVersion` / `latestVersion` / `updateAvailable`。设置页「升级」仅在 `updateAvailable === true` 时显示；hermes 等无稳定 npm 源或探测失败时不显示。不塞进同步 `agent_scan_catalog`（避免 Doctor / 切换器打网络） |
+| `agent_run_tool_lifecycle` | 静默安装/升级/卸载 catalog CLI（及 Claude/Codex ACP 适配器）；Antigravity 例外走官方 ACP Registry 的本地受管安装器；内置适配器兜底层活跃（PATH 无适配器且可 spawn）时 install/update 只刷新 host、跳过适配器 npm 安装（见上方「内置 ACP 适配器」）；本机 lifecycle 串行执行，设置页在对应 Agent 行内展示安装 / 扫描 / 探测进度（#250），Windows 使用唯一临时 `.bat` 并按 UTF-8/GBK 解码错误输出；安装失败会将 npm 缓存目录 EPERM 转成可操作的缓存迁移提示；受管安装探测到系统 npm 缓存不可写时自动注入独立缓存目录（`npm_config_cache`），可写的缓存不动；Windows 探测 `.exe` 时校验 PE 头，避免把文本 shim 当作 16 位程序执行；`uninstall` 做 best-effort npm 卸载 + 受管目录删除（不改 shell rc），成功后联动删除 catalog 注册项；见 [api.md](api.md) 与 [#225](https://github.com/poco-ai/Agentero/issues/225) |
+| `agent_check_catalog_updates` | PATH scan + 版本对比：本地 `detect --version` vs npm latest；写入 `installedVersion` / `latestVersion` / `updateAvailable`。设置页「升级」仅在 `updateAvailable === true` 时显示；hermes 等无稳定 npm 源或探测失败时不显示。不塞进同步 `agent_scan_catalog`（避免 Doctor / 切换器打网络） |
 | `agent_tool_lifecycle_supported` / `agent_tool_install_commands` / `agent_tool_uninstall_info` | 是否支持静默安装；平台手动安装文案；卸载清理项清单（确认对话框展示） |
 
 ACP slash command 不是独立的 `session/compact` RPC。Host 转发 Agent 广播的
@@ -218,7 +279,7 @@ ACP **没有**统一的 ask-user tool 规范：各 harness 的字段名、挂载
 - Skill：Claude 倾向 `/id`；其它注入 `SKILL.md` 文本（`SkillMentionStyle`）。激活语法**只由 Host 判定**（`skill_mention_style` + `paper_reader_skill_line`）；前端不得重复推断，否则同一条 prompt 的两半会互相矛盾。
 - paper-reader：写 NOTES + `paper_set_is_read`；前端任务条编排。
 - Host `build_prompt` envelope **只**负责：本轮 workflow 角色、回答语言、个人偏好、`User request`（`paper_reader` 另带激活句）。**不**再塞引用格式、CLI 政策、论文阅读顺序，也**不**在 free/qa 等 workflow 里重复 skill-follow-hint（激活靠 `skill_activation_prefix` + 注入的 `SKILL.md`；cwd 为 vault 根时 Agent 自载 `AGENTS.md`）。
-- 引用约定（`AGENTS.md` / `paper-reader`）：**阅读**可用 TeX/`PAPER.md`，citation **href 优先本地 PDF + fragment**；笔记用 `[[papers/<id>/NOTES]]`；不加外层 `([…])`、不用文末 `## Sources`。前端负责 pill 渲染、`.tex`→PDF 回退，以及残留 `blocked` 标签的显示兜底。Host `agent_resolve_citation`：`#figure=N` 在 caption 任意位置匹配 `Fig./Figure N`；`#section=N` 认阿拉伯与 IEEE 罗马章节号（如 `3`↔`III.`），纯数字不走模糊 overlap；失败时前端按 fragment 类型 Toast（短分类 + source）。
+- 引用约定（`AGENTS.md` / `paper-reader`）：**阅读**可用 TeX/`PAPER.md`，citation **href 优先本地 PDF + fragment**；笔记用 `[[papers/<id>/NOTES]]`；不加外层 `([…])`、不用文末 `## Sources`。路径含空格时写成 `%20`，或用 `<>` 包住目标。前端负责 pill 渲染、`.tex`→PDF 回退、百分号解码，以及残留 `blocked` 标签的显示兜底。Host `agent_resolve_citation`：`#figure=N` 在 caption 任意位置匹配 `Fig./Figure N`；`#section=N` 认阿拉伯与 IEEE 罗马章节号（如 `3`↔`III.`），纯数字不走模糊 overlap；失败时前端按 fragment 类型 Toast（短分类 + source）。
 - 自由模型选择：`preferred_model_id` 可指向 ACP catalog 外的任意模型 id；Warm / Run 时始终尝试 `session/set_config_option`，失败不阻断会话。
 
 ## 模型协商

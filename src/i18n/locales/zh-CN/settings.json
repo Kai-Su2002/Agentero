@@ -25,7 +25,6 @@
 			"label": "电脑名称"
 		},
 		"status": {
-			"label": "Relay 状态",
 			"online": "在线",
 			"offline": "离线"
 		},
@@ -86,6 +85,9 @@
 		"autoOpenPaperNotes": {
 			"label": "默认打开论文笔记"
 		},
+		"autoIngest": {
+			"label": "自动收录 Papers 下新增的文件夹"
+		},
 		"replaceCurrentTabOnOpenPaper": {
 			"label": "打开新论文时替换当前标签页"
 		},
@@ -143,12 +145,11 @@
 				"error": "未连接",
 				"stopped": "已停止",
 				"binaryMissing": "未找到 tunnel-client",
-				"installHint": "安装后重新打开设置：",
+				"installHint": "安装后会自动检测到，无需重启：",
 				"copyCommand": "复制安装命令",
 				"copied": "已复制",
 				"openTunnels": "打开隧道列表",
-				"openApiKeys": "打开 API Key 页面",
-				"mcpOff": "请先打开 MCP 服务器开关。"
+				"openApiKeys": "打开 API Key 页面"
 			}
 		},
 		"export": {
@@ -230,9 +231,6 @@
 	},
 	"agent": {
 		"title": "Agent",
-		"proxy": {
-			"label": "Agent 代理"
-		},
 		"userAgent": {
 			"section": "中转站兼容",
 			"label": "User-Agent",
@@ -284,7 +282,6 @@
 		"probe": "刷新",
 		"probing": "探测中…",
 		"scanning": "扫描中…",
-		"useDefault": "设为默认",
 		"installAgent": "安装",
 		"installAgentAria": "安装 {{name}} Agent CLI",
 		"installAgentTitle": "安装 Agent CLI",
@@ -304,20 +301,18 @@
 		"lifecycleScanning": "正在扫描 PATH…",
 		"lifecycleProbing": "正在探测 ACP…",
 		"lifecycleUninstalling": "正在卸载…",
-		"npmCacheWriteFailed": "npm 无法写入缓存。请在“命令提示符”中运行 {{cacheCommand}}，然后重试。若仍失败，请关闭其他 Node/npm 进程、在杀毒软件中允许 Node.js，或修正缓存目录权限。",
-		"uninstallAgent": "卸载",
+		"npmCacheWriteFailed": "npm 无法写入缓存。Agentero 的受管安装会自动使用独立缓存目录——请重试。若仍失败，请在“命令提示符”中运行 {{cacheCommand}} 后重试，并关闭其他 Node/npm 进程、在杀毒软件中允许 Node.js、修正缓存目录权限。",
 		"uninstallAgentAria": "卸载 {{name}} Agent",
 		"uninstallAgentTitle": "卸载 Agent",
 		"uninstallSuccess": "已卸载 {{name}}",
 		"removeSuccess": "已移除 {{name}}",
 		"badges": {
 			"default": "默认",
-			"installed": "已安装",
-			"notInstalled": "未安装",
 			"agentInstalled": "Agent 已安装",
 			"agentMissing": "无 Agent",
 			"acpMissing": "无 ACP",
-			"adapterMissing": "缺 ACP 适配器"
+			"acpBundled": "内置",
+			"acpBundledTitle": "内置 ACP 适配器 {{version}} —— 仅在 PATH 无适配器时启用（PATH 安装优先；内置版本随应用发版更新）。"
 		},
 		"permission": {
 			"label": "权限模式",
@@ -361,7 +356,8 @@
 			"defaultName": "Desktop",
 			"name": "名称",
 			"command": "命令",
-			"args": "参数"
+			"args": "参数",
+			"hint": "在当前 Vault 中启动该命令，经标准输入/输出连接 ACP。参数按空格拆分。例如命令 opencode、参数 acp；或 Python 解释器绝对路径，参数为 bridge 脚本的绝对路径。"
 		},
 		"uninstallDialog": {
 			"title": "卸载 {{name}}？",
@@ -380,7 +376,6 @@
 			"probeTitle": "重新扫描并探测远端 Agent",
 			"empty": "没有目录结果。请检查 SSH 会话与远端 PATH。",
 			"hint": "刷新会经 SSH 执行 command -v 与 ACP initialize。若 Claude 显示「ACP adapter missing」，点「Install ACP」（打开终端 → Enter → 经 SSH 在服务器安装）。密钥留在远端（BYOA）。若探测超时，可开启 Agent 代理（代理需从服务器可达）。",
-			"proxyHint": "与本地 Agent 设置共用同一代理。会以 HTTP(S)_PROXY 注入远端进程——地址必须从服务器可达（例如服务器上的代理，而非仅本机 127.0.0.1）。",
 			"installAdapterAria": "在终端中经 SSH 为 {{name}} 安装远端 ACP 适配器",
 			"installAdapterTitle": "打开终端，SSH 到 {{host}} 并执行：{{command}}（按 Enter 确认）"
 		}
@@ -423,7 +418,6 @@
 		"providerConfig": {
 			"section": "API 服务",
 			"confirm": "确定",
-			"openDocs": "打开服务商网站",
 			"openDocsLabel": "获取 API Key",
 			"notConfigured": "未配置",
 			"apiKey": {
@@ -446,7 +440,7 @@
 			"deepl": "DeepL 神经机器翻译，使用官方 API Key。",
 			"azure": "微软翻译，使用 Azure 订阅密钥。",
 			"googleCloud": "谷歌云翻译 API，使用服务账号密钥。",
-			"openaiCompatible": "任意兼容 OpenAI 的翻译接口（如 OpenAI、Moonshot、DeepSeek 等）。"
+			"openaiCompatible": "兼容 OpenAI Chat Completions 的接口。填写 Base URL，如 https://api.openai.com/v1；Agentero 会自动追加 /chat/completions。"
 		},
 		"agentId": {
 			"label": "Agent",
@@ -459,6 +453,12 @@
 			"label": "模型",
 			"followAgent": "跟随 Agent 默认",
 			"needWarm": "在 Chat 中打开过该 Agent 后，可在此选择具体模型。"
+		},
+		"customPrompt": {
+			"label": "翻译提示词",
+			"placeholder": "留空使用内置学术翻译提示词；可先「填入默认」再修改。",
+			"seed": "填入默认",
+			"reset": "恢复默认"
 		}
 	},
 	"layout": {
@@ -608,7 +608,6 @@
 		"agent": {
 			"probing": "正在探测 Agent…",
 			"none": "尚未注册 Agent。",
-			"ready": "可用",
 			"locationMissing": "未找到",
 			"authLabel": "登录",
 			"authStatus": {
@@ -705,16 +704,18 @@
 			"clearDone": "已清理日志",
 			"clearFailed": "无法清理日志。"
 		},
+		"scratch": {
+			"label": "论文全文缓存",
+			"summary": "{{papers}} 篇 · {{size}}",
+			"clear": "清除缓存",
+			"clearDone": "缓存已清除",
+			"clearFailed": "清除论文全文缓存失败。"
+		},
 		"update": {
-			"idle": "检查 Agentero 是否有新版本",
-			"unsupported": "已安装的桌面应用可使用自动更新",
-			"checking": "正在检查更新...",
-			"upToDate": "当前已是最新版本",
 			"available": "版本 {{version}} 已可用",
 			"downloading": "正在下载更新...",
 			"downloadingProgress": "正在下载更新：{{progress}}%",
 			"installing": "正在安装更新并重启...",
-			"checkFailed": "无法检查更新，请检查网络或代理设置",
 			"installFailed": "无法安装更新，请重试",
 			"check": "检查更新",
 			"downloadInstall": "安装并重启",
@@ -765,11 +766,6 @@
 			"uninstallSuccess": "已移除访达快捷操作",
 			"installFailed": "无法安装访达快捷操作",
 			"uninstallFailed": "无法移除访达快捷操作"
-		},
-		"onboarding": {
-			"label": "首次运行引导",
-			"description": "在主窗口重放主题、Agent 与翻译的设置向导",
-			"reopen": "重新打开引导向导"
 		}
 	},
 	"sync": {

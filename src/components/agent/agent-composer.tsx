@@ -5,6 +5,7 @@ import type {
 	RefObject,
 } from "react";
 import { useTranslation } from "react-i18next";
+import { ComposerAnnotations } from "@/components/agent/composer/composer-annotations";
 import {
 	ComposerImageAttachments,
 	ComposerSubmitControl,
@@ -30,6 +31,10 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Popover, PopoverAnchor } from "@/components/ui/popover";
 import type { AgentSkill, PromptImage } from "@/lib/agent";
+import {
+	mergeSelectionDraftInput,
+	withoutSelectionTokens,
+} from "@/lib/agent/composer-inline-tokens";
 import {
 	COMPOSER_IMAGE_ACCEPT,
 	COMPOSER_IMAGE_MAX_BYTES,
@@ -165,7 +170,7 @@ export function AgentComposer(props: AgentComposerProps) {
 				)}
 				style={!compact && heightPx != null ? { height: heightPx } : undefined}
 			>
-				{/* Block chips: current file / visual only. Selections now live inline. */}
+				{/* Block chips: current file / visual only. Selections use the annotation summary. */}
 				{props.currentFilePath || visualDrafts.length > 0 ? (
 					<div
 						className={cn(
@@ -229,6 +234,10 @@ export function AgentComposer(props: AgentComposerProps) {
 							await onSubmit(composerText, images.length ? images : undefined);
 						}}
 					>
+						<ComposerAnnotations
+							value={composerText}
+							onChange={onComposerTextChange}
+						/>
 						<PromptInputBody>
 							<Popover
 								open={composerMenuOpen}
@@ -294,8 +303,12 @@ export function AgentComposer(props: AgentComposerProps) {
 											ref={props.composerInputRef}
 											autoFocus={Boolean(autoFocus)}
 											compact={compact}
-											value={composerText}
-											onValueChange={onComposerTextChange}
+											value={withoutSelectionTokens(composerText)}
+											onValueChange={(text) =>
+												onComposerTextChange(
+													mergeSelectionDraftInput(composerText, text),
+												)
+											}
 											onKeyDown={onComposerKeyDown}
 											disabled={switching}
 											labelForPath={props.labelForPath}

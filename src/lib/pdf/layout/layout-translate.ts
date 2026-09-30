@@ -4,12 +4,7 @@
  */
 
 import i18n from "@/i18n";
-import {
-	listAgents,
-	listenAgentCompleted,
-	listenAgentFailed,
-	runOnce,
-} from "@/lib/agent";
+import { listenAgentCompleted, listenAgentFailed, runOnce } from "@/lib/agent";
 import { errorText } from "@/lib/core/error";
 import { logger } from "@/lib/core/logger";
 import { LAYOUT_SIDEBAR_MIN_SCORE } from "@/lib/pdf/layout/constants";
@@ -43,7 +38,7 @@ import {
 	maskInlineTokens,
 	restoreInlineTokens,
 } from "@/lib/translate/mask";
-import { resolveTranslateAgent } from "@/lib/translate/resolve-agent";
+import { resolveConfiguredTranslateAgent } from "@/lib/translate/resolve-agent";
 import type {
 	CommercialTranslateProviderId,
 	TranslateProviderId,
@@ -266,10 +261,30 @@ function parseBbox(value: unknown): PdfLayoutRegion["bbox"] | null {
 	return { x, y, w, h };
 }
 
-function translateServiceKey(settings: TranslateSettings): string {
+/** FNV-1a 32-bit fingerprint of the custom translate prompt — cache-busting only. */
+function promptFingerprint(prompt: string): string {
+	let h = 0x811c9dc5;
+	for (let i = 0; i < prompt.length; i++) {
+		h ^= prompt.charCodeAt(i);
+		h = Math.imul(h, 0x01000193);
+	}
+	return (h >>> 0).toString(36);
+}
+
+/**
+ * Service identity for the sidecar cache. A non-empty custom prompt appends
+ * its fingerprint so changing the prompt re-translates instead of hitting the
+ * old cache; empty keeps the prompt-less key byte-identical so existing
+ * `layout-translate.json` caches survive upgrades.
+ */
+export function translateServiceKey(settings: TranslateSettings): string {
 	const providerId = settings.provider;
+	const promptPart =
+		settings.customPrompt.trim().length > 0
+			? `:p${promptFingerprint(settings.customPrompt)}`
+			: "";
 	if (providerId === "agent") {
-		return `agent:${settings.agentId || "default"}:${settings.modelId || "default"}`;
+		return `agent:${settings.agentId || "default"}:${settings.modelId || "default"}${promptPart}`;
 	}
 	const configs = settings.providerConfigs as Partial<
 		Record<
@@ -278,13 +293,15 @@ function translateServiceKey(settings: TranslateSettings): string {
 		>
 	>;
 	const config = configs[providerId as CommercialTranslateProviderId];
-	if (!config) return providerId;
-	return [
-		providerId,
-		config.baseUrl?.trim() ?? "",
-		config.region?.trim() ?? "",
-		config.model?.trim() ?? "",
-	].join(":");
+	if (!config) return `${providerId}${promptPart}`;
+	return (
+		[
+			providerId,
+			config.baseUrl?.trim() ?? "",
+			config.region?.trim() ?? "",
+			config.model?.trim() ?? "",
+		].join(":") + promptPart
+	);
 }
 
 export function currentLayoutTranslateCacheKey(): LayoutTranslateCacheKey {
@@ -566,8 +583,7 @@ async function resolveLayoutTranslateAgentOpts(options: {
 }): Promise<TranslateRunOptions | undefined> {
 	const settings = loadSettings();
 	if (settings.translate.provider !== "agent") return undefined;
-	const registry = await listAgents().catch(() => null);
-	const resolved = resolveTranslateAgent(settings.translate, registry);
+	const resolved = await resolveConfiguredTranslateAgent();
 	if (!resolved.agentId) {
 		throw new Error("No Agent configured for translation");
 	}

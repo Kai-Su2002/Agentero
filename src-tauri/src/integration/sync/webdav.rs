@@ -14,7 +14,7 @@
 
 use crate::core::error::AppError;
 use crate::core::http;
-use crate::integration::sync::config::SyncBackendConfig;
+use crate::integration::sync::config::{normalize_webdav_url, SyncBackendConfig};
 use crate::integration::sync::store::{
     check, etag_of, send_with_retries, PutCondition, PutOutcome, RemoteStore,
 };
@@ -44,7 +44,9 @@ pub struct WebdavClient {
 
 impl WebdavClient {
     pub fn new(cfg: &SyncBackendConfig) -> Result<Self, AppError> {
-        let url = url::Url::parse(cfg.webdav_url.trim())
+        // `normalized()` only runs on save; re-normalize so configs persisted
+        // before the Jianguoyun-root expansion exist are healed on read.
+        let url = url::Url::parse(&normalize_webdav_url(&cfg.webdav_url))
             .map_err(|e| AppError::message(format!("invalid WebDAV URL: {e}")))?;
         // `scheme://host[:port]` without the path or query.
         let origin = url[..url::Position::BeforePath].to_string();
@@ -283,28 +285,33 @@ impl RemoteStore for WebdavClient {
         Ok(PutOutcome::Ok)
     }
 
-    /// Probe conditional-write support with a throwaway key: create it, then
-    /// PUT it again with `If-Match` pointing at a stale etag. A real 412
+    /// Probe conditional-write support with a throwaway key. An
+    /// unconditional PUT first proves the configured directory accepts
+    /// writes at all — a failure there is a configuration error (unwritable
+    /// address, rejected credentials) and must surface during
+    /// `sync_configure` instead of silently saving a dead config. The
+    /// second PUT carries `If-Match` pointing at a stale etag: a real 412
     /// means the server enforces `If-Match` — the one conditional that backs
-    /// the HEAD CAS. `If-None-Match: *` is deliberately not probed: servers
-    /// like Nutstore ignore it, and an ignored create-only header is harmless
-    /// for content-addressed blobs and unique manifest keys. Inconclusive
-    /// probes fail open — an ignored header is harmless, a missed CAS is not.
+    /// the HEAD CAS — while 2xx means it is ignored and sync degrades to
+    /// plain PUTs. `If-None-Match: *` is deliberately not probed: servers
+    /// like Nutstore ignore it, and an ignored create-only header is
+    /// harmless for content-addressed blobs and unique manifest keys.
+    /// Inconclusive *outcomes* still fail open — an ignored header is
+    /// harmless, a missed CAS is not.
+    ///
+    /// Assumes the conditional path is on; `test_connection` builds the
+    /// probe client with `conditional_writes = true` so this measures the
+    /// server rather than echoing a persisted verdict.
     async fn probe_conditional_writes(&self) -> Result<bool, AppError> {
         let key = format!(".sync-probe-{}", uuid::Uuid::new_v4().simple());
-        match self
-            .put(&key, b"probe".to_vec(), PutCondition::IfNoneMatch)
+        self.ensure_parent_dirs(&key).await?;
+        // Unconditional create; nothing to clean up when it fails.
+        let resp = self
+            .send(method("PUT")?, &self.url_for(&key), &[], b"probe".to_vec())
+            .await?;
+        check(resp, "PUT", &key)
             .await
-        {
-            Ok(PutOutcome::Ok) => {}
-            outcome => {
-                log::warn!(
-                    target: "agentero::sync",
-                    "WebDAV conditional-write probe inconclusive ({outcome:?}); assuming supported"
-                );
-                return Ok(true);
-            }
-        }
+            .map_err(|e| AppError::message(format!("cannot write to {}: {e}", self.dir_url())))?;
         let supported = match self
             .put(
                 &key,
@@ -398,6 +405,16 @@ mod tests {
         assert_eq!(
             c.url_for("blobs/ab/hash"),
             "https://dav.jianguoyun.com/dav/agentero/blobs/ab/hash"
+        );
+    }
+
+    #[test]
+    fn jianguoyun_root_url_is_expanded_to_the_reserved_folder() {
+        let c = client("https://dav.jianguoyun.com/dav/");
+        assert_eq!(c.dir, vec!["dav".to_string(), "agentero".to_string()]);
+        assert_eq!(
+            c.url_for("vault.json"),
+            "https://dav.jianguoyun.com/dav/agentero/vault.json"
         );
     }
 

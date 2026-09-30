@@ -1,5 +1,5 @@
 use crate::core::error::AppError;
-pub(crate) use crate::core::process::windows_shell_path as simplified_agent_cwd;
+use crate::core::process::windows_shell_path;
 use crate::features::agent::acp::terminal::AcpTerminalManager;
 use crate::features::agent::models::{AgentDescriptor, AgentResultPayload, AgentTemplate};
 
@@ -61,10 +61,9 @@ pub(crate) fn shell_quote(s: &str) -> String {
 /// agents like the Pi adapter start with the vault as their OS-level working
 /// directory.
 #[cfg(not(windows))]
-pub(crate) fn wrap_local_command_with_cwd(
+fn wrap_local_command_with_cwd(
     command: &Path,
     args: &[String],
-    _env: &mut HashMap<String, String>,
     cwd: &Path,
 ) -> (PathBuf, Vec<String>) {
     let mut script = format!(
@@ -82,7 +81,7 @@ pub(crate) fn wrap_local_command_with_cwd(
 /// Quote a token for a Windows `cmd /C` command. Empty strings, spaces, and
 /// most cmd metacharacters trigger double-quote wrapping; internal double
 /// quotes are backslash-escaped.
-#[cfg(windows)]
+#[cfg(any(windows, test))]
 pub(crate) fn windows_shell_quote(s: &str) -> String {
     if s.is_empty()
         || s.contains(' ')
@@ -104,7 +103,7 @@ pub(crate) fn windows_shell_quote(s: &str) -> String {
 /// True UNC paths stay unchanged; supporting them requires a separate `pushd` flow.
 #[cfg(any(windows, test))]
 pub(crate) fn windows_cmd_cwd(cwd: &Path) -> String {
-    simplified_agent_cwd(cwd).to_string_lossy().into_owned()
+    windows_shell_path(cwd).to_string_lossy().into_owned()
 }
 
 /// Pre-quote the cwd environment value so metacharacters remain literal after
@@ -114,22 +113,29 @@ pub(crate) fn windows_cmd_cwd_env_value(cwd: &Path) -> String {
     format!("\"{}\"", windows_cmd_cwd(cwd))
 }
 
-/// Windows variant of [`wrap_local_command_with_cwd`]. Uses `cmd /D /C` and an
-/// environment variable for the cwd so spaces in the vault path do not need to
-/// be quoted inside the command string.
-#[cfg(windows)]
-pub(crate) fn wrap_local_command_with_cwd(
-    command: &Path,
-    args: &[String],
+/// Windows launch policy and command construction. Kept available to unit
+/// tests on Unix so changes to the wrapper policy are checked on every CI run.
+#[cfg(any(windows, test))]
+fn windows_launch_command(
+    desc: &AgentDescriptor,
+    command: PathBuf,
     env: &mut HashMap<String, String>,
-    cwd: &Path,
+    cwd: Option<&Path>,
 ) -> (PathBuf, Vec<String>) {
+    // Keep the pre-#570 Windows policy: adding cmd around native launchers
+    // changes quoting, breaks UNC cwd, and prevents the SDK (which only kills
+    // its direct child on Windows) from forcibly reaping the real agent.
+    let Some(cwd) =
+        cwd.filter(|_| matches!(desc.template, AgentTemplate::Pi | AgentTemplate::Custom))
+    else {
+        return (command, desc.args.clone());
+    };
     env.insert(
         "AGENTERO_AGENT_CWD".to_string(),
         windows_cmd_cwd_env_value(cwd),
     );
     let mut agent_command = windows_shell_quote(&command.to_string_lossy());
-    for arg in args {
+    for arg in &desc.args {
         agent_command.push(' ');
         agent_command.push_str(&windows_shell_quote(arg));
     }
@@ -143,6 +149,9 @@ pub(crate) fn wrap_local_command_with_cwd(
         ],
     )
 }
+
+#[cfg(windows)]
+use windows_launch_command as local_launch_command;
 
 /// Summarize an ACP stdio line for debug logs without dumping the full payload.
 fn summarize_acp_line(line: &str) -> String {
@@ -247,6 +256,106 @@ pub(crate) fn resolve_command_in_agent_env(
     crate::core::process::resolve_command_in_paths(command, &paths)
 }
 
+/// Resolve the ACP session cwd, also used by cwd-aware process launchers.
+///
+/// A remote target advertises its own vault path; a local one uses the open
+/// Vault, falling back to [`crate::core::paths::agent_scratch_dir`] when the
+/// vault path is missing or invalid. Never Agentero's process cwd: a macOS GUI
+/// app launched by LaunchServices has `/`, so an agent that scans its startup
+/// cwd would walk `$HOME` and trip TCC folder prompts (#570). If neither scratch
+/// location can be created, fail before spawning instead of broadening the cwd.
+pub(crate) fn agent_spawn_cwd(
+    remote: Option<&dyn crate::features::agent::remote_host::RemoteAgentLaunch>,
+    vault_path: Option<&str>,
+) -> Result<PathBuf, AppError> {
+    let raw = match remote {
+        Some(remote) => remote.agent_cwd(),
+        None => vault_path
+            .map(PathBuf::from)
+            .filter(|p| p.is_dir())
+            .map_or_else(crate::core::paths::agent_scratch_dir, Ok)?,
+    };
+    Ok(windows_shell_path(&raw))
+}
+
+/// Unix launches change cwd before exec (#570): Finder-launched apps inherit
+/// `/`, and `dsh --profile acp` treats the invoking directory as its default
+/// workspace root. The shell takes the cwd inline, so `env` stays unused on
+/// this platform (signature parity with the Windows launcher below).
+#[cfg(not(windows))]
+fn local_launch_command(
+    desc: &AgentDescriptor,
+    command: PathBuf,
+    _env: &mut HashMap<String, String>,
+    cwd: Option<&Path>,
+) -> (PathBuf, Vec<String>) {
+    match cwd {
+        Some(cwd) => wrap_local_command_with_cwd(&command, &desc.args, cwd),
+        None => (command, desc.args.clone()),
+    }
+}
+
+/// Bundled-tier spawn plan, as a plain fn so tests can stub the tier.
+type BundledSpawnFn = fn(
+    &str,
+    &HashMap<String, String>,
+) -> Option<(
+    PathBuf,
+    crate::features::agent::registry::bundled::BundledAdapter,
+)>;
+
+/// Decide how to launch a local ACP agent, in tier order:
+/// 1. PATH/lifecycle-installed adapter (resolved against the merged child
+///    env) — always wins when present;
+/// 2. the bundled adapter tier — spawn `node <entry.js> [desc args…]` and
+///    point the stripped adapter at the user's host CLI
+///    (`CLAUDE_CODE_EXECUTABLE` / `CODEX_PATH`, or_insert so user env wins);
+/// 3. today's behavior — the raw descriptor command, letting the spawn
+///    surface the OS error.
+pub(crate) fn plan_local_launch(
+    desc: &AgentDescriptor,
+    child_env: &mut HashMap<String, String>,
+) -> (AgentDescriptor, PathBuf) {
+    plan_local_launch_with(desc, child_env, registry_bundled_spawn)
+}
+
+fn registry_bundled_spawn(
+    template_id: &str,
+    child_env: &HashMap<String, String>,
+) -> Option<(
+    PathBuf,
+    crate::features::agent::registry::bundled::BundledAdapter,
+)> {
+    crate::features::agent::registry::bundled::bundled_spawn(template_id, child_env)
+}
+
+fn plan_local_launch_with(
+    desc: &AgentDescriptor,
+    child_env: &mut HashMap<String, String>,
+    bundled_spawn: BundledSpawnFn,
+) -> (AgentDescriptor, PathBuf) {
+    if let Some(path) = resolve_command_in_agent_env(&desc.command, child_env) {
+        return (desc.clone(), path);
+    }
+    if let Some((node, adapter)) = bundled_spawn(desc.template.as_str(), child_env) {
+        for (key, value) in crate::features::agent::registry::bundled::host_env_injection(
+            desc.template.as_str(),
+            child_env,
+        ) {
+            child_env.entry(key).or_insert(value);
+        }
+        let mut launch_desc = desc.clone();
+        let mut args = Vec::with_capacity(desc.args.len() + 1);
+        // Tauri resource paths can carry a Windows extended-length prefix;
+        // Node's entry-script resolution rejects it before ACP initializes.
+        args.push(windows_shell_path(&adapter.entry_js).display().to_string());
+        args.extend(desc.args.iter().cloned());
+        launch_desc.args = args;
+        return (launch_desc, node);
+    }
+    (desc.clone(), PathBuf::from(&desc.command))
+}
+
 pub(crate) fn to_acp_agent_local(
     desc: &AgentDescriptor,
     cwd: Option<&Path>,
@@ -261,15 +370,12 @@ pub(crate) fn to_acp_agent_local(
             child_env.entry(key).or_insert(value);
         }
     }
-    let command = resolve_command_in_agent_env(&desc.command, &child_env)
-        .unwrap_or_else(|| PathBuf::from(&desc.command));
+    let (launch_desc, command) = plan_local_launch(desc, &mut child_env);
 
-    let (command, args) =
-        if let Some(cwd) = cwd.filter(|_| desc.template.needs_local_cwd_shell_wrap()) {
-            wrap_local_command_with_cwd(&command, &desc.args, &mut child_env, cwd)
-        } else {
-            (command, desc.args.clone())
-        };
+    // Unix agents must not inherit `/` from a Finder-launched app (#570).
+    // Windows retains its existing Pi/Custom-only wrapping policy until the
+    // transport supports native cwd + tree teardown.
+    let (command, args) = local_launch_command(&launch_desc, command, &mut child_env, cwd);
 
     let env: Vec<EnvVariable> = child_env
         .into_iter()
@@ -286,7 +392,7 @@ pub(crate) fn to_acp_agent_local(
 }
 
 /// Build ACP agent process. When `remote` is SSH, wrap launch as `ssh … 'cd vault && exec agent'`.
-/// Local-sim remotes use a normal local process with cwd = remote vault path.
+/// Local-sim remotes validate their vault and reuse the local platform launch policy.
 pub(crate) fn to_acp_agent(
     desc: &AgentDescriptor,
     cwd: Option<&Path>,
@@ -301,7 +407,16 @@ pub(crate) fn to_acp_agent(
                 &desc.name,
             ));
         }
-        // local-sim: local binary, cwd set via NewSessionRequest to remote_cwd
+        // A stale local-sim handle must not silently run against scratch (or
+        // fail later with an opaque shell/ACP handshake error). SSH paths were
+        // handled above and must never be checked against the local filesystem.
+        let remote_cwd = r.agent_cwd();
+        if r.is_local_sim() && !remote_cwd.is_dir() {
+            return Err(AppError::message(format!(
+                "local-sim vault directory is unavailable: {}",
+                remote_cwd.display()
+            )));
+        }
     }
     to_acp_agent_local(desc, cwd)
 }
@@ -322,6 +437,23 @@ pub(crate) const ACP_TIMEOUT: std::time::Duration = std::time::Duration::from_se
 /// app start made Hermes miss it repeatedly. A hard 15s turns slow-but-
 /// working agents into hard "agent unavailable" failures.
 pub(crate) const ACP_INITIALIZE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `session/new` during warm gets the same allowance as `initialize`: heavy BYOA
+/// agents (Hermes profiles) build the full agent — provider inventory, tools,
+/// MCP — on session create, and a cold spawn racing other warm-ups blows the
+/// shared 15s budget even though the agent is healthy. Only warm uses this;
+/// interactive turns keep the responsive 15s budget.
+pub(crate) const ACP_NEW_SESSION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// `session/new` variant of [`timed_acp_request`]; see [`ACP_NEW_SESSION_TIMEOUT`].
+pub(crate) async fn timed_acp_new_session<T, E>(
+    request: impl std::future::Future<Output = Result<T, E>>,
+) -> Result<T, agent_client_protocol::Error>
+where
+    E: std::fmt::Display,
+{
+    timed_acp_request_with(ACP_NEW_SESSION_TIMEOUT, "new_session", request).await
+}
 
 pub(crate) async fn timed_acp_request<T, E>(
     label: &str,
@@ -416,6 +548,279 @@ mod timeout_tests {
 #[cfg(test)]
 mod cwd_shell_wrap_tests {
     use super::*;
+    use crate::features::agent::models::AgentTemplate;
+    use crate::features::agent::remote_host::RemoteAgentLaunch;
+
+    fn descriptor(template: AgentTemplate) -> AgentDescriptor {
+        let info = crate::features::agent::registry::templates::template_info(template.as_str());
+        AgentDescriptor {
+            id: template.as_str().into(),
+            name: template.as_str().into(),
+            command: info
+                .as_ref()
+                .map(|info| info.command.clone())
+                .unwrap_or_else(|| "agent.exe".into()),
+            args: info.map(|info| info.args).unwrap_or_default(),
+            template,
+            env: HashMap::new(),
+            available: true,
+            last_error: None,
+            last_probe_ok: None,
+            last_probe_agent_name: None,
+            last_probe_error: None,
+            last_probed_at: None,
+        }
+    }
+
+    struct RemoteTarget {
+        cwd: PathBuf,
+        ssh: bool,
+    }
+
+    #[async_trait::async_trait]
+    impl RemoteAgentLaunch for RemoteTarget {
+        fn is_ssh(&self) -> bool {
+            self.ssh
+        }
+        fn is_local_sim(&self) -> bool {
+            !self.ssh
+        }
+        fn host(&self) -> &str {
+            "test-host"
+        }
+        fn agent_cwd(&self) -> PathBuf {
+            self.cwd.clone()
+        }
+        fn work_root(&self) -> &Path {
+            &self.cwd
+        }
+        fn ssh_stdio(
+            &self,
+            _command: &str,
+            _args: &[String],
+            _env: &HashMap<String, String>,
+        ) -> Result<(PathBuf, Vec<String>), AppError> {
+            Ok((
+                PathBuf::from("ssh"),
+                vec![self.cwd.to_string_lossy().into_owned()],
+            ))
+        }
+        async fn which(&self, _bin: &str) -> Result<Option<String>, AppError> {
+            unreachable!()
+        }
+        async fn materialize_skills(&self) -> Result<(), AppError> {
+            unreachable!()
+        }
+        async fn ensure_vault_skills(
+            &self,
+            _locale: Option<&str>,
+        ) -> Result<crate::features::vault::CreateVaultResult, AppError> {
+            unreachable!()
+        }
+    }
+
+    /// Fake bin dir with runnable shims (`fake-agent`, `claude`, `codex`) so
+    /// PATH resolution and host-env injection stay hermetic on any machine.
+    fn fake_agent_bin(names: &[&str]) -> (tempfile::TempDir, HashMap<String, String>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for name in names {
+            let file = bin.join(name);
+            std::fs::write(&file, "#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).unwrap();
+            }
+            // Windows resolution probes PATHEXT-style suffixes.
+            #[cfg(windows)]
+            std::fs::write(bin.join(format!("{name}.cmd")), "@echo off\r\n").unwrap();
+        }
+        let mut env = HashMap::new();
+        env.insert(
+            "PATH".to_string(),
+            std::env::join_paths(std::iter::once(bin))
+                .unwrap()
+                .to_string_lossy()
+                .to_string(),
+        );
+        (tmp, env)
+    }
+
+    /// Static fn-pointer payload for `plan_local_launch_with`: a fake bundled
+    /// claude adapter plan (no capture needed, so it fits the fn type).
+    fn fake_bundled_claude(
+        _template_id: &str,
+        _child_env: &HashMap<String, String>,
+    ) -> Option<(
+        PathBuf,
+        crate::features::agent::registry::bundled::BundledAdapter,
+    )> {
+        Some((
+            PathBuf::from("/fake/node"),
+            crate::features::agent::registry::bundled::BundledAdapter {
+                entry_js: PathBuf::from("/fake/adapters/claude-agent-acp/dist/index.js"),
+                version: "0.0.0-test".to_string(),
+                node_major: Some(22),
+            },
+        ))
+    }
+
+    #[test]
+    fn plan_local_launch_prefers_path_tier_over_bundled() {
+        let (_tmp, mut env) = fake_agent_bin(&["fake-agent"]);
+        let mut desc = descriptor(AgentTemplate::Custom);
+        desc.command = "fake-agent".to_string();
+        desc.args = vec!["--flag".to_string()];
+        let (launch_desc, command) = plan_local_launch_with(&desc, &mut env, fake_bundled_claude);
+        // Resolved PATH tier: args untouched, no entry injection. (Windows
+        // resolution lands on the `.cmd` shim, so match by substring.)
+        assert!(
+            command.to_string_lossy().contains("fake-agent"),
+            "command: {command:?}"
+        );
+        assert_eq!(launch_desc.args, vec!["--flag".to_string()]);
+        assert!(!env.contains_key("CLAUDE_CODE_EXECUTABLE"));
+    }
+
+    #[test]
+    fn plan_local_launch_falls_back_to_bundled_node_entry_and_host_env() {
+        // No adapter on PATH, but the host CLI (`claude`) is: the bundled tier
+        // spawns `node <entry>` and points the adapter at the host.
+        let (_tmp, mut env) = fake_agent_bin(&["claude"]);
+        let desc = descriptor(AgentTemplate::ClaudeAcp);
+        assert_ne!(
+            desc.command, "claude",
+            "adapter command must differ from host"
+        );
+        let (launch_desc, command) = plan_local_launch_with(&desc, &mut env, fake_bundled_claude);
+        assert_eq!(command, PathBuf::from("/fake/node"));
+        assert_eq!(
+            launch_desc.args,
+            vec!["/fake/adapters/claude-agent-acp/dist/index.js".to_string()]
+        );
+        let injected = env
+            .get("CLAUDE_CODE_EXECUTABLE")
+            .expect("host env injected");
+        assert!(injected.contains("claude"), "injected: {injected}");
+
+        // User-configured env wins: an explicit CLAUDE_CODE_EXECUTABLE survives.
+        let (_tmp2, mut env2) = fake_agent_bin(&["claude"]);
+        env2.insert(
+            "CLAUDE_CODE_EXECUTABLE".to_string(),
+            "/user/chosen/claude".to_string(),
+        );
+        let (_, _) = plan_local_launch_with(&desc, &mut env2, fake_bundled_claude);
+        assert_eq!(
+            env2.get("CLAUDE_CODE_EXECUTABLE").map(String::as_str),
+            Some("/user/chosen/claude")
+        );
+    }
+
+    #[test]
+    fn plan_local_launch_falls_back_to_bundled_with_descriptor_args() {
+        // Bundled entry is prepended before the descriptor's own args.
+        let (_tmp, mut env) = fake_agent_bin(&[]);
+        let mut desc = descriptor(AgentTemplate::Custom);
+        desc.command = "nowhere-agent".to_string();
+        desc.args = vec!["--flag".to_string(), "value".to_string()];
+        let (launch_desc, command) = plan_local_launch_with(&desc, &mut env, fake_bundled_claude);
+        assert_eq!(command, PathBuf::from("/fake/node"));
+        assert_eq!(
+            launch_desc.args,
+            vec![
+                "/fake/adapters/claude-agent-acp/dist/index.js".to_string(),
+                "--flag".to_string(),
+                "value".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn plan_local_launch_normalizes_bundled_windows_entry() {
+        for template in [AgentTemplate::CodexAcp, AgentTemplate::ClaudeAcp] {
+            let (_tmp, mut env) = fake_agent_bin(&[]);
+            let mut desc = descriptor(template);
+            desc.args = vec!["--flag".to_string(), "value with spaces".to_string()];
+            let (launch_desc, command) = plan_local_launch_with(&desc, &mut env, |_, _| {
+                Some((
+                    PathBuf::from(r"C:\Program Files\nodejs\node.exe"),
+                    crate::features::agent::registry::bundled::BundledAdapter {
+                        entry_js: PathBuf::from(
+                            r"\\?\C:\Users\Test User\Agentero\adapters\dist\index.js",
+                        ),
+                        version: "0.0.0-test".to_string(),
+                        node_major: Some(22),
+                    },
+                ))
+            });
+            assert_eq!(command, PathBuf::from(r"C:\Program Files\nodejs\node.exe"));
+            assert_eq!(
+                launch_desc.args,
+                vec![
+                    r"C:\Users\Test User\Agentero\adapters\dist\index.js".to_string(),
+                    "--flag".to_string(),
+                    "value with spaces".to_string(),
+                ]
+            );
+        }
+    }
+
+    #[test]
+    fn plan_local_launch_keeps_raw_command_without_tiers() {
+        let (_tmp, mut env) = fake_agent_bin(&[]);
+        let desc = descriptor(AgentTemplate::CodexAcp);
+        let raw = desc.command.clone();
+        let (launch_desc, command) =
+            plan_local_launch_with(&desc, &mut env, |_template_id, _child_env| None);
+        assert_eq!(command, PathBuf::from(&raw));
+        assert_eq!(launch_desc.args, desc.args);
+        assert!(!env.contains_key("CODEX_PATH"));
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn dsh_gets_the_standard_cwd_wrapper_like_every_local_template() {
+        let desc = descriptor(AgentTemplate::Dsh);
+        let command = PathBuf::from(&desc.command);
+        let mut env = HashMap::new();
+        let (program, args) =
+            local_launch_command(&desc, command.clone(), &mut env, Some(Path::new("/vault")));
+        // `dsh --profile acp` resolves its default workspace root from the
+        // invoking directory, so it must go through the same `cd` wrapper.
+        assert_eq!(program, PathBuf::from("/bin/sh"));
+        assert!(
+            args.first().map(String::as_str) == Some("-c")
+                && args
+                    .get(1)
+                    .is_some_and(|s| s.starts_with("cd '/vault' && exec ")),
+            "dsh not wrapped: {args:?}"
+        );
+        assert!(env.is_empty());
+    }
+
+    #[test]
+    fn stale_local_sim_is_rejected_without_checking_ssh_paths_locally() {
+        let root = tempfile::tempdir().unwrap();
+        let mut remote = RemoteTarget {
+            cwd: root.path().join("missing-vault"),
+            ssh: false,
+        };
+        let desc = descriptor(AgentTemplate::CodexAcp);
+        // None is also the Windows probe path: validation must not depend on
+        // whether the platform needs a cwd shell wrapper.
+        for cwd in [None, Some(remote.cwd.as_path())] {
+            let Err(error) = to_acp_agent(&desc, cwd, Some(&remote)) else {
+                panic!("stale local-sim vault must fail before spawning an agent");
+            };
+            assert!(error.to_string().contains("local-sim"));
+            assert!(error.to_string().contains("missing-vault"));
+        }
+        remote.ssh = true;
+        assert_eq!(agent_spawn_cwd(Some(&remote), None).unwrap(), remote.cwd);
+        assert!(to_acp_agent(&desc, Some(&remote.cwd), Some(&remote)).is_ok());
+    }
 
     #[test]
     #[cfg(not(windows))]
@@ -428,11 +833,9 @@ mod cwd_shell_wrap_tests {
     #[test]
     #[cfg(not(windows))]
     fn wrap_unix_builds_sh_cd_exec_script() {
-        let mut env = HashMap::new();
         let (cmd, args) = wrap_local_command_with_cwd(
             Path::new("/usr/bin/pi-acp"),
             &["--foo".to_string(), "bar baz".to_string()],
-            &mut env,
             Path::new("/path/with spaces"),
         );
         assert_eq!(cmd, PathBuf::from("/bin/sh"));
@@ -440,11 +843,138 @@ mod cwd_shell_wrap_tests {
         assert_eq!(args[0], "-c");
         assert!(args[1]
             .starts_with("cd '/path/with spaces' && exec '/usr/bin/pi-acp' '--foo' 'bar baz'"));
-        assert!(env.is_empty());
+    }
+
+    /// #570 policy guard: on Unix every local template is wrapped with a
+    /// `cd <cwd> && exec …` shell (no per-template exemptions — `dsh --profile
+    /// acp` also resolves its default workspace root from the invoking cwd).
+    #[test]
+    #[cfg(not(windows))]
+    fn unix_wraps_every_local_template() {
+        use crate::features::agent::registry::templates::{builtin_templates, template_from_id};
+
+        let mut templates = builtin_templates()
+            .into_iter()
+            .map(|info| template_from_id(&info.id))
+            .collect::<Vec<_>>();
+        templates.push(AgentTemplate::Custom);
+
+        for template in templates {
+            let desc = descriptor(template);
+            let command = PathBuf::from(&desc.command);
+            let mut env = HashMap::new();
+            let (program, args) =
+                local_launch_command(&desc, command.clone(), &mut env, Some(Path::new("/vault")));
+
+            assert_eq!(program, PathBuf::from("/bin/sh"), "{}", desc.id);
+            assert!(
+                args.first().map(String::as_str) == Some("-c")
+                    && args
+                        .get(1)
+                        .is_some_and(|s| s.contains("cd '/vault' && exec ")),
+                "{} not wrapped: {args:?}",
+                desc.id
+            );
+            assert!(env.is_empty(), "{}", desc.id);
+        }
+    }
+
+    /// #570 regression guard: Codex used to be excluded from the shell wrap
+    /// (only `Pi` / `Custom` were), yet it scans its process cwd on startup.
+    #[test]
+    #[cfg(not(windows))]
+    fn unix_codex_wraps_in_the_spawn_cwd() {
+        let mut desc = descriptor(AgentTemplate::CodexAcp);
+        desc.args = vec!["--flag".into()];
+        let mut env = HashMap::new();
+
+        let (cmd, args) = local_launch_command(
+            &desc,
+            PathBuf::from("codex-acp"),
+            &mut env,
+            Some(Path::new("/vault")),
+        );
+        assert_eq!(cmd, PathBuf::from("/bin/sh"));
+        assert_eq!(
+            args,
+            vec![
+                "-c".to_string(),
+                "cd '/vault' && exec 'codex-acp' '--flag'".to_string()
+            ]
+        );
+
+        // No cwd known: the bare command is kept.
+        let (cmd, args) = local_launch_command(&desc, PathBuf::from("codex-acp"), &mut env, None);
+        assert_eq!(cmd, PathBuf::from("codex-acp"));
+        assert_eq!(args, vec!["--flag".to_string()]);
     }
 
     #[test]
-    #[cfg(windows)]
+    fn windows_preserves_native_launchers_and_unwrapped_probes() {
+        use crate::features::agent::registry::templates::{builtin_templates, template_from_id};
+
+        let mut templates = builtin_templates()
+            .into_iter()
+            .map(|info| template_from_id(&info.id))
+            .collect::<Vec<_>>();
+        templates.push(AgentTemplate::Custom);
+        for template in templates {
+            let desc = descriptor(template);
+            // Probe has no cwd wrapper, including Pi/Custom. A native .exe
+            // remains the SDK's direct child and can still be killed on timeout.
+            let mut env = HashMap::new();
+            let command = PathBuf::from(&desc.command);
+            assert_eq!(
+                windows_launch_command(&desc, command.clone(), &mut env, None),
+                (command.clone(), desc.args.clone())
+            );
+            assert!(env.is_empty());
+
+            if matches!(desc.template, AgentTemplate::Pi | AgentTemplate::Custom) {
+                let (program, _) =
+                    windows_launch_command(&desc, command, &mut env, Some(Path::new(r"C:\Vault")));
+                assert_eq!(program, PathBuf::from("cmd"));
+                assert!(env.contains_key("AGENTERO_AGENT_CWD"));
+                continue;
+            }
+            // Native launchers also remain direct for UNC vaults; they must not
+            // hit CMD's unsupported `cd /d` network path handling.
+            for cwd in [
+                r"C:\My Vault",
+                r"\\server\share\vault",
+                r"\\?\UNC\server\share\vault",
+            ] {
+                let mut env = HashMap::new();
+                assert_eq!(
+                    windows_launch_command(&desc, command.clone(), &mut env, Some(Path::new(cwd))),
+                    (command.clone(), desc.args.clone()),
+                    "{} at {cwd}",
+                    desc.id
+                );
+                assert!(env.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn agent_spawn_cwd_prefers_the_vault_and_never_the_process_cwd() {
+        let vault = std::env::temp_dir().join(format!("agentero-cwd-{}", std::process::id()));
+        std::fs::create_dir_all(&vault).unwrap();
+
+        assert_eq!(
+            agent_spawn_cwd(None, vault.to_str()).unwrap(),
+            windows_shell_path(&vault)
+        );
+        // Missing/invalid vault -> private scratch dir, never the process cwd.
+        assert_eq!(
+            agent_spawn_cwd(None, vault.join("missing").to_str()).unwrap(),
+            windows_shell_path(&crate::core::paths::agent_scratch_dir().unwrap())
+        );
+
+        let _ = std::fs::remove_dir(&vault);
+    }
+
+    #[test]
     fn windows_shell_quote_wraps_metacharacters() {
         assert_eq!(windows_shell_quote("plain"), "plain");
         assert_eq!(windows_shell_quote("with space"), "\"with space\"");
@@ -469,14 +999,15 @@ mod cwd_shell_wrap_tests {
     }
 
     #[test]
-    #[cfg(windows)]
     fn wrap_windows_builds_cmd_cd_script() {
         let mut env = HashMap::new();
-        let (cmd, args) = wrap_local_command_with_cwd(
-            Path::new(r"C:\Program Files\pi-acp.cmd"),
-            &["--foo".to_string(), "bar baz".to_string()],
+        let mut desc = descriptor(AgentTemplate::Pi);
+        desc.args = vec!["--foo".into(), "bar baz".into()];
+        let (cmd, args) = windows_launch_command(
+            &desc,
+            PathBuf::from(r"C:\Program Files\pi-acp.cmd"),
             &mut env,
-            Path::new(r"\\?\C:\My Vault"),
+            Some(Path::new(r"\\?\C:\My Vault")),
         );
         assert_eq!(cmd, PathBuf::from("cmd"));
         assert_eq!(

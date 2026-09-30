@@ -17,6 +17,8 @@ import {
 	subscribeSettings,
 } from "@/lib/settings";
 import { initSettingsStore } from "@/lib/settings/react-store";
+import { applyNativeWindowTheme } from "@/lib/shell/native-window-theme";
+import { initShellLayoutFromPrefs } from "@/lib/shell/ui-store";
 import { applyUiTheme } from "@/lib/ui/theme";
 import { checkForUpdate, installAvailableUpdate } from "@/lib/update";
 import { initVaultStore } from "@/lib/vault/store";
@@ -49,6 +51,9 @@ async function boot() {
 	bootStage("settings");
 	initSettingsSync();
 	const initialSettings = loadSettings();
+	// Native caption (Windows / Linux) follows the stored preference from the
+	// first frame; the subscription below keeps later changes in sync.
+	applyNativeWindowTheme(initialSettings.theme);
 	// Apply scale + interface/mono fonts before first paint so settings/main
 	// windows do not flash the stylesheet default then switch.
 	applyDocumentChrome({
@@ -62,6 +67,7 @@ async function boot() {
 	bootStage("theme");
 	subscribeSettings((s) => {
 		void applyUiTheme(s.uiTheme);
+		applyNativeWindowTheme(s.theme);
 		applyDocumentChrome({
 			uiScale: s.uiScale,
 			interfaceFontFamily: s.interfaceFontFamily,
@@ -107,6 +113,10 @@ async function boot() {
 		return;
 	}
 
+	const { SelectionChatPopover } = await import(
+		"@/components/selection/selection-chat-popover"
+	);
+
 	if (isFeatureWindow) {
 		const { FeatureWindowRoot } = await import(
 			"@/components/shell/feature-window-root"
@@ -120,6 +130,7 @@ async function boot() {
 					<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
 						<TooltipProvider delayDuration={300}>
 							<FeatureWindowRoot />
+							<SelectionChatPopover />
 							<Toaster />
 						</TooltipProvider>
 					</ThemeProvider>
@@ -157,6 +168,7 @@ async function boot() {
 							>
 								<TooltipProvider delayDuration={300}>
 									<DocWindowRoot />
+									<SelectionChatPopover />
 									<Toaster />
 								</TooltipProvider>
 							</ThemeProvider>
@@ -188,6 +200,7 @@ async function boot() {
 	initSettingsStore();
 	initVaultStore();
 	initWorkspaceStore();
+	if (!isMobileApp()) initShellLayoutFromPrefs();
 	ReactDOM.createRoot(root).render(
 		<PdfEngineHost>
 			{/* HTML5Backend cannot remount under StrictMode — drag sources go dead. */}
@@ -197,6 +210,7 @@ async function boot() {
 						<ThemeProvider attribute="class" defaultTheme="system" enableSystem>
 							<TooltipProvider delayDuration={300}>
 								<App />
+								<SelectionChatPopover />
 								{/* Global error / notice stack (top-right); use notifyError from @/lib/notify */}
 								<Toaster />
 							</TooltipProvider>

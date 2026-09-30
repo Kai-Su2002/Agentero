@@ -7,11 +7,23 @@
 import { createStore } from "zustand/vanilla";
 import type { PaperSearchGroup, SkillDiscovery } from "@/lib/paper/lookup";
 import type { PaletteMode } from "@/lib/shell/commands/types";
+import {
+	getShellLayoutPrefs,
+	saveCustomRails,
+	saveLastMode,
+	saveLastPreset,
+} from "@/lib/shell/layout-persist";
+import {
+	type LayoutPresetMode,
+	layoutModeLeftCollapsed,
+	layoutModeRightCollapsed,
+} from "@/lib/shell/layout-presets";
 
 export type RightSidebarTab = "agent" | "annotations";
 /** Views that may live in a singleton native feature window (right-rail popouts). */
 export type FeatureViewType = RightSidebarTab;
-export type LayoutMode = "agent" | "notes" | "reading" | "custom";
+/** Layout presets plus the free-form arrangement after any manual change. */
+export type LayoutMode = LayoutPresetMode | "custom";
 
 /** Crop + multi-turn payload when opening a visual-trace pin in Agent. */
 export type AgentSessionOpenVisualTrace = {
@@ -66,6 +78,12 @@ type UiStore = {
 	sidebarCollapsed: boolean;
 	/** Last layout preset selected from the title-bar menu. */
 	layoutMode: LayoutMode;
+	/**
+	 * Preset whose width slot a manual drag commits into. Sticky: dragging
+	 * inside a preset still updates that preset's remembered widths even
+	 * though `layoutMode` itself flips to "custom".
+	 */
+	lastAppliedPreset: LayoutPresetMode | null;
 	/** Right sidebar (⌘L): Agent (default) or Annotations. */
 	rightSidebarOpen: boolean;
 	rightSidebarTab: RightSidebarTab;
@@ -95,6 +113,7 @@ type UiStore = {
 export const uiStore = createStore<UiStore>(() => ({
 	sidebarCollapsed: false,
 	layoutMode: "custom",
+	lastAppliedPreset: null,
 	rightSidebarOpen: false,
 	rightSidebarTab: "agent",
 	agentPanelMounted: false,
@@ -111,15 +130,73 @@ export const uiStore = createStore<UiStore>(() => ({
 }));
 
 export function setSidebarCollapsedState(collapsed: boolean): void {
+	const prev = uiStore.getState().sidebarCollapsed;
 	uiStore.setState({ sidebarCollapsed: collapsed });
+	// The free-form arrangement is part of the persisted custom layout.
+	if (prev !== collapsed && uiStore.getState().layoutMode === "custom") {
+		saveCustomRails({
+			leftCollapsed: collapsed,
+			rightOpen: uiStore.getState().rightSidebarOpen,
+		});
+	}
 }
 
 export function setLayoutMode(layoutMode: LayoutMode): void {
+	// Called from every resize commit; only persist real transitions.
+	if (uiStore.getState().layoutMode === layoutMode) return;
 	uiStore.setState({ layoutMode });
+	saveLastMode(layoutMode);
+	if (layoutMode === "custom") {
+		const state = uiStore.getState();
+		if (state.lastAppliedPreset) saveLastPreset(state.lastAppliedPreset);
+		saveCustomRails({
+			leftCollapsed: state.sidebarCollapsed,
+			rightOpen: state.rightSidebarOpen,
+		});
+	}
+}
+
+export function setLastAppliedPreset(mode: LayoutPresetMode): void {
+	uiStore.setState({ lastAppliedPreset: mode });
+	saveLastPreset(mode);
 }
 
 export function setRightSidebarOpenState(open: boolean): void {
+	const prev = uiStore.getState().rightSidebarOpen;
 	uiStore.setState({ rightSidebarOpen: open });
+	if (prev !== open && uiStore.getState().layoutMode === "custom") {
+		saveCustomRails({
+			leftCollapsed: uiStore.getState().sidebarCollapsed,
+			rightOpen: open,
+		});
+	}
+}
+
+/**
+ * Boot seed (desktop main window only, before first paint): restore the
+ * persisted layout mode and rail flags so panels mount at the remembered
+ * arrangement. Rail widths are seeded separately in `useShellLayout` from the
+ * same prefs. Uses raw setState — going through `setLayoutMode` would write
+ * the just-loaded value straight back to storage.
+ */
+export function initShellLayoutFromPrefs(): void {
+	const prefs = getShellLayoutPrefs();
+	if (prefs.lastMode !== "custom") {
+		const mode = prefs.lastMode;
+		uiStore.setState({
+			layoutMode: mode,
+			lastAppliedPreset: mode,
+			sidebarCollapsed: layoutModeLeftCollapsed(mode),
+			rightSidebarOpen: !layoutModeRightCollapsed(mode),
+		});
+		return;
+	}
+	uiStore.setState({
+		layoutMode: "custom",
+		lastAppliedPreset: prefs.lastPreset ?? null,
+		sidebarCollapsed: prefs.customRails?.leftCollapsed ?? false,
+		rightSidebarOpen: prefs.customRails?.rightOpen ?? false,
+	});
 }
 
 export function setRightSidebarTab(tab: RightSidebarTab): void {
@@ -144,10 +221,6 @@ export function setZoteroSyncOpen(open: boolean): void {
 
 export function setCommandOpen(open: boolean): void {
 	uiStore.setState({ commandOpen: open });
-}
-
-export function setCommandMode(mode: PaletteMode): void {
-	uiStore.setState({ commandMode: mode });
 }
 
 export function openPalette(mode: PaletteMode): void {

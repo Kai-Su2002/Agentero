@@ -28,7 +28,7 @@ Agentero 基于 Tauri 2 + React 19，本地优先，Vault 文件与 Catalog SQLi
 |---|---|---|
 | 左侧栏 | 文件树 + Paper Info | 常驻 collapsible，`preserve-pixel-size` |
 | 中间 | Dockview 工作区 | Library / PDF / HTML / 图片 / Markdown / Trash |
-| 右侧栏 | Agent / 批注 / References（引用卡片 + 近邻图）/ Figures | 可选，同样 collapsible |
+| 右侧栏 | Agent（可「移动至新窗口」弹出单例功能窗） | 可选，同样 collapsible |
 
 - **文件树**：顶部虚拟 Recycle Bin、魔棒按钮；`papers/` 根文件夹即论文库入口（`Library` 图标，右键含导出 / 发现引用等库操作）。论文默认是叶子；`{paper}/attachments/` 非空时行上出现 chevron，子项直接挂在论文下。右键新建/删除/在 Finder 中显示/终端打开。多选（⌘/Shift）+ 拖拽移动。详见 [vault-tree.md](frontend/vault-tree.md)。
 - **Dockview**：每个打开文档一个 panel，支持 tab、上下左右分屏、多格网格。布局 `toJSON()` 持久化，path/mode 在 panel params。详见 [workspace.md](frontend/workspace.md)。
@@ -45,7 +45,7 @@ Agentero 基于 Tauri 2 + React 19，本地优先，Vault 文件与 Catalog SQLi
 - **补下载**：paper 行缺 PDF 或既无 TeX 也无 `PAPER.md` 时显示 Download（hover 说明原因）；`papers/` 论文库节点右键可批量补下。
 - **Rescan**：`paper_rescan` 从 `papers/` 目录（以 `NOTES.md` 为标记）补齐盘上有、catalog 无的条目。
 - **Zotero Connector**：Host 在 `127.0.0.1:23119` 收浏览器扩展 `saveItems` + `saveAttachment`。详见 [backend/connector.md](backend/connector.md)。
-- **MCP Server**：设置开关打开后 Host 在 `127.0.0.1:8765/mcp` 提供 Streamable HTTP MCP（论文 metadata / 入库 / NOTES）。详见 [backend/mcp.md](backend/mcp.md)。
+- **MCP Server**：设置开关打开后 Host 在 `127.0.0.1:8765/mcp` 提供 Streamable HTTP MCP（论文 metadata / 入库 / NOTES，以及 Vault 内其它 UTF-8 文本，如 Papers 外的 LaTeX）。详见 [backend/mcp.md](backend/mcp.md)。
 
 ### 论文库
 
@@ -57,7 +57,7 @@ Apple 风格 8 色 → Host `paper_set_tags`（catalog `tags_json` 权威）。L
 
 ### 精读（paper-reader）
 
-设置 → Agent `autoPaperReader`（默认关）。开启后魔棒入库/单篇 Download 资源就绪且未读时自动运行。资源齐全且 `is_read === false` 时文件树 Zap 可手动。写入 `NOTES.md`，成功后 `is_read = true`。进度在左下角后台任务条。Skill 运行时语法：Claude `/id`，其它仅注入 `SKILL.md`。详见 [frontend/agent.md](frontend/agent.md)。
+设置 → Agent `autoPaperReader`（默认关）。开启后魔棒入库/单篇 Download 资源就绪且未读时自动运行。资源齐全且 `is_read === false` 时文件树精读图标可手动触发。写入 `NOTES.md`，成功后 `is_read = true`。进度在左下角后台任务条。Skill 运行时语法：Claude `/id`，其它仅注入 `SKILL.md`。详见 [frontend/agent.md](frontend/agent.md)。
 
 ### Agent 面板
 

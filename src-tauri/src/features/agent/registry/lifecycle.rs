@@ -4,12 +4,14 @@
 //! npm fallback; login-shell PATH for GUI apps; no `curl | bash` pipes).
 //! Scoped to Motif catalog templates.
 
+use crate::features::agent::registry::antigravity;
 #[cfg(target_os = "windows")]
 use crate::features::agent::registry::discovery::path_entries;
 use crate::features::agent::registry::discovery::resolve_command;
 use crate::features::agent::registry::templates::{
-    dsh_entrypoint_exists, dsh_launcher_dir, kimi_launcher_dir, template_info,
-    CLAUDE_ACP_INSTALL_COMMAND, PI_ACP_INSTALL_COMMAND, PI_HOST_INSTALL_COMMAND,
+    antigravity_install_dir, antigravity_server_name, kimi_launcher_dir, template_info,
+    CLAUDE_ACP_INSTALL_COMMAND, CODEX_ACP_INSTALL_COMMAND, DSH_INSTALL_COMMAND,
+    MINIMAX_CODE_INSTALL_COMMAND, PI_ACP_INSTALL_COMMAND, PI_HOST_INSTALL_COMMAND,
     ZCODE_ACP_INSTALL_COMMAND,
 };
 use serde::Serialize;
@@ -18,6 +20,7 @@ use std::fs;
 use std::io::{self, Read};
 use std::process::{Command, Output, Stdio};
 use std::sync::{Mutex, MutexGuard, OnceLock, TryLockError};
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{
     thread,
     time::{Duration, Instant},
@@ -32,8 +35,6 @@ use std::io::Write;
 use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(target_os = "windows")]
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
@@ -86,143 +87,30 @@ pub const LIFECYCLE_TEMPLATES: &[&str] = &[
     "dsh",
     "kimi-code",
     "zcode",
+    "minimax-code",
+    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+    "antigravity-acp",
 ];
 
-/// dsh ACP demo + plugin stack, published together on npm. Pinning the full set
-/// to one verified version keeps cordis.yml plugin loading in sync.
-pub const DSH_ACP_PACKAGES: &[&str] = &[
-    "@deepseek-ai/dsh-acp-demo@0.1.1-rc.2",
-    "@deepseek-ai/dsh-llm-deepseek@0.1.1-rc.2",
-    "@deepseek-ai/dsh-sandbox-local@0.1.1-rc.2",
-    "@deepseek-ai/dsh-sandbox-policy@0.1.1-rc.2",
-    "@deepseek-ai/dsh-subprocess-local@0.1.1-rc.2",
-    "@deepseek-ai/dsh-bash-sandbox@0.1.1-rc.2",
-    "@deepseek-ai/dsh-user-approval@0.1.1-rc.2",
-    "@deepseek-ai/dsh-fs-sandbox@0.1.1-rc.2",
-    "@deepseek-ai/dsh-tool-fs@0.1.1-rc.2",
-];
-
-/// Default dsh composition written into the launcher dir on first install
-/// (never overwrites an existing file). Mirrors the canonical spine of
-/// deepseek-harness `examples/acp-agent/cordis.yml`: DeepSeek adapter, sandboxed
-/// bash + fs tools, user approval, and the ACP demo app. DEEPSEEK_API_KEY is
-/// read from the launcher dir's `.env`; sessions persist under `./.sessions`.
-pub const DSH_ACP_CORDIS_YML: &str = r#"- id: llm-deepseek
-  name: '@deepseek-ai/dsh-llm-deepseek'
-  config:
-    thinking: enabled
-    reasoningEffort: max
-    models:
-      - id: deepseek-v4-flash
-      - id: deepseek-v4-pro
-- id: sandbox
-  name: '@deepseek-ai/dsh-sandbox-local'
-- id: sandbox-policy
-  name: '@deepseek-ai/dsh-sandbox-policy'
-  config:
-    mode: workspace-write
-- id: subprocess
-  name: '@deepseek-ai/dsh-subprocess-local'
-- id: bash
-  name: '@deepseek-ai/dsh-bash-sandbox'
-  config:
-    timeoutMs: 60000
-- id: approval
-  name: '@deepseek-ai/dsh-user-approval'
-  config:
-    policy: ask
-- id: fs-sandbox
-  name: '@deepseek-ai/dsh-fs-sandbox'
-- id: tool-fs
-  name: '@deepseek-ai/dsh-tool-fs'
-- id: acp-agent
-  name: '@deepseek-ai/dsh-acp-demo'
-  config:
-    provider: deepseek-official
-    model: deepseek-v4-pro
-    persistenceRoot: ./.sessions
-    persistenceCompression: zstd
-    workspaceContext:
-      maxBytes: 65536
-    persona: |
-      You are a coding assistant powered by the {{model}} model. Your working directory is {{cwd}}. Your bash tool runs under a file sandbox — a `[sandbox: file access denied …]` result is policy, not a command bug.
-
-      Verify your work by running the code or tests. Keep answers brief and factual.
-"#;
-
-/// npm install for the dsh stack into its launcher dir (npm i is idempotent,
-/// so install and update run the same command with pinned versions).
-pub fn dsh_npm_install_command() -> String {
-    let packages = DSH_ACP_PACKAGES.join(" ");
+/// Launcher directory of the retired dsh ACP-demo scheme (managed `npm i` of
+/// the pinned `@deepseek-ai/dsh-acp-demo` stack). Kept only so uninstall can
+/// clean up installations made before the move to the umbrella CLI's built-in
+/// `dsh --profile acp`.
+fn legacy_dsh_launcher_dir() -> std::path::PathBuf {
     #[cfg(target_os = "windows")]
     {
-        format!(
-            "cd /d \"%USERPROFILE%\\.agentero\\dsh-acp\"\r\nnpm i --no-audit --no-fund {packages}"
-        )
+        let base = std::env::var_os("USERPROFILE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| std::path::PathBuf::from("C:\\"));
+        base.join(".agentero").join("dsh-acp")
     }
     #[cfg(not(target_os = "windows"))]
     {
-        format!("cd \"$HOME/.agentero/dsh-acp\" && npm i --no-audit --no-fund {packages}")
+        let home = std::env::var_os("HOME")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_default();
+        home.join(".agentero").join("dsh-acp")
     }
-}
-
-/// Minimal project manifest for the launcher dir. Without it, npm walks up to
-/// a user's `~/package.json` and installs the dsh stack into `~/node_modules`.
-const DSH_ACP_PACKAGE_JSON: &str = r#"{
-  "name": "agentero-dsh-acp",
-  "private": true,
-  "version": "0.1.1-rc.2"
-}
-"#;
-
-/// Ensure the launcher dir, default cordis.yml and project manifest exist.
-/// Idempotent and non-destructive — never overwrites user-modified files.
-pub fn prepare_dsh_launcher() -> Result<(), String> {
-    let launcher = dsh_launcher_dir();
-    std::fs::create_dir_all(&launcher)
-        .map_err(|e| format!("failed to create dsh launcher dir: {e}"))?;
-    let config = launcher.join("cordis.yml");
-    if !config.exists() {
-        std::fs::write(&config, DSH_ACP_CORDIS_YML)
-            .map_err(|e| format!("failed to write dsh cordis.yml: {e}"))?;
-    }
-    let manifest = launcher.join("package.json");
-    if !manifest.exists() {
-        std::fs::write(&manifest, DSH_ACP_PACKAGE_JSON)
-            .map_err(|e| format!("failed to write dsh package.json: {e}"))?;
-    }
-    Ok(())
-}
-
-/// dsh lifecycle: prepare launcher dir + defaults, then `npm i` the pinned
-/// package stack. Install skips the download when dsh is already reachable
-/// (launcher, home npm root or PATH); update always refreshes the launcher copy.
-fn run_dsh_lifecycle(
-    action: ToolLifecycleAction,
-    app: Option<&AppHandle>,
-    task_id: Option<&str>,
-    proxy_enabled: bool,
-    proxy_url: &str,
-) -> Result<(), String> {
-    prepare_dsh_launcher()?;
-    let reachable = dsh_entrypoint_exists() || resolve_command("dsh-acp-demo").is_some();
-    log::info!(
-        target: "agentero::agent",
-        "dsh_lifecycle action={:?} launcher={} reachable={reachable}",
-        action,
-        dsh_launcher_dir().display()
-    );
-    if matches!(action, ToolLifecycleAction::Install) && reachable {
-        return Ok(());
-    }
-    run_tool_lifecycle_silently(
-        &dsh_npm_install_command(),
-        app,
-        task_id,
-        "agent-lifecycle-install",
-        proxy_enabled,
-        proxy_url,
-    )
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -241,7 +129,8 @@ struct ToolLifecycleProgress {
 #[cfg(not(target_os = "windows"))]
 const CLAUDE_INSTALL_UNIX: &str = "bash -c 'tmp=$(mktemp) && curl -fsSL https://claude.ai/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 #[cfg(not(target_os = "windows"))]
-const OPENCODE_INSTALL_UNIX: &str = "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+const OPENCODE_INSTALL_UNIX: &str = "bash -c 'tmp=$(mktemp) && curl -fsSL https://opencode.ai/v2/install -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
+const OPENCODE_NPM_INSTALL_COMMAND: &str = "npm i -g @opencode/cli@latest";
 #[cfg(not(target_os = "windows"))]
 const GROK_INSTALL_UNIX: &str = "bash -c 'tmp=$(mktemp) && curl -fsSL https://x.ai/cli/install.sh -o $tmp && bash $tmp; status=$?; rm -f $tmp; exit $status'";
 #[cfg(not(target_os = "windows"))]
@@ -303,6 +192,9 @@ impl UninstallScope {
 }
 
 pub fn supports_lifecycle(template_id: &str) -> bool {
+    if template_id == "antigravity-acp" && cfg!(all(target_os = "macos", target_arch = "x86_64")) {
+        return false;
+    }
     LIFECYCLE_TEMPLATES.contains(&template_id)
 }
 
@@ -373,10 +265,27 @@ pub fn uninstall_info(template_id: &str) -> Option<UninstallInfo> {
     let zcode_acp = "npm uninstall -g zcode-acp-server".to_string();
     #[cfg(not(target_os = "windows"))]
     let zcode_acp = "npm uninstall -g zcode-acp-server --prefix \"$HOME/.local\"".to_string();
+    // Mirrors CODEX_ACP_INSTALL_COMMAND: uninstall must target the same prefix
+    // the install used, or a user-prefix adapter leaves an orphan on Unix.
+    let codex_acp = if cfg!(windows) {
+        "npm uninstall -g @agentclientprotocol/codex-acp".to_string()
+    } else {
+        "npm uninstall -g @agentclientprotocol/codex-acp --prefix \"$HOME/.local\"".to_string()
+    };
+    #[cfg(target_os = "windows")]
+    let dsh_host = "npm uninstall -g @deepseek-ai/dsh".to_string();
+    #[cfg(not(target_os = "windows"))]
+    let dsh_host = "npm uninstall -g @deepseek-ai/dsh --prefix \"$HOME/.local\"".to_string();
 
     let (agent_commands, acp_commands): (Vec<String>, Vec<String>) = match template_id {
         // Single-package agents: host CLI and ACP are the same binary.
-        "opencode" => (vec!["npm uninstall -g opencode-ai".to_string()], Vec::new()),
+        "opencode" => (
+            vec![
+                "npm uninstall -g @opencode/cli".to_string(),
+                "npm uninstall -g opencode-ai".to_string(),
+            ],
+            Vec::new(),
+        ),
         "openclaw" => (vec!["npm uninstall -g openclaw".to_string()], Vec::new()),
         "claude-acp" => (
             vec!["npm uninstall -g @anthropic-ai/claude-code".to_string()],
@@ -384,7 +293,7 @@ pub fn uninstall_info(template_id: &str) -> Option<UninstallInfo> {
         ),
         "codex-acp" => (
             vec!["npm uninstall -g @openai/codex".to_string()],
-            vec!["npm uninstall -g @agentclientprotocol/codex-acp".to_string()],
+            vec![codex_acp],
         ),
         "pi" => (
             vec!["npm uninstall -g @earendil-works/pi-coding-agent".to_string()],
@@ -394,20 +303,34 @@ pub fn uninstall_info(template_id: &str) -> Option<UninstallInfo> {
             vec!["npm uninstall -g @xai-official/grok".to_string()],
             Vec::new(),
         ),
-        "dsh" => (Vec::new(), Vec::new()),
+        // The ACP profile lives inside the umbrella CLI; the dir entry below
+        // only cleans up the retired dsh-acp-demo launcher.
+        "dsh" => (vec![dsh_host], Vec::new()),
         "kimi-code" => (
             vec!["npm uninstall -g @moonshot-ai/kimi-code".to_string()],
+            Vec::new(),
+        ),
+        "minimax-code" => (
+            vec!["npm uninstall -g @minimax-ai/code".to_string()],
             Vec::new(),
         ),
         // Single-package adapter: the ACP bridge is the only npm artifact
         // (the zcode CLI itself ships inside the ZCode desktop app).
         "zcode" => (vec![zcode_acp], Vec::new()),
+        "antigravity-acp" => (Vec::new(), Vec::new()),
         // hermes: official-script-only install, nothing we can reverse.
         _ => return None,
     };
     let (agent_dirs, acp_dirs): (Vec<String>, Vec<String>) = match template_id {
-        "dsh" => (Vec::new(), vec![dsh_launcher_dir().display().to_string()]),
+        "dsh" => (
+            Vec::new(),
+            vec![legacy_dsh_launcher_dir().display().to_string()],
+        ),
         "kimi-code" => (vec![kimi_launcher_dir().display().to_string()], Vec::new()),
+        "antigravity-acp" => (
+            Vec::new(),
+            vec![antigravity_install_dir().display().to_string()],
+        ),
         _ => (Vec::new(), Vec::new()),
     };
     Some(UninstallInfo {
@@ -451,8 +374,6 @@ fn remove_managed_dir(dir: &std::path::Path) -> Result<(), String> {
 
 /// Uninstall path: npm uninstall chains plus managed directory removal.
 /// `scope` lets the user remove only the host CLI, only the ACP adapter, or both.
-/// Must bypass `run_dsh_lifecycle` — its `prepare_dsh_launcher` recreates the
-/// launcher dir.
 pub fn run_partial_template_uninstall(
     template_id: &str,
     scope: UninstallScope,
@@ -464,9 +385,6 @@ pub fn run_partial_template_uninstall(
     let Some(info) = uninstall_info(template_id) else {
         return Ok(());
     };
-    if template_id == "dsh" && matches!(scope, UninstallScope::Acp | UninstallScope::All) {
-        return remove_managed_dir(&dsh_launcher_dir());
-    }
     let payload = info.for_scope(scope);
     if !payload.npm_commands.is_empty() {
         // A fully `|| true` chain would silently succeed when npm is missing.
@@ -528,10 +446,8 @@ pub fn run_template_lifecycle(
         return run_template_uninstall(template_id, app, task_id, proxy_enabled, proxy_url);
     }
 
-    // dsh is a project-dir npm install (not on PATH): Rust writes cordis.yml
-    // and the shell only runs the pinned `npm i` inside the launcher dir.
-    if template_id == "dsh" {
-        return run_dsh_lifecycle(action, app, task_id, proxy_enabled, proxy_url);
+    if template_id == "antigravity-acp" {
+        return install_antigravity(app, task_id, proxy_enabled, proxy_url);
     }
 
     let detect = info
@@ -539,7 +455,13 @@ pub fn run_template_lifecycle(
         .as_deref()
         .unwrap_or(info.command.as_str());
     let host_present = resolve_command(detect).is_some();
-    let acp_present = resolve_command(&info.command).is_some();
+    let acp_path_present = resolve_command(&info.command).is_some();
+    // Bundled adapter tier keeps the ACP layer ready without an npm install;
+    // it only counts when nothing is PATH-installed (PATH always wins) and it
+    // can actually spawn. While active, install/update refresh the host only —
+    // the bundled adapter moves with app releases.
+    let bundled_tier_active = !acp_path_present && super::bundled::bundled_spawnable(template_id);
+    let acp_present = acp_path_present || bundled_tier_active;
     // Same binary for host and ACP (opencode, openclaw, hermes, grok via npx).
     let needs_separate_adapter = info
         .detect_command
@@ -551,11 +473,14 @@ pub fn run_template_lifecycle(
             if needs_separate_adapter {
                 if host_present && !acp_present {
                     adapter_install_command(template_id)?
-                } else if !host_present {
+                } else if !host_present && !bundled_tier_active {
                     chain_host_and_adapter(
                         host_install_command(template_id)?,
                         adapter_install_command(template_id)?,
                     )
+                } else if !host_present {
+                    // Bundled adapter already covers the ACP layer.
+                    host_install_command(template_id)?
                 } else {
                     // Host + adapter both present — treat install as update.
                     update_command(
@@ -563,6 +488,7 @@ pub fn run_template_lifecycle(
                         host_present,
                         acp_present,
                         needs_separate_adapter,
+                        bundled_tier_active,
                     )?
                 }
             } else if host_present {
@@ -576,6 +502,7 @@ pub fn run_template_lifecycle(
             host_present,
             acp_present,
             needs_separate_adapter,
+            bundled_tier_active,
         )?,
         // Diverted to `run_template_uninstall` above.
         ToolLifecycleAction::Uninstall => {
@@ -603,6 +530,243 @@ pub fn run_template_lifecycle(
     )
 }
 
+/// Download and stage the official Antigravity ACP server without invoking a
+/// shell or touching the user's Google login. The release (version + archive)
+/// comes from the ACP registry, so the installer always follows the version
+/// Google publishes; the archive is extracted into a temporary sibling
+/// directory and swapped into place only after both required files are present.
+fn install_antigravity(
+    app: Option<&AppHandle>,
+    task_id: Option<&str>,
+    proxy_enabled: bool,
+    proxy_url: &str,
+) -> Result<(), String> {
+    // Registry lookup before the lifecycle lock: another install must not be
+    // held up by a manifest request, and an unreachable registry fails with a
+    // clear error here instead of installing a guessed version.
+    let release = antigravity::resolve_release(proxy_enabled, proxy_url)?;
+    let _guard = acquire_lifecycle_lock(app, task_id)?;
+    check_lifecycle_cancelled(task_id)?;
+    emit_lifecycle_progress(app, task_id, "agent-lifecycle-download", Some(5));
+    log::info!(
+        target: "agentero::agent",
+        "antigravity install version={} archive={}",
+        release.version,
+        release.archive_url
+    );
+
+    let client = antigravity::build_client(
+        &format!("Agentero/antigravity-acp/{}", release.version),
+        proxy_enabled,
+        proxy_url,
+        Duration::from_secs(180),
+    )?;
+    let mut response = client
+        .get(&release.archive_url)
+        .send()
+        .map_err(|e| format!("Antigravity download failed: {e}"))?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "Antigravity download failed with HTTP {}",
+            response.status()
+        ));
+    }
+
+    let total = response.content_length();
+    let mut archive = Vec::new();
+    let mut buffer = [0_u8; 64 * 1024];
+    loop {
+        let read = response
+            .read(&mut buffer)
+            .map_err(|e| format!("Antigravity download read failed: {e}"))?;
+        if read == 0 {
+            break;
+        }
+        check_lifecycle_cancelled(task_id)?;
+        archive.extend_from_slice(&buffer[..read]);
+        let progress = total.map(|size| ((archive.len() as u64 * 70) / size).min(70) as u8);
+        emit_lifecycle_progress(app, task_id, "agent-lifecycle-download", progress);
+    }
+    if archive.is_empty() {
+        return Err("Antigravity download was empty".to_string());
+    }
+
+    let install_dir = antigravity_install_dir();
+    let parent = install_dir
+        .parent()
+        .ok_or_else(|| "invalid Antigravity install directory".to_string())?;
+    fs::create_dir_all(parent)
+        .map_err(|e| format!("failed to create Agentero install directory: {e}"))?;
+    let staging = parent.join(format!(
+        ".antigravity-acp-{}-{}",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| format!("failed to create staging name: {e}"))?
+            .as_nanos()
+    ));
+    let _ = fs::remove_dir_all(&staging);
+    fs::create_dir_all(&staging)
+        .map_err(|e| format!("failed to create Antigravity staging directory: {e}"))?;
+
+    let extraction = extract_antigravity_zip(&archive, &staging);
+    if let Err(error) = extraction {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    let server_name = antigravity_server_name();
+    if let Err(error) = normalize_antigravity_layout(&staging, server_name) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    if let Err(error) = check_lifecycle_cancelled(task_id) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    if !staging.join(server_name).is_file() || !has_localharness_external(&staging) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(
+            "Antigravity archive is missing the ACP server or localharness_external".to_string(),
+        );
+    }
+    #[cfg(unix)]
+    if let Err(error) = make_antigravity_executables(&staging) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    // The release marker travels with the payload: it is written into the
+    // staging directory, so it appears only for a successful install and is
+    // rolled back with the rest when the swap fails. version_check reads it
+    // instead of running the ACP server.
+    if let Err(error) = antigravity::write_version_marker(&staging, &release.version) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    emit_lifecycle_progress(app, task_id, "agent-lifecycle-install", Some(90));
+    if let Err(error) = replace_antigravity_install(&staging, &install_dir) {
+        let _ = fs::remove_dir_all(&staging);
+        return Err(error);
+    }
+    emit_lifecycle_progress(app, task_id, "agent-lifecycle-install", Some(100));
+    Ok(())
+}
+
+fn replace_antigravity_install(
+    staging: &std::path::Path,
+    install_dir: &std::path::Path,
+) -> Result<(), String> {
+    if !install_dir.exists() {
+        return fs::rename(staging, install_dir)
+            .map_err(|e| format!("failed to install Antigravity ACP server: {e}"));
+    }
+    let backup = install_dir.with_extension(format!(
+        "old-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| format!("failed to create backup name: {e}"))?
+            .as_nanos()
+    ));
+    fs::rename(install_dir, &backup)
+        .map_err(|e| format!("failed to prepare Antigravity update: {e}"))?;
+    if let Err(error) = fs::rename(staging, install_dir) {
+        let _ = fs::rename(&backup, install_dir);
+        return Err(format!("failed to install Antigravity ACP server: {error}"));
+    }
+    let _ = fs::remove_dir_all(backup);
+    Ok(())
+}
+
+fn extract_antigravity_zip(archive: &[u8], dest: &std::path::Path) -> Result<(), String> {
+    let mut zip = zip::ZipArchive::new(std::io::Cursor::new(archive))
+        .map_err(|e| format!("invalid Antigravity archive: {e}"))?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|e| format!("invalid Antigravity archive entry: {e}"))?;
+        let name = std::path::Path::new(entry.name());
+        if name.components().any(|component| {
+            matches!(
+                component,
+                std::path::Component::ParentDir | std::path::Component::RootDir
+            )
+        }) {
+            return Err("Antigravity archive contains an unsafe path".to_string());
+        }
+        let output = dest.join(name);
+        if entry.is_dir() {
+            fs::create_dir_all(&output).map_err(|e| format!("failed to extract archive: {e}"))?;
+            continue;
+        }
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("failed to extract archive: {e}"))?;
+        }
+        let mut file =
+            fs::File::create(&output).map_err(|e| format!("failed to extract archive: {e}"))?;
+        std::io::copy(&mut entry, &mut file)
+            .map_err(|e| format!("failed to extract archive: {e}"))?;
+    }
+    Ok(())
+}
+
+fn normalize_antigravity_layout(root: &std::path::Path, server_name: &str) -> Result<(), String> {
+    if root.join(server_name).is_file() {
+        return Ok(());
+    }
+    let Some(server) = walkdir::WalkDir::new(root)
+        .into_iter()
+        .flatten()
+        .find(|entry| entry.file_type().is_file() && entry.file_name() == server_name)
+    else {
+        return Ok(());
+    };
+    let Some(parent) = server.path().parent() else {
+        return Ok(());
+    };
+    if parent == root {
+        return Ok(());
+    }
+    for entry in fs::read_dir(parent).map_err(|e| format!("failed to normalize archive: {e}"))? {
+        let entry = entry.map_err(|e| format!("failed to normalize archive: {e}"))?;
+        let target = root.join(entry.file_name());
+        fs::rename(entry.path(), target)
+            .map_err(|e| format!("failed to normalize archive: {e}"))?;
+    }
+    Ok(())
+}
+
+fn has_localharness_external(root: &std::path::Path) -> bool {
+    walkdir::WalkDir::new(root)
+        .into_iter()
+        .flatten()
+        .any(|entry| {
+            entry.file_type().is_file()
+                && entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with("localharness_external")
+        })
+}
+
+#[cfg(unix)]
+fn make_antigravity_executables(root: &std::path::Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+    for entry in walkdir::WalkDir::new(root).into_iter().flatten() {
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy();
+        if name == "agy_acp_server.par" || name.starts_with("localharness_external") {
+            let mut permissions = fs::metadata(entry.path())
+                .map_err(|e| format!("failed to inspect extracted file: {e}"))?
+                .permissions();
+            permissions.set_mode(0o755);
+            fs::set_permissions(entry.path(), permissions)
+                .map_err(|e| format!("failed to mark extracted file executable: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
 fn host_update_includes_adapter(template_id: &str) -> bool {
     // Must match any host_update_command branch that already chains the
     // adapter install. Currently only pi does this to keep pi-acp in sync.
@@ -614,6 +778,7 @@ fn update_command(
     host_present: bool,
     acp_present: bool,
     needs_separate_adapter: bool,
+    bundled_tier_active: bool,
 ) -> Result<String, String> {
     if needs_separate_adapter {
         let mut parts = Vec::new();
@@ -623,7 +788,10 @@ fn update_command(
             parts.push(host_install_command(template_id)?);
         }
         let host_update_has_adapter = host_present && host_update_includes_adapter(template_id);
-        if !host_update_has_adapter && (!acp_present || host_present) {
+        // While the bundled tier is the active adapter, update refreshes the
+        // host only; a PATH-installed adapter (bundled_tier_active=false)
+        // restores the chained refresh below.
+        if !bundled_tier_active && !host_update_has_adapter && (!acp_present || host_present) {
             // Always refresh adapter on update when host path exists; install if missing.
             parts.push(adapter_install_command(template_id)?);
         }
@@ -638,7 +806,7 @@ fn update_command(
 fn adapter_install_command(template_id: &str) -> Result<String, String> {
     match template_id {
         "claude-acp" => Ok(CLAUDE_ACP_INSTALL_COMMAND.to_string()),
-        "codex-acp" => Ok("npm i -g @agentclientprotocol/codex-acp@latest".to_string()),
+        "codex-acp" => Ok(CODEX_ACP_INSTALL_COMMAND.to_string()),
         "pi" => Ok(PI_ACP_INSTALL_COMMAND.to_string()),
         _ => Err(format!("no ACP adapter install for {template_id}")),
     }
@@ -650,20 +818,21 @@ fn host_install_command(template_id: &str) -> Result<String, String> {
         match template_id {
             "claude-acp" => Ok("npm i -g @anthropic-ai/claude-code@latest".to_string()),
             "codex-acp" => Ok("npm i -g @openai/codex@latest".to_string()),
-            "opencode" => Ok("npm i -g opencode-ai@latest".to_string()),
+            "opencode" => Ok(OPENCODE_NPM_INSTALL_COMMAND.to_string()),
             "openclaw" => Ok("npm i -g openclaw@latest".to_string()),
             "hermes" => Ok(hermes_install_windows_command()),
             "pi" => Ok(PI_HOST_INSTALL_COMMAND.to_string()),
-            "dsh" => Ok(dsh_npm_install_command()),
+            "dsh" => Ok(DSH_INSTALL_COMMAND.to_string()),
             "kimi-code" => Ok(chain_or(
                 &kimi_install_windows_command(),
                 KIMI_NPM_INSTALL_COMMAND,
             )),
+            "minimax-code" => Ok(MINIMAX_CODE_INSTALL_COMMAND.to_string()),
             "grok-build" => Ok(chain_or(
                 &grok_install_windows_command(),
                 "npm i -g @xai-official/grok@latest",
             )),
-            "zcode" => Ok("npm i -g zcode-acp-server@latest".to_string()),
+            "zcode" => Ok(ZCODE_ACP_INSTALL_COMMAND.to_string()),
             _ => Err(format!("no host install for {template_id}")),
         }
     }
@@ -677,13 +846,14 @@ fn host_install_command(template_id: &str) -> Result<String, String> {
             "codex-acp" => Ok("npm i -g @openai/codex@latest".to_string()),
             "opencode" => Ok(chain_or(
                 OPENCODE_INSTALL_UNIX,
-                "npm i -g opencode-ai@latest",
+                OPENCODE_NPM_INSTALL_COMMAND,
             )),
             "openclaw" => Ok("npm i -g openclaw@latest".to_string()),
             "hermes" => Ok(HERMES_INSTALL_UNIX.to_string()),
             "pi" => Ok(PI_HOST_INSTALL_COMMAND.to_string()),
-            "dsh" => Ok(dsh_npm_install_command()),
+            "dsh" => Ok(DSH_INSTALL_COMMAND.to_string()),
             "kimi-code" => Ok(chain_or(KIMI_INSTALL_UNIX, KIMI_NPM_INSTALL_COMMAND)),
+            "minimax-code" => Ok(MINIMAX_CODE_INSTALL_COMMAND.to_string()),
             "grok-build" => Ok(chain_or(
                 GROK_INSTALL_UNIX,
                 "npm i -g @xai-official/grok@latest",
@@ -737,6 +907,7 @@ fn host_update_command(template_id: &str) -> Result<String, String> {
         // selection), so silent update re-runs the idempotent official installer
         // (latest version) with the npm install as fallback.
         "kimi-code" => Ok(host_install_command(template_id)?),
+        "minimax-code" => Ok(MINIMAX_CODE_INSTALL_COMMAND.to_string()),
         "hermes" => {
             #[cfg(target_os = "windows")]
             {
@@ -750,13 +921,13 @@ fn host_update_command(template_id: &str) -> Result<String, String> {
         "opencode" => {
             #[cfg(target_os = "windows")]
             {
-                Ok("npm i -g opencode-ai@latest".to_string())
+                Ok(OPENCODE_NPM_INSTALL_COMMAND.to_string())
             }
             #[cfg(not(target_os = "windows"))]
             {
                 Ok(chain_or(
                     "opencode upgrade",
-                    &chain_or(OPENCODE_INSTALL_UNIX, "npm i -g opencode-ai@latest"),
+                    &chain_or(OPENCODE_INSTALL_UNIX, OPENCODE_NPM_INSTALL_COMMAND),
                 ))
             }
         }
@@ -848,9 +1019,9 @@ npm i -g @anthropic-ai/claude-code@latest
 {claude_acp}
 # Codex + ACP adapter
 npm i -g @openai/codex@latest
-npm i -g @agentclientprotocol/codex-acp@latest
+{codex_acp}
 # OpenCode
-npm i -g opencode-ai@latest
+npm i -g @opencode/cli@latest
 # OpenClaw
 npm i -g openclaw@latest
 # Pi + ACP adapter
@@ -864,15 +1035,19 @@ npm i -g openclaw@latest
 # Kimi Code
 {kimi}
 # (or) npm i -g @moonshot-ai/kimi-code@latest
-# Dsh (DeepSeek Harness ACP demo — Agentero writes cordis.yml + runs this)
+# MiniMax Code
+{minimax}
+# Dsh (DeepSeek Harness, ACP via dsh --profile acp)
 {dsh}"#,
             claude_acp = CLAUDE_ACP_INSTALL_COMMAND,
+            codex_acp = CODEX_ACP_INSTALL_COMMAND,
             pi_host = PI_HOST_INSTALL_COMMAND,
             pi_acp = PI_ACP_INSTALL_COMMAND,
             hermes = hermes_install_windows_command(),
             grok = grok_install_windows_command(),
             kimi = kimi_install_windows_command(),
-            dsh = dsh_npm_install_command(),
+            minimax = MINIMAX_CODE_INSTALL_COMMAND,
+            dsh = DSH_INSTALL_COMMAND,
         )
     }
     #[cfg(not(target_os = "windows"))]
@@ -883,9 +1058,9 @@ npm i -g openclaw@latest
 {claude_acp}
 # Codex + ACP adapter
 npm i -g @openai/codex@latest
-npm i -g @agentclientprotocol/codex-acp@latest
+{codex_acp}
 # OpenCode
-{opencode} || npm i -g opencode-ai@latest
+{opencode} || npm i -g @opencode/cli@latest
 # OpenClaw
 npm i -g openclaw@latest
 # Pi + ACP adapter
@@ -897,17 +1072,21 @@ npm i -g openclaw@latest
 {grok} || npm i -g @xai-official/grok@latest
 # Kimi Code
 {kimi} || npm i -g @moonshot-ai/kimi-code@latest
-# Dsh (DeepSeek Harness ACP demo — Agentero writes cordis.yml + runs this)
+# MiniMax Code
+{minimax}
+# Dsh (DeepSeek Harness, ACP via dsh --profile acp)
 {dsh}"#,
             claude_host = CLAUDE_INSTALL_UNIX,
             claude_acp = CLAUDE_ACP_INSTALL_COMMAND,
+            codex_acp = CODEX_ACP_INSTALL_COMMAND,
             opencode = OPENCODE_INSTALL_UNIX,
             pi_host = PI_HOST_INSTALL_COMMAND,
             pi_acp = PI_ACP_INSTALL_COMMAND,
             hermes = HERMES_INSTALL_UNIX,
             grok = GROK_INSTALL_UNIX,
             kimi = KIMI_INSTALL_UNIX,
-            dsh = dsh_npm_install_command(),
+            minimax = MINIMAX_CODE_INSTALL_COMMAND,
+            dsh = DSH_INSTALL_COMMAND,
         )
     }
 }
@@ -930,6 +1109,7 @@ fn run_tool_lifecycle_silently(
         let mut cmd = Command::new("bash");
         cmd.arg("-c").arg(script);
         apply_proxy_env_to_command(&mut cmd, proxy_enabled, proxy_url);
+        apply_npm_cache_env(&mut cmd, effective_npm_cache_dir().as_deref());
         if let Some(login_path) = login_shell_path() {
             let inherited = std::env::var("PATH").unwrap_or_default();
             cmd.env("PATH", merge_path_segments(&login_path, &inherited));
@@ -952,6 +1132,7 @@ fn run_tool_lifecycle_silently(
             .env("PATH", merged_path)
             .creation_flags(CREATE_NO_WINDOW);
         apply_proxy_env_to_command(&mut cmd, proxy_enabled, proxy_url);
+        apply_npm_cache_env(&mut cmd, effective_npm_cache_dir().as_deref());
         let output = run_command_with_cancellation(cmd, app, task_id, phase);
         let _ = fs::remove_file(&bat_file);
         check_lifecycle_cancelled(task_id)?;
@@ -975,6 +1156,98 @@ fn apply_proxy_env_to_command(cmd: &mut Command, proxy_enabled: bool, proxy_url:
             }
         }
     }
+}
+
+/// Isolate managed installs from an unwritable system npm cache (the classic
+/// Windows `npm error EPERM ... cache` failure). npm honors `npm_config_cache`,
+/// so the child gets an Agentero-owned cache directory when the effective
+/// system cache cannot be written. A healthy cache is left untouched so users
+/// keep their warm download cache.
+fn apply_npm_cache_env(cmd: &mut Command, default_cache: Option<&std::path::Path>) {
+    if npm_cache_override(default_cache).is_none() {
+        return;
+    }
+    let managed = managed_npm_cache_dir();
+    if fs::create_dir_all(&managed).is_ok() {
+        cmd.env("npm_config_cache", managed);
+    }
+}
+
+/// None when `default_cache` is usable; Some(managed dir) when managed
+/// installs must bypass an unwritable system cache.
+fn npm_cache_override(default_cache: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
+    if default_cache.is_some_and(npm_cache_writable) {
+        return None;
+    }
+    Some(managed_npm_cache_dir())
+}
+
+/// The cache root may still be user-writable while a root-owned `_cacache`
+/// entry rejects writes: macOS `sudo` keeps `$HOME`, so one `sudo npm` run
+/// creates `_cacache/tmp`, `index-v5`, `content-v2` owned by root inside the
+/// user's own `~/.npm`. A root-only probe passes, no override happens, and npm
+/// then fails mid-install with the intermittent
+/// `EPERM: operation not permitted` users see "sometimes". Check the subtree
+/// npm actually writes into, not just the root.
+fn npm_cache_writable(dir: &std::path::Path) -> bool {
+    if !dir_is_writable(dir) {
+        return false;
+    }
+    let cacache = dir.join("_cacache");
+    if !cacache.is_dir() {
+        return true;
+    }
+    dir_is_writable(&cacache)
+        && std::fs::read_dir(&cacache).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .filter(|entry| entry.path().is_dir())
+                .all(|entry| dir_is_writable(&entry.path()))
+        })
+}
+
+/// npm's effective cache for this user: an explicit `npm_config_cache` wins,
+/// then the platform default (`npm-cache` under %LOCALAPPDATA% on Windows,
+/// `~/.npm` elsewhere). `.npmrc` overrides need an npm spawn to resolve; a
+/// healthy probe of the default then simply keeps today's behavior.
+fn effective_npm_cache_dir() -> Option<std::path::PathBuf> {
+    if let Ok(from_env) = std::env::var("npm_config_cache") {
+        if !from_env.trim().is_empty() {
+            return Some(std::path::PathBuf::from(from_env));
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        dirs::data_local_dir().map(|d| d.join("npm-cache"))
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        dirs::home_dir().map(|d| d.join(".npm"))
+    }
+}
+
+fn managed_npm_cache_dir() -> std::path::PathBuf {
+    dirs::data_local_dir()
+        .or_else(dirs::home_dir)
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("Agentero")
+        .join("npm-cache")
+}
+
+/// True when `dir` exists (or can be created) and accepts a new file.
+fn dir_is_writable(dir: &std::path::Path) -> bool {
+    if fs::create_dir_all(dir).is_err() {
+        return false;
+    }
+    let probe = dir.join(".agentero-write-probe");
+    let writable = fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&probe)
+        .is_ok();
+    let _ = fs::remove_file(&probe);
+    writable
 }
 
 fn acquire_lifecycle_lock(
@@ -1240,8 +1513,79 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+    fn antigravity_lifecycle_has_registry_platform_and_managed_uninstall() {
+        // The registry manifest, not Agentero, decides version and archive URL
+        // (parsed in `registry::antigravity`).
+        assert!(antigravity::current_platform_key().is_some());
+        let info = uninstall_info("antigravity-acp").expect("antigravity uninstall");
+        assert!(info.agent.npm_commands.is_empty());
+        assert_eq!(
+            info.acp.dirs,
+            vec![antigravity_install_dir().display().to_string()]
+        );
+        assert!(template_info("antigravity-acp")
+            .expect("antigravity template")
+            .command
+            .ends_with(antigravity_server_name()));
+    }
+
+    #[test]
+    fn antigravity_zip_extraction_rejects_traversal_and_keeps_runtime_files() {
+        use std::io::Write;
+        let mut bytes = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut bytes));
+            let options = zip::write::SimpleFileOptions::default();
+            writer.start_file("agy_acp_server.par", options).unwrap();
+            writer.write_all(b"server").unwrap();
+            writer.start_file("localharness_external", options).unwrap();
+            writer.write_all(b"helper").unwrap();
+            writer.finish().unwrap();
+        }
+        let root = tempfile::tempdir().unwrap();
+        extract_antigravity_zip(&bytes, root.path()).unwrap();
+        assert!(root.path().join("agy_acp_server.par").is_file());
+        assert!(has_localharness_external(root.path()));
+
+        let mut unsafe_bytes = Vec::new();
+        {
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(&mut unsafe_bytes));
+            let options = zip::write::SimpleFileOptions::default();
+            writer.start_file("../escape", options).unwrap();
+            writer.write_all(b"bad").unwrap();
+            writer.finish().unwrap();
+        }
+        assert!(extract_antigravity_zip(&unsafe_bytes, root.path()).is_err());
+    }
+
+    #[test]
+    fn antigravity_install_swap_replaces_managed_copy() {
+        let root = tempfile::tempdir().unwrap();
+        let install = root.path().join("antigravity-acp");
+        let staging = root.path().join(".staging");
+        std::fs::create_dir_all(&install).unwrap();
+        std::fs::create_dir_all(&staging).unwrap();
+        std::fs::write(install.join("version"), b"old").unwrap();
+        std::fs::write(staging.join("version"), b"new").unwrap();
+        antigravity::write_version_marker(&staging, "1.2.0").unwrap();
+        replace_antigravity_install(&staging, &install).unwrap();
+        assert_eq!(std::fs::read(install.join("version")).unwrap(), b"new");
+        // The release marker travels with the swapped payload, so the Settings
+        // version check sees it without running the server.
+        assert_eq!(
+            antigravity::installed_version_in(&install).as_deref(),
+            Some("1.2.0")
+        );
+        assert!(!staging.exists());
+    }
+
+    #[test]
     fn host_install_nonempty() {
         for id in LIFECYCLE_TEMPLATES {
+            if *id == "antigravity-acp" {
+                continue;
+            }
             let cmd = host_install_command(id).expect(id);
             assert!(!cmd.is_empty(), "{id}");
             assert!(
@@ -1253,6 +1597,37 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_has_no_shell_install_command() {
+        assert!(template_info("antigravity-acp")
+            .expect("antigravity template")
+            .install_command
+            .is_none());
+        assert!(host_install_command("antigravity-acp").is_err());
+    }
+
+    #[test]
+    fn bundled_tier_update_refreshes_host_only() {
+        // Bundled tier active (no PATH adapter): update refreshes the host and
+        // must not npm-install an adapter over the bundled one.
+        let update =
+            update_command("claude-acp", true, true, true, true).expect("claude-acp update");
+        assert!(
+            !update.contains("claude-agent-acp"),
+            "bundled tier active: adapter refresh not expected: {update}"
+        );
+        assert!(
+            update.contains("claude update") || update.contains("@anthropic-ai/claude-code"),
+            "host update expected: {update}"
+        );
+        // PATH adapter installed (bundled inactive): the adapter refresh returns.
+        let chained = update_command("claude-acp", true, true, true, false).unwrap();
+        assert!(
+            chained.contains("claude-agent-acp"),
+            "PATH tier active: adapter refresh expected: {chained}"
+        );
+    }
+
+    #[test]
     fn adapter_commands_for_acp_templates() {
         assert!(adapter_install_command("claude-acp")
             .unwrap()
@@ -1261,6 +1636,28 @@ mod tests {
             .unwrap()
             .contains("codex-acp"));
         assert!(adapter_install_command("pi").unwrap().contains("pi-acp"));
+    }
+
+    /// Codex was the last adapter installed into the global npm prefix on Unix,
+    /// where a root-owned prefix makes `npm i -g` fail with EPERM. Install and
+    /// uninstall must both target the user prefix there (Windows keeps the
+    /// plain global install, matching claude/pi/zcode/dsh).
+    #[test]
+    fn codex_acp_commands_match_the_other_adapters() {
+        let install = adapter_install_command("codex-acp").unwrap();
+        let codex = uninstall_info("codex-acp").unwrap();
+        let uninstall = codex.acp.npm_commands[0].as_str();
+        let claude = adapter_install_command("claude-acp").unwrap();
+        assert_eq!(
+            install.contains("--prefix"),
+            claude.contains("--prefix"),
+            "codex-acp must follow the claude-acp prefix pattern: {install}"
+        );
+        assert_eq!(
+            install.contains("--prefix"),
+            uninstall.contains("--prefix"),
+            "codex-acp uninstall must mirror the install prefix: {uninstall}"
+        );
     }
 
     #[test]
@@ -1276,7 +1673,7 @@ mod tests {
             "pi host update must also refresh pi-acp"
         );
 
-        let full_update = update_command("pi", true, true, true).expect("pi full update");
+        let full_update = update_command("pi", true, true, true, false).expect("pi full update");
         assert_eq!(
             full_update.matches("pi-acp").count(),
             1,
@@ -1284,7 +1681,7 @@ mod tests {
         );
 
         let install_when_missing =
-            update_command("pi", false, false, true).expect("pi install when missing");
+            update_command("pi", false, false, true, false).expect("pi install when missing");
         assert_eq!(
             install_when_missing.matches("pi-acp").count(),
             1,
@@ -1305,14 +1702,44 @@ mod tests {
         assert!(text.contains("Dsh"));
     }
 
+    /// PowerShell `-EncodedCommand` payloads hide the script inside base64, so
+    /// decode them back to text for assertions.
+    fn decode_encoded_commands(cmd: &str) -> String {
+        use base64::{engine::general_purpose::STANDARD, Engine as _};
+        cmd.split("-EncodedCommand ")
+            .skip(1)
+            .filter_map(|rest| {
+                let bytes = STANDARD.decode(rest.split_whitespace().next()?).ok()?;
+                let units: Vec<u16> = bytes
+                    .as_chunks::<2>()
+                    .0
+                    .iter()
+                    .copied()
+                    .map(u16::from_le_bytes)
+                    .collect();
+                Some(String::from_utf16_lossy(&units))
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     #[test]
     fn kimi_install_prefers_official_script_with_npm_fallback() {
         let cmd = host_install_command("kimi-code").expect("kimi install");
+        // Windows runs the official script through an EncodedCommand payload.
+        let script = if cfg!(target_os = "windows") {
+            decode_encoded_commands(&cmd)
+        } else {
+            cmd.clone()
+        };
         assert!(
-            cmd.contains("code.kimi.com/kimi-code"),
+            script.contains("code.kimi.com/kimi-code"),
             "kimi install must use the official script"
         );
-        assert!(!cmd.contains("curl | bash"), "must not pipe curl to bash");
+        assert!(
+            !script.contains("curl | bash"),
+            "must not pipe curl to bash"
+        );
         assert!(
             cmd.contains("@moonshot-ai/kimi-code"),
             "kimi install must fall back to npm"
@@ -1322,12 +1749,30 @@ mod tests {
     }
 
     #[test]
-    fn dsh_lifecycle_command_pins_packages() {
+    fn dsh_install_uses_global_npm_package() {
         let cmd = host_install_command("dsh").expect("dsh install");
-        for pkg in DSH_ACP_PACKAGES {
-            assert!(cmd.contains(pkg), "missing {pkg}");
-        }
+        assert!(cmd.contains("@deepseek-ai/dsh@latest"), "{cmd}");
+        assert!(!cmd.contains("dsh-acp-demo"), "{cmd}");
         assert!(!cmd.contains("curl"));
+        // Update re-runs the idempotent npm install (no official self-update).
+        let update = host_update_command("dsh").expect("dsh update");
+        assert_eq!(update, cmd);
+    }
+
+    #[test]
+    fn minimax_install_allows_native_sqlite_dependencies() {
+        let cmd = host_install_command("minimax-code").expect("MiniMax Code install");
+        assert!(cmd.contains("@minimax-ai/code@latest"), "{cmd}");
+        assert!(cmd.contains("--ignore-scripts=false"), "{cmd}");
+        assert!(cmd.contains("--include=optional"), "{cmd}");
+        assert!(
+            cmd.contains("--allow-scripts=@minimax-ai/code,better-sqlite3"),
+            "{cmd}"
+        );
+        assert!(cmd.contains("--foreground-scripts"), "{cmd}");
+
+        let update = host_update_command("minimax-code").expect("MiniMax Code update");
+        assert_eq!(update, cmd);
     }
 
     #[test]
@@ -1390,7 +1835,16 @@ mod tests {
     #[test]
     fn uninstall_commands_mirror_install_packages() {
         let opencode = uninstall_info("opencode").unwrap();
-        assert!(opencode.agent.npm_commands[0].contains("opencode-ai"));
+        assert!(opencode
+            .agent
+            .npm_commands
+            .iter()
+            .any(|c| c.contains("@opencode/cli")));
+        assert!(opencode
+            .agent
+            .npm_commands
+            .iter()
+            .any(|c| c.contains("opencode-ai")));
         let codex = uninstall_info("codex-acp").unwrap();
         assert!(codex
             .agent
@@ -1436,9 +1890,16 @@ mod tests {
     #[test]
     fn uninstall_dirs_for_managed_installs() {
         let dsh = uninstall_info("dsh").unwrap();
-        assert!(dsh.agent.npm_commands.is_empty());
-        assert!(dsh.acp.npm_commands.is_empty());
-        assert_eq!(dsh.acp.dirs, vec![dsh_launcher_dir().display().to_string()]);
+        assert!(dsh
+            .agent
+            .npm_commands
+            .iter()
+            .any(|c| c.contains("@deepseek-ai/dsh")));
+        // The acp dir entry only cleans up the retired dsh-acp-demo launcher.
+        assert_eq!(
+            dsh.acp.dirs,
+            vec![legacy_dsh_launcher_dir().display().to_string()]
+        );
         let kimi = uninstall_info("kimi-code").unwrap();
         assert_eq!(
             kimi.agent.dirs,
@@ -1507,6 +1968,73 @@ mod tests {
         assert!(!stdout.contains("HTTP_PROXY"));
         assert!(!stdout.contains("HTTPS_PROXY"));
         assert!(!stdout.contains("ALL_PROXY"));
+    }
+
+    #[test]
+    fn npm_cache_env_keeps_a_writable_default() {
+        let writable = std::env::temp_dir().join("agentero-npm-cache-test-ok");
+        fs::create_dir_all(&writable).expect("create probe dir");
+        let mut cmd = std::process::Command::new("env");
+        apply_npm_cache_env(&mut cmd, Some(&writable));
+        let output = cmd.output().expect("run env");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            !stdout.contains("npm_config_cache="),
+            "a healthy cache must be left alone: {stdout}"
+        );
+        let _ = fs::remove_dir_all(&writable);
+    }
+
+    #[test]
+    fn npm_cache_override_bypasses_an_unwritable_default() {
+        // A regular file can never host a cache dir, so create_dir_all fails.
+        let file = std::env::temp_dir().join("agentero-npm-cache-test-file");
+        fs::write(&file, b"x").expect("write probe file");
+        assert!(!dir_is_writable(&file));
+        let managed = npm_cache_override(Some(&file)).expect("override expected");
+        assert!(managed.ends_with("npm-cache"), "{managed:?}");
+        // Unknown default (no home/data dir): fail safe to the managed cache.
+        assert!(npm_cache_override(None).is_some());
+        let _ = fs::remove_file(&file);
+    }
+
+    #[test]
+    fn npm_cache_env_injects_managed_cache_when_default_unwritable() {
+        let file = std::env::temp_dir().join("agentero-npm-cache-test-file-2");
+        fs::write(&file, b"x").expect("write probe file");
+        let mut cmd = std::process::Command::new("env");
+        apply_npm_cache_env(&mut cmd, Some(&file));
+        let output = cmd.output().expect("run env");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("npm_config_cache="),
+            "unwritable default must be replaced: {stdout}"
+        );
+        let _ = fs::remove_file(&file);
+    }
+
+    /// A writable cache root with an unwritable `_cacache` child (what one
+    /// `sudo npm` run leaves behind on macOS, where sudo keeps `$HOME`): npm
+    /// fails mid-install even though the root probe passes, so the override
+    /// must look one level deeper. Unix-only: the simulation chmods a dir.
+    #[cfg(unix)]
+    #[test]
+    fn npm_cache_override_catches_root_owned_cacache_entries() {
+        use std::os::unix::fs::PermissionsExt;
+        let cache = std::env::temp_dir().join("agentero-npm-cache-test-poisoned");
+        let _ = fs::remove_dir_all(&cache);
+        let cacache = cache.join("_cacache");
+        let tmp = cacache.join("tmp");
+        fs::create_dir_all(&tmp).expect("create probe cache");
+        assert!(
+            npm_cache_override(Some(&cache)).is_none(),
+            "a healthy cache must not be overridden"
+        );
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o000)).expect("chmod tmp to 000");
+        let managed = npm_cache_override(Some(&cache)).expect("poisoned cache must be overridden");
+        assert!(managed.ends_with("npm-cache"), "{managed:?}");
+        fs::set_permissions(&tmp, fs::Permissions::from_mode(0o755)).expect("restore tmp");
+        let _ = fs::remove_dir_all(&cache);
     }
 }
 

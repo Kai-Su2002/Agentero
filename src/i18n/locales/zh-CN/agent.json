@@ -20,12 +20,6 @@
 			"rejectAlways": "始终拒绝"
 		}
 	},
-	"elicitation": {
-		"title": "Agent 需要你的选择",
-		"submit": "提交回答",
-		"cancel": "取消"
-	},
-	"missing": "（缺失）",
 	"switchAgent": "切换 ACP Agent",
 	"configBar": {
 		"label": "模型与会话选项"
@@ -43,8 +37,6 @@
 		"description": "此对话中最近的 ACP 会话。",
 		"empty": "暂无会话。",
 		"restoring": "正在恢复会话……",
-		"includeExternal": "外部会话",
-		"includeExternalToggle": "显示所有会话",
 		"status": {
 			"running": "运行中",
 			"completed": "已完成",
@@ -53,7 +45,6 @@
 		}
 	},
 	"tabs": {
-		"open": "打开会话 {{number}}",
 		"new": "新建会话"
 	},
 	"agentMenu": {
@@ -63,10 +54,15 @@
 	},
 	"composer": {
 		"placeholder": "今天想做些什么？",
-		"interruptHint": "按 Esc 中止当前输出",
 		"queueLabel": "等待发送",
 		"queueRemove": "从队列移除",
 		"contextInstruction": "请在回答相关问题前读取以下知识库文件：",
+		"plazaContextInstruction": "以下是通过 @ 引用的广场条目（尚未入库）：",
+		"plazaEntryUnavailable": "条目元数据不可用（已不在广场缓存中），可请用户从广场重新引用。",
+		"plazaScratchInstruction": "全文已提供为 Vault 之外的只读临时副本，请直接读取上述文件；除非用户明确要求入库，不要下载论文或向 Vault 写入任何内容。",
+		"plazaCollectionTitle": "今日推荐（{{count}} 篇）",
+		"plazaCollectionInstruction": "以上是今日推荐论文的摘要目录。请第一步仅凭摘要完成筛选：只需筛选 / 对比即可回答时，直接给出最终报告；仅当必须深读才能回答时，在回复的第一行输出「NEED_FULLTEXT <arXiv id> …」（最多 {{max}} 篇）然后停止等待，系统会自动提供所选论文的全文；不要自行联网检索或下载这些论文。",
+		"plazaFulltextFollowup": "全文已取回（见上下文），请基于它们完成最终报告。",
 		"resizeHandle": "调整输入区高度",
 		"removeContext": "从上下文移除 {{path}}",
 		"removeSkill": "从上下文移除 ${{skill}}",
@@ -105,7 +101,6 @@
 		"mentionEnterFolder": "进入 {{name}}",
 		"mentionBack": "返回上级目录",
 		"mentionEmptyFolder": "此文件夹中没有可选项",
-		"fast": "快速",
 		"fastToggle": "切换快速模式",
 		"collaborationTooltip": "会话模式",
 		"collaboration": {
@@ -162,7 +157,6 @@
 		"expand": "展开问卷"
 	},
 	"citation": {
-		"vaultPath": "Agent 引用的知识库路径",
 		"resolveFailed": "无法打开引用：{{source}}",
 		"figureNotFound": "找不到 Figure：{{source}}",
 		"sectionNotFound": "找不到章节：{{source}}",
@@ -180,15 +174,12 @@
 		"addToFavorites": "添加到收藏",
 		"removeFromFavorites": "取消收藏",
 		"selectTooltip": "选择模型 (ACP)",
-		"reportedTooltip": "Agent 上报模型后将在此显示",
 		"customOrReportedTooltip": "搜索或输入自定义模型 id（第三方 / 中转）",
 		"loading": "加载中……",
 		"button": "模型",
-		"searchPlaceholder": "搜索模型……",
 		"searchOrCustomPlaceholder": "搜索或输入模型 id……",
 		"customGroup": "自定义",
 		"useCustom": "使用 “{{id}}”",
-		"emptyNone": "暂无模型。先运行一次，让 ACP Agent 上报可用模型。",
 		"emptyNoneCustom": "暂无模型。可在上方输入模型 id 以使用第三方模型。",
 		"emptyNoMatch": "无匹配项。输入完整模型 id 可作为自定义模型使用。"
 	},

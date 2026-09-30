@@ -174,6 +174,18 @@ function AgentCatalogEntryRow({
 							</StatusBadge>
 						)}
 						{/* Layer 2: ACP entrypoint / probe */}
+						{entry.acpBundled ? (
+							<StatusBadge
+								// Provenance, not status: the bundled tier exists in app
+								// resources and only serves when PATH has no adapter.
+								tone="muted"
+								title={t("agent.badges.acpBundledTitle", {
+									version: entry.acpBundledVersion ?? "—",
+								})}
+							>
+								{t("agent.badges.acpBundled")}
+							</StatusBadge>
+						) : null}
 						{!entry.acpCommandAvailable ? (
 							<StatusBadge
 								tone={entry.binaryAvailable ? "warn" : "muted"}
@@ -469,6 +481,9 @@ function AgentCustomAgentRow({
 			</div>
 			{editing ? (
 				<div className="space-y-2.5 px-3.5 pb-3">
+					<p className="text-muted-foreground text-xs leading-relaxed">
+						{t("agent.form.hint")}
+					</p>
 					<div className="space-y-1">
 						<Label className="font-normal text-sm">
 							{t("agent.form.name")}

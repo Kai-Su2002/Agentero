@@ -38,12 +38,51 @@ import type { PdfAskThread } from "@/lib/pdf/ask/types";
 import { marksDir } from "@/lib/pdf/selection";
 import { isRecentSelfWrite } from "@/lib/pdf/selection/marks-io";
 import { listPdfTranslates } from "@/lib/pdf/translate";
+
+/**
+ * Disk refresh replaces the trace list. A click-crop is held in memory until
+ * the user commits a note, so a refresh must not drop that unsaved draft.
+ */
+export function keepUnsavedVisualDrafts(
+	prev: PdfVisualSessionTrace[],
+	incoming: PdfVisualSessionTrace[],
+): PdfVisualSessionTrace[] {
+	if (prev.length === 0) return incoming;
+	const incomingIds = new Set(incoming.map((trace) => trace.id));
+	const pending = prev.filter(
+		(trace) =>
+			!incomingIds.has(trace.id) &&
+			Boolean(trace.image?.data) &&
+			!trace.image?.path,
+	);
+	return pending.length === 0 ? incoming : [...pending, ...incoming];
+}
+
 import type { PdfTranslateRecord } from "@/lib/pdf/translate/types";
 import { listenVaultFileChangedGated } from "@/lib/vault/file-change-gate";
 import { normalizePathKey } from "@/lib/vault/path";
 
 /** One Agent turn can rewrite several mark files; coalesce the burst. */
 const MARKS_REFRESH_BURST_MS = 200;
+
+/** Preserve live results and pending deletions while accepting other disk edits. */
+export function mergeTranslateRefresh(
+	current: PdfTranslateRecord[],
+	incoming: PdfTranslateRecord[],
+	protectedIds: ReadonlySet<string>,
+	recordsAtStart: PdfTranslateRecord[] = current,
+): PdfTranslateRecord[] {
+	const protectedNow = new Set(protectedIds);
+	const before = new Map(recordsAtStart.map((record) => [record.id, record]));
+	const after = new Map(current.map((record) => [record.id, record]));
+	for (const id of new Set([...before.keys(), ...after.keys()])) {
+		if (before.get(id) !== after.get(id)) protectedNow.add(id);
+	}
+	return [
+		...current.filter((record) => protectedNow.has(record.id)),
+		...incoming.filter((record) => !protectedNow.has(record.id)),
+	];
+}
 
 export type UsePdfMarksIoOptions = {
 	/** Sidecar root for `marks/` (null for loose PDFs — nothing is persisted). */
@@ -64,13 +103,18 @@ export type PdfMarksIo = {
 	setThreads: Dispatch<SetStateAction<PdfAskThread[]>>;
 	translates: PdfTranslateRecord[];
 	translatesRef: RefObject<PdfTranslateRecord[]>;
+	/** Local runs and pending writes take precedence over disk refreshes. */
+	protectedTranslateIdsRef: RefObject<Set<string>>;
 	setTranslates: Dispatch<SetStateAction<PdfTranslateRecord[]>>;
 	visualTraces: PdfVisualSessionTrace[];
 	visualTracesRef: RefObject<PdfVisualSessionTrace[]>;
 	setVisualTraces: Dispatch<SetStateAction<PdfVisualSessionTrace[]>>;
 	/** Replace-or-prepend by id (newest first); no disk write. */
 	upsertThread: (thread: PdfAskThread) => void;
-	upsertTranslate: (rec: PdfTranslateRecord) => void;
+	upsertTranslate: (
+		rec: PdfTranslateRecord,
+		options?: { preservePinned?: boolean },
+	) => PdfTranslateRecord;
 	upsertVisualTrace: (trace: PdfVisualSessionTrace) => void;
 };
 
@@ -86,6 +130,7 @@ export function usePdfMarksIo({
 	const threadsRef = useRef(threads);
 	threadsRef.current = threads;
 	const translatesRef = useRef(translates);
+	const protectedTranslateIdsRef = useRef(new Set<string>());
 	translatesRef.current = translates;
 	const visualTracesRef = useRef(visualTraces);
 	visualTracesRef.current = visualTraces;
@@ -101,15 +146,28 @@ export function usePdfMarksIo({
 		});
 	}, []);
 
-	const upsertTranslate = useCallback((rec: PdfTranslateRecord) => {
-		setTranslates((prev) => {
+	const upsertTranslate = useCallback(
+		(
+			rec: PdfTranslateRecord,
+			{ preservePinned = true }: { preservePinned?: boolean } = {},
+		): PdfTranslateRecord => {
+			const prev = translatesRef.current;
 			const i = prev.findIndex((x) => x.id === rec.id);
-			if (i < 0) return [rec, ...prev];
-			const next = [...prev];
-			next[i] = rec;
-			return next;
-		});
-	}, []);
+			const existing = i >= 0 ? prev[i] : null;
+			const nextRecord = {
+				...rec,
+				pinned: preservePinned ? (existing?.pinned ?? rec.pinned) : rec.pinned,
+			};
+			const next =
+				i < 0
+					? [nextRecord, ...prev]
+					: prev.map((item, index) => (index === i ? nextRecord : item));
+			translatesRef.current = next;
+			setTranslates(next);
+			return nextRecord;
+		},
+		[],
+	);
 
 	const upsertVisualTrace = useCallback((trace: PdfVisualSessionTrace) => {
 		setVisualTraces((prev) => {
@@ -124,6 +182,8 @@ export function usePdfMarksIo({
 	useEffect(() => {
 		if (marksLoadedRef.current || !paperAbsPath) return;
 		marksLoadedRef.current = true;
+		const protectedAtStart = new Set(protectedTranslateIdsRef.current);
+		const recordsAtStart = translatesRef.current;
 		void (async () => {
 			const [ts, trs, traces] = await Promise.all([
 				listPdfAskThreads(paperAbsPath),
@@ -131,8 +191,17 @@ export function usePdfMarksIo({
 				listPdfVisualTraces(paperAbsPath),
 			]);
 			if (ts.length) setThreads(ts);
-			if (trs.length) setTranslates(trs);
-			if (traces.length) setVisualTraces(traces);
+			setTranslates((prev) =>
+				mergeTranslateRefresh(
+					prev,
+					trs,
+					new Set([...protectedAtStart, ...protectedTranslateIdsRef.current]),
+					recordsAtStart,
+				),
+			);
+			if (traces.length) {
+				setVisualTraces((prev) => keepUnsavedVisualDrafts(prev, traces));
+			}
 		})();
 	}, [paperAbsPath]);
 
@@ -152,6 +221,8 @@ export function usePdfMarksIo({
 		if (!paperAbsPath || !marksLoadedRef.current || !isActive) return;
 		let cancelled = false;
 		const refresh = () => {
+			const protectedAtStart = new Set(protectedTranslateIdsRef.current);
+			const recordsAtStart = translatesRef.current;
 			void Promise.all([
 				listPdfAskThreads(paperAbsPath),
 				listPdfVisualTraces(paperAbsPath),
@@ -169,8 +240,19 @@ export function usePdfMarksIo({
 				}
 				lastMarksPollRef.current = fingerprint;
 				setThreads(asks);
-				setVisualTraces(traces);
-				setTranslates(translates);
+				setVisualTraces((prev) => keepUnsavedVisualDrafts(prev, traces));
+				setTranslates((prev) => {
+					const protectedIds = new Set([
+						...protectedAtStart,
+						...protectedTranslateIdsRef.current,
+					]);
+					return mergeTranslateRefresh(
+						prev,
+						translates,
+						protectedIds,
+						recordsAtStart,
+					);
+				});
 			});
 		};
 		// Immediate refresh on become-active (covers Agent multi-turn writes
@@ -242,6 +324,7 @@ export function usePdfMarksIo({
 		setThreads,
 		translates,
 		translatesRef,
+		protectedTranslateIdsRef,
 		setTranslates,
 		visualTraces,
 		visualTracesRef,

@@ -2,6 +2,7 @@
  * Pure chat transcript / agent switcher helpers for AgentPanel.
  * Kept free of React so unit tests can cover stream merge + option building.
  */
+
 import type { ToolUIPart } from "ai";
 import type { TFunction } from "i18next";
 import type {
@@ -23,6 +24,8 @@ import {
 } from "@/lib/agent/prompt-display";
 import { copyTextToClipboard } from "@/lib/core/clipboard";
 import { nextLineId, nextPartId } from "@/lib/pdf-visual/ids";
+import { selectionsPromptBlock } from "./selection-prompt";
+import type { SelectionContext } from "./selection-store";
 
 /** Snapshot of a visual PDF annotation attached to a local user chat line. */
 export type ChatVisualAnnotation = {
@@ -127,6 +130,7 @@ export type ChatLine =
 			text: string;
 			/** Local multimodal visual crops sent with this turn (session-local). */
 			visualAnnotations?: ChatVisualAnnotation[];
+			selections?: SelectionContext[];
 			/**
 			 * General composer image attachments (paste / file pick) for this turn.
 			 * Session-local only — not persisted to ACP session history load.
@@ -197,6 +201,19 @@ export function upsertChatSessionTurn(
 	];
 }
 
+/**
+ * Attach the on-screen transcript when the provider session cannot be
+ * trusted: no resume id, or the previous turn failed before the agent saw it
+ * (dead ACP connection). A healthy resume omits this so history is not sent twice.
+ */
+export function shouldAttachLocalTranscript(input: {
+	resumeAllowed: boolean;
+	historyStatus?: string | null;
+}): boolean {
+	if (!input.resumeAllowed) return true;
+	return input.historyStatus === "failed";
+}
+
 /** Format prior user/agent turns for agents that cannot session/resume. */
 export function buildLocalTranscriptPrompt(
 	lines: ChatLine[],
@@ -204,12 +221,14 @@ export function buildLocalTranscriptPrompt(
 	opts?: { excludeTrailingUserText?: string },
 ): string {
 	const turns: string[] = [];
+	let lastUserText: string | null = null;
 	for (const line of lines) {
 		if (line.kind === "user") {
 			const text = line.text.trim();
 			const hasVisual = Boolean(line.visualAnnotations?.length);
 			const hasImages = Boolean(line.images?.length);
-			if (!text && !hasVisual && !hasImages) continue;
+			const references = selectionsPromptBlock(line.selections ?? []);
+			if (!text && !hasVisual && !hasImages && !references) continue;
 			const label =
 				text ||
 				(hasVisual
@@ -217,20 +236,21 @@ export function buildLocalTranscriptPrompt(
 					: hasImages
 						? "(image attachment)"
 						: "");
-			turns.push(`User: ${label}`);
+			turns.push(`User: ${[label, references].filter(Boolean).join("\n\n")}`);
+			lastUserText = text;
 			continue;
 		}
 		if (line.kind === "agent") {
 			const text = agentTextFromParts(line.parts).trim();
 			if (!text) continue;
 			turns.push(`Assistant: ${text}`);
+			lastUserText = null;
 		}
 	}
 	if (opts?.excludeTrailingUserText != null) {
 		const needle = opts.excludeTrailingUserText.trim();
 		if (needle) {
-			const last = turns[turns.length - 1];
-			if (last === `User: ${needle}`) turns.pop();
+			if (lastUserText === needle) turns.pop();
 		}
 	}
 	if (turns.length === 0) return "";
@@ -338,12 +358,14 @@ function catalogTemplateFromId(templateId: string): AgentTemplate | undefined {
 		case "hermes":
 		case "claude-acp":
 		case "codex-acp":
+		case "antigravity-acp":
 		case "qodercli":
 		case "grok-build":
 		case "pi":
 		case "dsh":
 		case "kimi-code":
 		case "zcode":
+		case "minimax-code":
 		case "custom":
 			return templateId;
 		default:
@@ -357,14 +379,14 @@ export function catalogEntryUsable(e: {
 	binaryAvailable: boolean;
 	acpCommandAvailable: boolean;
 }): boolean {
-	return e.acpStatus === "ready";
+	return e.acpCommandAvailable && e.acpStatus === "ready";
 }
 
 export function registryAgentUsable(a: {
 	available: boolean;
 	lastProbeOk?: boolean | null;
 }): boolean {
-	return a.available || a.lastProbeOk === true;
+	return a.available;
 }
 
 /**
@@ -378,12 +400,14 @@ export function buildOptions(
 	const options: AgentOption[] = [];
 	const tail: AgentOption[] = [];
 	const seenIds = new Set<string>();
+	const catalogTemplateIds = new Set<string>();
 
 	if (catalog) {
 		for (const e of catalog.entries) {
-			if (!catalogEntryUsable(e)) continue;
 			const id = e.registeredId ?? null;
 			if (id) seenIds.add(id);
+			catalogTemplateIds.add(e.templateId);
+			if (!catalogEntryUsable(e)) continue;
 			options.push({
 				key: `catalog:${e.templateId}`,
 				id,
@@ -414,6 +438,9 @@ export function buildOptions(
 		for (const a of registry.agents) {
 			if (!registryAgentUsable(a)) continue;
 			if (seenIds.has(a.id)) continue;
+			if (a.template !== "custom" && catalogTemplateIds.has(a.template)) {
+				continue;
+			}
 			seenIds.add(a.id);
 			tail.push({
 				key: `reg:${a.id}`,

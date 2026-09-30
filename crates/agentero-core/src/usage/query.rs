@@ -1,11 +1,12 @@
 //! Reads, clears, and path renames over the activity log.
 
 use crate::error::AppError;
+use crate::fs::normalize_rel_separators;
+use crate::sqlite::descendant_path_pattern;
 use rusqlite::params;
 use serde::Serialize;
 use std::path::Path;
 
-use super::record::normalize_rel;
 use super::schema::{ensure_usage_at, paper_path_of};
 
 #[derive(Debug, Clone, Default)]
@@ -68,11 +69,8 @@ pub fn list_events(db_path: &Path, filter: &ListFilter) -> Result<Vec<UsageEvent
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .unwrap_or("");
-    let like = if prefix.is_empty() {
-        String::new()
-    } else {
-        format!("{prefix}/%")
-    };
+    let prefix = normalize_rel_separators(prefix);
+    let like = descendant_path_pattern(&prefix);
     let since = filter
         .since
         .as_deref()
@@ -85,8 +83,8 @@ pub fn list_events(db_path: &Path, filter: &ListFilter) -> Result<Vec<UsageEvent
              FROM usage_events
              WHERE (?1 = '' OR vault = ?1)
                AND (?2 = '' OR kind = ?2)
-               AND (?3 = '' OR path = ?3 OR path LIKE ?4
-                    OR paper_path = ?3 OR paper_path LIKE ?4)
+               AND (?3 = '' OR path = ?3 OR path LIKE ?4 ESCAPE '!'
+                    OR paper_path = ?3 OR paper_path LIKE ?4 ESCAPE '!')
                AND (?5 = '' OR ts >= ?5)
              ORDER BY ts DESC, id DESC
              LIMIT ?6",
@@ -173,8 +171,8 @@ pub fn clear_vault(db_path: &Path, vault: &str) -> Result<u64, AppError> {
 /// Rewrite stored `path` / `paper_path` prefixes after a paper or note moves.
 /// Returns the number of touched rows across `usage_events` and `usage_daily`.
 pub fn rename_path(db_path: &Path, vault: &str, from: &str, to: &str) -> Result<u64, AppError> {
-    let from = normalize_rel(from);
-    let to = normalize_rel(to);
+    let from = normalize_rel_separators(from.trim());
+    let to = normalize_rel_separators(to.trim());
     if from.is_empty() || to.is_empty() || from == to {
         return Ok(0);
     }
@@ -185,7 +183,8 @@ pub fn rename_path(db_path: &Path, vault: &str, from: &str, to: &str) -> Result<
     let from_paper = paper_path_of(&from).unwrap_or_else(|| from.clone());
     let to_paper = paper_path_of(&to).unwrap_or_else(|| to.clone());
     let conn = ensure_usage_at(db_path)?;
-    let like = format!("{from}/%");
+    let like = descendant_path_pattern(&from);
+    let paper_like = descendant_path_pattern(&from_paper);
     let tx = conn
         .unchecked_transaction()
         .map_err(|e| AppError::message(format!("usage rename tx: {e}")))?;
@@ -194,32 +193,49 @@ pub fn rename_path(db_path: &Path, vault: &str, from: &str, to: &str) -> Result<
             "UPDATE usage_events
              SET path = CASE
                WHEN path = ?1 THEN ?2
-               WHEN path LIKE ?3 THEN ?2 || substr(path, length(?1) + 1)
+               WHEN path LIKE ?3 ESCAPE '!' THEN ?2 || substr(path, length(?1) + 1)
                ELSE path
              END,
              paper_path = CASE
                WHEN paper_path = ?5 THEN ?6
-               WHEN paper_path LIKE ?5 || '/%' THEN ?6 || substr(paper_path, length(?5) + 1)
+               WHEN paper_path LIKE ?7 ESCAPE '!' THEN ?6 || substr(paper_path, length(?5) + 1)
                ELSE paper_path
              END
              WHERE vault = ?4 AND (
-               path = ?1 OR path LIKE ?3 OR paper_path = ?5 OR paper_path LIKE ?5 || '/%'
+               path = ?1 OR path LIKE ?3 ESCAPE '!' OR paper_path = ?5 OR paper_path LIKE ?7 ESCAPE '!'
              )",
-            params![from, to, like, vault, from_paper, to_paper],
+            params![from, to, like, vault, from_paper, to_paper, paper_like],
         )
         .map_err(|e| AppError::message(format!("rename usage_events: {e}")))?;
-    let daily = tx
-        .execute(
-            "UPDATE usage_daily
-             SET paper_path = CASE
-               WHEN paper_path = ?1 THEN ?2
-               WHEN paper_path LIKE ?1 || '/%' THEN ?2 || substr(paper_path, length(?1) + 1)
-               ELSE paper_path
-             END
-             WHERE vault = ?3 AND (paper_path = ?1 OR paper_path LIKE ?1 || '/%')",
-            params![from_paper, to_paper, vault],
-        )
-        .map_err(|e| AppError::message(format!("rename usage_daily: {e}")))?;
+    let daily = if from_paper != to_paper {
+        let merged = tx
+            .execute(
+                "INSERT INTO usage_daily (day, vault, kind, paper_path, facet, count, dur_ms, qty)
+                 SELECT day, vault, kind,
+                   CASE
+                     WHEN paper_path = ?1 THEN ?2
+                     WHEN paper_path LIKE ?4 ESCAPE '!' THEN ?2 || substr(paper_path, length(?1) + 1)
+                     ELSE paper_path
+                   END,
+                   facet, count, dur_ms, qty
+                 FROM usage_daily
+                 WHERE vault = ?3 AND (paper_path = ?1 OR paper_path LIKE ?4 ESCAPE '!')
+                 ON CONFLICT(day, vault, kind, paper_path, facet) DO UPDATE SET
+                   count = usage_daily.count + excluded.count,
+                   dur_ms = usage_daily.dur_ms + excluded.dur_ms,
+                   qty = usage_daily.qty + excluded.qty",
+                params![from_paper, to_paper, vault, paper_like],
+            )
+            .map_err(|e| AppError::message(format!("rename usage_daily: {e}")))?;
+        let _ = tx.execute(
+            "DELETE FROM usage_daily
+             WHERE vault = ?2 AND (paper_path = ?1 OR paper_path LIKE ?3 ESCAPE '!')",
+            params![from_paper, vault, paper_like],
+        );
+        merged
+    } else {
+        0
+    };
     tx.commit()
         .map_err(|e| AppError::message(format!("usage rename commit: {e}")))?;
     Ok((events + daily) as u64)
@@ -261,6 +277,96 @@ mod tests {
     use std::fs;
 
     #[test]
+    fn literal_path_prefix_filters_and_renames_only_its_subtree() {
+        let root = tempfile::tempdir().unwrap();
+        let db = root.path().join("usage.sqlite");
+        let conn = ensure_usage_at(&db).unwrap();
+        let from = "papers/a%_!论文";
+        let to = "papers/moved%_!论文";
+        let matching = [
+            from.to_string(),
+            format!("{from}/child"),
+            format!("{from}/child/deep"),
+        ];
+        let siblings = [
+            "papers/aXY!论文/child",
+            "papers/a%_!论文-more/child",
+            "papers/a%_论文/child",
+            "papers/other/a%_!论文/child",
+        ];
+        for path in matching.iter().map(String::as_str).chain(siblings) {
+            conn.execute("INSERT INTO usage_events (ts,vault,kind,path,paper_path) VALUES (datetime('now'),'/vault','paper.open',?1,?1)", [path]).unwrap();
+            conn.execute("INSERT INTO usage_daily (day,vault,kind,paper_path,count) VALUES (date('now'),'/vault','paper.open',?1,1)", [path]).unwrap();
+        }
+        // Same path in another vault must not move.
+        conn.execute("INSERT INTO usage_events (ts,vault,kind,path,paper_path) VALUES (datetime('now'),'/other','paper.open',?1,?1)", [from]).unwrap();
+        let rows = list_events(
+            &db,
+            &ListFilter {
+                vault: Some("/vault".into()),
+                path_prefix: Some(from.replace('/', "\\")),
+                limit: 100,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(rows.len(), 3);
+        assert!(rows
+            .iter()
+            .all(|row| matching.iter().any(|path| row.path.as_ref() == Some(path))));
+        assert_eq!(
+            rename_path(
+                &db,
+                "/vault",
+                &from.replace('/', "\\"),
+                &to.replace('/', "\\")
+            )
+            .unwrap(),
+            6
+        );
+        for path in &matching {
+            let moved = path.replacen(from, to, 1);
+            assert_eq!(conn.query_row("SELECT count(*) FROM usage_events WHERE vault='/vault' AND path=?1 AND paper_path=?1", [&moved], |r| r.get::<_, i64>(0)).unwrap(), 1);
+            assert_eq!(
+                conn.query_row(
+                    "SELECT count FROM usage_daily WHERE vault='/vault' AND paper_path=?1",
+                    [&moved],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                1
+            );
+        }
+        for path in siblings {
+            assert_eq!(conn.query_row("SELECT count(*) FROM usage_events WHERE vault='/vault' AND path=?1 AND paper_path=?1", [path], |r| r.get::<_, i64>(0)).unwrap(), 1);
+            assert_eq!(
+                conn.query_row(
+                    "SELECT count FROM usage_daily WHERE vault='/vault' AND paper_path=?1",
+                    [path],
+                    |r| r.get::<_, i64>(0)
+                )
+                .unwrap(),
+                1
+            );
+        }
+        assert_eq!(
+            conn.query_row(
+                "SELECT path FROM usage_events WHERE vault='/other'",
+                [],
+                |r| r.get::<_, String>(0)
+            )
+            .unwrap(),
+            from
+        );
+        assert_eq!(
+            conn.query_row("SELECT count(*) FROM usage_daily", [], |r| r
+                .get::<_, i64>(0))
+                .unwrap(),
+            7
+        );
+    }
+
+    #[test]
     fn rename_updates_prefix() {
         let db = temp_db();
         record_events(
@@ -286,6 +392,22 @@ mod tests {
         assert!(rows
             .iter()
             .all(|r| r.paper_path.as_deref() == Some("papers/new")));
+        let _ = fs::remove_dir_all(db.parent().unwrap());
+    }
+
+    #[test]
+    fn rename_merges_when_target_already_exists() {
+        let db = temp_db();
+        record_events(
+            &db,
+            &[
+                rec("paper.open", "papers/old"),
+                rec("paper.open", "papers/new"),
+            ],
+        )
+        .unwrap();
+        let res = rename_path(&db, "/vaults/demo", "papers/old", "papers/new");
+        assert!(res.is_ok());
         let _ = fs::remove_dir_all(db.parent().unwrap());
     }
 }

@@ -28,8 +28,12 @@ export type CatalogEntry = {
 	/** Agent host CLI on PATH (`detect_command`). */
 	binaryAvailable: boolean;
 	resolvedPath?: string | null;
-	/** ACP entrypoint on PATH (`command`). */
+	/** ACP entrypoint on PATH (`command`), or served by the bundled tier. */
 	acpCommandAvailable: boolean;
+	/** Bundled ACP adapter tier present in app resources (offline fallback). */
+	acpBundled?: boolean;
+	/** Version of the bundled adapter, when staged. */
+	acpBundledVersion?: string | null;
 	acpStatus: CatalogAcpStatus;
 	registeredId?: string | null;
 	isDefault: boolean;
@@ -38,7 +42,7 @@ export type CatalogEntry = {
 	lastProbedAt?: string | null;
 	/** Normalized local host CLI version, when known. */
 	installedVersion?: string | null;
-	/** Silent-update target (npm latest or dsh pin), when known. */
+	/** Silent-update target (npm latest), when known. */
 	latestVersion?: string | null;
 	/** Settings shows Upgrade only when this is explicitly true. */
 	updateAvailable?: boolean | null;

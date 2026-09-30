@@ -27,6 +27,7 @@ import {
 } from "@embedpdf/plugin-layout-analysis/react";
 import { RenderPluginPackage } from "@embedpdf/plugin-render/react";
 import {
+	type PageLayout,
 	Scroller,
 	ScrollPluginPackage,
 	useScroll,
@@ -79,7 +80,6 @@ import { usePdfOutline } from "@/components/viewer/pdf/hooks/use-pdf-outline";
 import { usePdfPageText } from "@/components/viewer/pdf/hooks/use-pdf-page-text";
 import { usePdfPaperTone } from "@/components/viewer/pdf/hooks/use-pdf-paper-tone";
 import { usePdfPinAnchors } from "@/components/viewer/pdf/hooks/use-pdf-pin-anchors";
-import { usePdfPrivacy } from "@/components/viewer/pdf/hooks/use-pdf-privacy";
 import { usePdfRegionFraming } from "@/components/viewer/pdf/hooks/use-pdf-region-framing";
 import { usePdfScrollSync } from "@/components/viewer/pdf/hooks/use-pdf-scroll-sync";
 import { usePdfSelectionActions } from "@/components/viewer/pdf/hooks/use-pdf-selection-actions";
@@ -89,6 +89,7 @@ import { usePdfTextSelection } from "@/components/viewer/pdf/hooks/use-pdf-text-
 import { usePdfViewerHandle } from "@/components/viewer/pdf/hooks/use-pdf-viewer-handle";
 import { usePdfVisualMarks } from "@/components/viewer/pdf/hooks/use-pdf-visual-marks";
 import { usePdfZoomControls } from "@/components/viewer/pdf/hooks/use-pdf-zoom-controls";
+import { useStableDerived } from "@/components/viewer/pdf/hooks/use-stable-derived";
 import { excludeOverlappingPdfTextLinks } from "@/components/viewer/pdf/layers/citation-links";
 import { COMMENT_RAIL_WIDTH_PX } from "@/components/viewer/pdf/layers/comment-cards-layer";
 import {
@@ -129,10 +130,14 @@ import { HIGHLIGHT_HEX_LIST } from "@/lib/pdf/highlight/palette";
 import {
 	getPdfAiRuntime,
 	layoutAnalysisStore,
+	layoutDocumentKey,
 	type PdfLayoutRegion,
 	setFocusedLayoutRegion,
 } from "@/lib/pdf/layout";
-import type { ActiveSelectionCard } from "@/lib/pdf/selection";
+import {
+	type ActiveSelectionCard,
+	selectionAnchorKey,
+} from "@/lib/pdf/selection";
 import { PDF_ZOOM_MAX, PDF_ZOOM_MIN } from "@/lib/pdf/zoom";
 
 export type {
@@ -327,12 +332,14 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 							<PdfTranslationViewerInner
 								{...props}
 								docId={docId}
+								baseDocId={baseDocId}
 								sourceBytes={effectiveSourceBytes}
 							/>
 						) : (
 							<PdfViewerInner
 								{...props}
 								docId={docId}
+								baseDocId={baseDocId}
 								sourceBytes={effectiveSourceBytes}
 							/>
 						);
@@ -345,6 +352,7 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 
 function PdfViewerInner({
 	docId,
+	baseDocId,
 	sourceBytes = null,
 	paperAbsPath = null,
 	paperRelPath = null,
@@ -365,7 +373,6 @@ function PdfViewerInner({
 }: PdfViewerInnerProps) {
 	const { t } = useTranslation("viewer");
 	const [importBusy, setImportBusy] = useState(false);
-	const privacyHidden = usePdfPrivacy();
 	// Parent often passes inline lambdas; keep latest in refs so data effects
 	// do not re-fire every parent render (was Maximum update depth exceeded).
 	const onAsksChangeRef = useRef(onAsksChange);
@@ -417,7 +424,8 @@ function PdfViewerInner({
 		const focused = s.focused;
 		if (!focused) return null;
 		if (focused.region) return focused.region;
-		const result = s.byDocument[docId];
+		// byDocument is keyed by the revision-stripped base id.
+		const result = s.byDocument[layoutDocumentKey(docId)];
 		if (!result) return null;
 		return (
 			result.regions.find((r) => r.id === focused.regionId) ??
@@ -452,6 +460,24 @@ function PdfViewerInner({
 		return paperMetaByRelPath.get(key);
 	}, [paperMetaProp, paperRelPath, paperMetaByRelPath]);
 	const paperTitle = paperMeta?.title;
+	/** Default file name for the "export annotated PDF" save dialog. */
+	const defaultExportName = useMemo(() => {
+		const raw =
+			paperTitle?.trim() ||
+			paperRelPath
+				?.replace(/\\/g, "/")
+				.split("/")
+				.pop()
+				?.replace(/\.pdf$/i, "") ||
+			paperAbsPath
+				?.replace(/\\/g, "/")
+				.split("/")
+				.pop()
+				?.replace(/\.pdf$/i, "") ||
+			"annotated";
+		const safe = raw.replace(/[\\/:*?"<>|]+/g, "_").trim();
+		return safe.slice(0, 100) || "annotated";
+	}, [paperTitle, paperRelPath, paperAbsPath]);
 	/** Resolvable wiki target for comment-rail copy-link/copy-embed. */
 	const commentWikiTarget = useMemo(() => {
 		if (!paperRelPath) return null;
@@ -519,6 +545,7 @@ function PdfViewerInner({
 		setThreads,
 		translates,
 		translatesRef,
+		protectedTranslateIdsRef,
 		setTranslates,
 		visualTraces,
 		visualTracesRef,
@@ -560,12 +587,6 @@ function PdfViewerInner({
 		}
 		return next;
 	}, [pageTextLinkMap, citationLinks]);
-	/**
-	 * Mirror of the translate cluster's `translateStreaming`. Created here (not in
-	 * {@link usePdfSelectionTranslate}) because `usePdfCards` is declared first and
-	 * needs the same ref object to keep a streaming translate card alive.
-	 */
-	const translateStreamingRef = useRef(false);
 
 	const hostRef = useRef<HTMLDivElement>(null);
 
@@ -578,7 +599,6 @@ function PdfViewerInner({
 		isSelecting,
 		closeSelectionMenu,
 		rePlaceSelectionMenu,
-		copiedLabelPos,
 	} = usePdfTextSelection({
 		selectionCap,
 		docCap,
@@ -599,11 +619,14 @@ function PdfViewerInner({
 
 	/**
 	 * `usePdfCards` must be declared before the ask and translate clusters (both
-	 * open and hide cards), but cards also reset per-kind card chrome and cancel a
-	 * running translate. Those edges go through refs assigned right after each
-	 * hook, so `openCard` / `hideActiveCard` keep their identity.
+	 * open and hide cards), but cards also reset per-kind chrome, discard temporary
+	 * translations, and cancel a replaced translate. Those edges go through refs
+	 * assigned right after each hook, so card lifecycle callbacks stay stable.
 	 */
 	const stopTranslateSessionRef = useRef<() => void>(() => undefined);
+	const discardUnpinnedTranslateOnCloseRef = useRef<(id: string) => void>(
+		() => undefined,
+	);
 	const clearTranslateErrorRef = useRef<() => void>(() => undefined);
 	const clearAskErrorRef = useRef<() => void>(() => undefined);
 	const closeAskChromeRef = useRef<(threadId: string) => void>(() => undefined);
@@ -622,7 +645,10 @@ function PdfViewerInner({
 	const resetChromeForClosedCard = useCallback(
 		(card: ActiveSelectionCard | null) => {
 			if (card?.kind === "ask") closeAskChromeRef.current(card.id);
-			if (card?.kind === "translate") clearTranslateErrorRef.current();
+			if (card?.kind === "translate") {
+				clearTranslateErrorRef.current();
+				discardUnpinnedTranslateOnCloseRef.current(card.id);
+			}
 			closeEditorRef.current();
 		},
 		[],
@@ -641,14 +667,12 @@ function PdfViewerInner({
 		rePlaceActiveCardOnScroll,
 		markCardHoverEnter,
 		scheduleHoverHide,
-		cardHoverSurfaceRef,
 	} = usePdfCards({
 		hostRef,
 		pageTextMapRef,
 		threadsRef,
 		translatesRef,
 		visualTracesRef,
-		translateStreamingRef,
 		onCardOpen: resetChromeForOpenedCard,
 		onCardClose: resetChromeForClosedCard,
 		stopTranslateSession,
@@ -660,7 +684,8 @@ function PdfViewerInner({
 		translateStreaming,
 		translateError,
 		translateSelection,
-		deleteTranslateCard,
+		toggleTranslatePin,
+		discardUnpinnedTranslateOnClose,
 		openTranslateSettings,
 		clearTranslateError,
 		stopTranslateSession: stopTranslateSessionImpl,
@@ -670,18 +695,14 @@ function PdfViewerInner({
 		vaultPath,
 		onOpenSettings,
 		translatesRef,
+		protectedTranslateIdsRef,
 		setTranslates,
 		upsertTranslate,
-		activeCard,
 		openCard,
-		hideActiveCard,
-		scheduleHoverHide,
-		cardHoverSurfaceRef,
-		activeCardRef,
 		activeSessionRef,
-		translateStreamingRef,
 	});
 	stopTranslateSessionRef.current = stopTranslateSessionImpl;
+	discardUnpinnedTranslateOnCloseRef.current = discardUnpinnedTranslateOnClose;
 	clearTranslateErrorRef.current = clearTranslateError;
 
 	// ---- Ask threads (AI Q&A on a selection, marks/<id>.json) ----
@@ -844,10 +865,20 @@ function PdfViewerInner({
 	clearCitationPreviewRef.current = clearCitationPreview;
 	clearCrossrefPreviewRef.current = clearCrossrefPreview;
 
-	const { askPinAnchors, translatePinAnchors } = usePdfPinAnchors({
-		threads,
-		translates,
-	});
+	const { askPinAnchors } = usePdfPinAnchors({ threads });
+	const pinnedTranslates = useStableDerived(
+		() => translates.filter((record) => record.pinned),
+		JSON.stringify(
+			translates
+				.filter((record) => record.pinned)
+				.map((record) => [
+					record.id,
+					record.page,
+					record.rects,
+					record.quote || record.result || "",
+				]),
+		),
+	);
 
 	/**
 	 * Gutter pins per page (1-based). Built once per mark/text change: pin
@@ -860,7 +891,7 @@ function PdfViewerInner({
 				highlights,
 				highlightAnchors,
 				askPinAnchors,
-				translatePinAnchors,
+				translates: pinnedTranslates,
 				visualTraces,
 				pageTextMap,
 				paperTitle,
@@ -869,7 +900,7 @@ function PdfViewerInner({
 			highlights,
 			highlightAnchors,
 			askPinAnchors,
-			translatePinAnchors,
+			pinnedTranslates,
 			visualTraces,
 			pageTextMap,
 			paperTitle,
@@ -932,14 +963,16 @@ function PdfViewerInner({
 		}
 		// In dual-pane mode the source pane only opens the right-hand
 		// translation panel. The translation pane itself owns the single
-		// layout-translation job so only one task runs at a time.
-		onOpenTranslationTab?.(docId, paperAbsPath ?? null, paperTitle ?? null);
+		// layout-translation job so only one task runs at a time. The receiver
+		// resolves this back to a workspace tab, so pass the revision-stripped
+		// base id (`docId` carries a `::r<n>` buffer suffix).
+		onOpenTranslationTab?.(baseDocId, paperAbsPath ?? null, paperTitle ?? null);
 	}, [
 		plainViewer,
 		dualPaneTranslate,
 		toggleLayoutTranslate,
 		onOpenTranslationTab,
-		docId,
+		baseDocId,
 		paperAbsPath,
 		paperTitle,
 	]);
@@ -1081,7 +1114,18 @@ function PdfViewerInner({
 		if (!railEdit) return commentsByPageBase;
 		const page = railEdit.pageIndex + 1;
 		const existing = commentsByPageBase.get(page);
-		if (existing?.some((c) => c.id === railEdit.id)) return commentsByPageBase;
+		const alreadyListed = existing?.some((c) => c.id === railEdit.id);
+		if (alreadyListed && !railEdit.isNew) return commentsByPageBase;
+		if (alreadyListed && existing) {
+			const next = new Map(commentsByPageBase);
+			next.set(
+				page,
+				existing.map((comment) =>
+					comment.id === railEdit.id ? { ...comment, isNew: true } : comment,
+				),
+			);
+			return next;
+		}
 		const next = new Map(commentsByPageBase);
 		next.set(page, [
 			...(existing ?? []),
@@ -1149,6 +1193,7 @@ function PdfViewerInner({
 		handleMenuAsk,
 		handleMenuAddToChat,
 		handleMenuTranslate,
+		handleMenuCopy,
 	} = usePdfSelectionActions({
 		selectionMenu,
 		setSelectionMenu,
@@ -1163,19 +1208,36 @@ function PdfViewerInner({
 		paperAbsPath,
 	});
 
-	const autoTranslatedSelectionRef = useRef<typeof selectionMenu>(null);
+	const autoTranslatedSelectionRef = useRef<string | null>(null);
+
+	// A new drag-select is a fresh intent even when it covers text that was
+	// already auto-translated: the anchor key alone would collide with the last
+	// run and silently skip the new selection.
+	useEffect(() => {
+		if (isSelecting) autoTranslatedSelectionRef.current = null;
+	}, [isSelecting]);
 
 	// When enabled, translate as soon as text extraction has produced a usable
 	// selection anchor. Keep the toolbar open so the other selection actions stay
 	// available while the result card streams beside it.
+	//
+	// Keyed on the anchor, not on the menu object: re-placing the menu on scroll
+	// replaces the object (its `screen` moved) while keeping the anchor, so a
+	// menu-identity key re-translated once per wheel tick and stacked a 文A pin
+	// per tick.
 	useEffect(() => {
-		const quote = selectionMenu?.anchor.quote?.trim();
-		if (!selectionMenu || plainViewer || !autoTranslateSelection || !quote) {
+		const anchorKey = selectionAnchorKey(selectionMenu?.anchor);
+		if (
+			!selectionMenu ||
+			plainViewer ||
+			!autoTranslateSelection ||
+			!anchorKey
+		) {
 			autoTranslatedSelectionRef.current = null;
 			return;
 		}
-		if (autoTranslatedSelectionRef.current === selectionMenu) return;
-		autoTranslatedSelectionRef.current = selectionMenu;
+		if (autoTranslatedSelectionRef.current === anchorKey) return;
+		autoTranslatedSelectionRef.current = anchorKey;
 		translateSelection(selectionMenu.anchor);
 	}, [autoTranslateSelection, plainViewer, selectionMenu, translateSelection]);
 
@@ -1232,10 +1294,25 @@ function PdfViewerInner({
 
 	// ---- In-PDF highlight selection menu ----
 
+	// Scrolling means the reader moved on, so a translate card is dismissed
+	// rather than dragged along. Pointer wander alone must never close it,
+	// which is why the hover timer holds translate cards open.
+	//
+	// Gated on the pin actually moving: scroll events also fire when the
+	// listener is (re)subscribed and from EmbedPDF's selection/layout churn
+	// right after the card opens, and those must not flash the card away.
 	const rePlaceFloatingOnScroll = useCallback(() => {
-		rePlaceActiveCardOnScroll();
+		const pinMoved = rePlaceActiveCardOnScroll();
+		if (pinMoved && activeCard?.kind === "translate") {
+			hideActiveCard();
+		}
 		rePlaceSelectionMenu();
-	}, [rePlaceActiveCardOnScroll, rePlaceSelectionMenu]);
+	}, [
+		activeCard,
+		rePlaceActiveCardOnScroll,
+		rePlaceSelectionMenu,
+		hideActiveCard,
+	]);
 
 	// Boolean only — do not depend on selectionMenu.screen or re-place loops.
 	const selectionMenuOpen = selectionMenu != null;
@@ -1282,6 +1359,7 @@ function PdfViewerInner({
 	usePdfViewerHandle({
 		docId,
 		paperAbsPath,
+		defaultExportName,
 		onHandle,
 		annotationCap,
 		scrollRef,
@@ -1483,20 +1561,13 @@ function PdfViewerInner({
 	 * can bail out instead of rebuilding ten page subtrees.
 	 */
 	const renderPage = useCallback(
-		({
-			pageIndex,
-			width,
-			height,
-		}: {
-			pageIndex: number;
-			width: number;
-			height: number;
-		}) => (
+		({ pageIndex, width, height, rotatedWidth, rotatedHeight }: PageLayout) => (
 			<PdfPageLayers
+				annotationSource={paperRelPath ?? paperAbsPath ?? undefined}
 				docId={docId}
 				pageIndex={pageIndex}
-				width={width}
-				height={height}
+				width={rotatedWidth || width}
+				height={rotatedHeight || height}
 				tone={pdfTone}
 				zoomRef={zoomRef}
 				annotationCap={annotationCap}
@@ -1504,11 +1575,12 @@ function PdfViewerInner({
 				layout={pageLayout}
 				mode={pageMode}
 				handlers={pageHandlers}
-				hidden={privacyHidden}
 			/>
 		),
 		[
 			docId,
+			paperRelPath,
+			paperAbsPath,
 			pdfTone,
 			zoomRef,
 			annotationCap,
@@ -1516,7 +1588,6 @@ function PdfViewerInner({
 			pageLayout,
 			pageMode,
 			pageHandlers,
-			privacyHidden,
 		],
 	);
 
@@ -1636,17 +1707,16 @@ function PdfViewerInner({
 
 			{!translationOnly && (
 				<PdfCardStack
-					hidden={privacyHidden}
 					selectionMenu={{
 						state: plainViewer ? null : selectionMenu,
 						onHighlight: handleHighlight,
 						onAsk: handleMenuAsk,
 						onAddToChat: handleMenuAddToChat,
 						onTranslate: handleMenuTranslate,
+						onCopy: handleMenuCopy,
 						showHighlight: !isRemotePaper && !plainViewer,
 						showTranslate: !isRemotePaper && !plainViewer,
 					}}
-					copiedLabelPos={copiedLabelPos}
 					citationPreview={{
 						state: citationPreview,
 						importMenu: citationImport
@@ -1688,8 +1758,13 @@ function PdfViewerInner({
 						streaming: translateStreaming,
 						error: translateError,
 						onOpenSettings: openTranslateSettings,
+						onTogglePin:
+							paperAbsPath && activeTranslate?.rects.length
+								? () => {
+										if (activeTranslate) toggleTranslatePin(activeTranslate);
+									}
+								: undefined,
 						onHide: hideActiveCard,
-						onDelete: deleteTranslateCard,
 					}}
 					visual={{
 						trace: activeVisualTrace,

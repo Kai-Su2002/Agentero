@@ -25,7 +25,6 @@
 			"label": "Computer name"
 		},
 		"status": {
-			"label": "Relay status",
 			"online": "Online",
 			"offline": "Offline"
 		},
@@ -86,6 +85,9 @@
 		"autoOpenPaperNotes": {
 			"label": "Open paper notes by default"
 		},
+		"autoIngest": {
+			"label": "Auto-import folders added under Papers"
+		},
 		"replaceCurrentTabOnOpenPaper": {
 			"label": "Replace current tab when opening a paper"
 		},
@@ -143,12 +145,11 @@
 				"error": "Not connected",
 				"stopped": "Stopped",
 				"binaryMissing": "tunnel-client not found",
-				"installHint": "Install it, then reopen Settings:",
+				"installHint": "Install it; this page detects it without a restart:",
 				"copyCommand": "Copy install command",
 				"copied": "Copied",
 				"openTunnels": "Open tunnels",
-				"openApiKeys": "Open API keys",
-				"mcpOff": "Turn on the MCP server first."
+				"openApiKeys": "Open API keys"
 			}
 		},
 		"export": {
@@ -230,9 +231,6 @@
 	},
 	"agent": {
 		"title": "Agent",
-		"proxy": {
-			"label": "Agent proxy"
-		},
 		"userAgent": {
 			"section": "Relay compatibility",
 			"label": "User-Agent",
@@ -284,7 +282,6 @@
 		"probe": "Refresh",
 		"probing": "Probing…",
 		"scanning": "Scanning…",
-		"useDefault": "Use default",
 		"installAgent": "Install",
 		"installAgentAria": "Install {{name}} agent CLI",
 		"installAgentTitle": "Install agent CLI",
@@ -304,20 +301,18 @@
 		"lifecycleScanning": "Scanning PATH…",
 		"lifecycleProbing": "Probing ACP…",
 		"lifecycleUninstalling": "Uninstalling…",
-		"npmCacheWriteFailed": "npm cannot write to its cache. In Command Prompt, run {{cacheCommand}}, then retry. If it persists, close other Node/npm processes, allow Node.js in your antivirus, or correct the cache folder permissions.",
-		"uninstallAgent": "Uninstall",
+		"npmCacheWriteFailed": "npm cannot write to its cache. Agentero's managed installs use an isolated cache directory automatically — please retry. If it persists, run {{cacheCommand}} in Command Prompt and retry, close other Node/npm processes, allow Node.js in your antivirus, or correct the cache folder permissions.",
 		"uninstallAgentAria": "Uninstall {{name}} agent",
 		"uninstallAgentTitle": "Uninstall agent",
 		"uninstallSuccess": "Uninstalled {{name}}",
 		"removeSuccess": "Removed {{name}}",
 		"badges": {
 			"default": "default",
-			"installed": "installed",
-			"notInstalled": "not installed",
 			"agentInstalled": "Agent installed",
 			"agentMissing": "No agent",
 			"acpMissing": "No ACP",
-			"adapterMissing": "ACP adapter missing"
+			"acpBundled": "Built-in",
+			"acpBundledTitle": "Bundled ACP adapter {{version}} — used only when no adapter is on PATH (a PATH install always wins; the bundled one moves with app releases)."
 		},
 		"permission": {
 			"label": "Permission mode",
@@ -361,7 +356,8 @@
 			"defaultName": "Desktop",
 			"name": "Name",
 			"command": "Command",
-			"args": "Args"
+			"args": "Args",
+			"hint": "Starts this command in the current Vault and connects over ACP on stdin/stdout. Arguments are split on spaces. Example: command opencode, args acp; or an absolute Python path with the bridge script’s absolute path as args."
 		},
 		"uninstallDialog": {
 			"title": "Uninstall {{name}}?",
@@ -380,7 +376,6 @@
 			"probeTitle": "Rescan & probe remote agents",
 			"empty": "No catalog results. Check the SSH session and remote PATH.",
 			"hint": "Refresh runs command -v then ACP initialize over SSH. If Claude shows “ACP adapter missing”, use Install ACP (opens Terminal → Enter → SSH install on the server). API keys stay on the remote machine (BYOA). If probe times out, enable Agent proxy (must be reachable from the server).",
-			"proxyHint": "Same proxy as local Agent settings. Injected as HTTP(S)_PROXY on the remote process — the URL must be reachable from the server (e.g. a proxy on the server, not only on this Mac).",
 			"installAdapterAria": "Install ACP adapter for {{name}} on remote host via Terminal",
 			"installAdapterTitle": "Open Terminal, then SSH to {{host}} and run: {{command}} (press Enter to confirm)"
 		}
@@ -423,7 +418,6 @@
 		"providerConfig": {
 			"section": "API Services",
 			"confirm": "Confirm",
-			"openDocs": "Open provider website",
 			"openDocsLabel": "Get an API key",
 			"notConfigured": "Not configured",
 			"apiKey": {
@@ -446,7 +440,7 @@
 			"deepl": "DeepL neural machine translation, configured with an official API key.",
 			"azure": "Microsoft Translator, configured with an Azure subscription key.",
 			"googleCloud": "Google Cloud Translation API, configured with a service-account key.",
-			"openaiCompatible": "Any OpenAI-compatible translation endpoint (OpenAI, Moonshot, DeepSeek, …)."
+			"openaiCompatible": "OpenAI Chat Completions-compatible endpoint. Enter the Base URL, e.g. https://api.openai.com/v1; Agentero appends /chat/completions."
 		},
 		"agentId": {
 			"label": "Agent",
@@ -459,6 +453,12 @@
 			"label": "Model",
 			"followAgent": "Follow agent default",
 			"needWarm": "Open this agent in Chat once to list models here."
+		},
+		"customPrompt": {
+			"label": "Translation prompt",
+			"placeholder": "Empty = built-in academic prompt. Insert the default to edit a copy.",
+			"seed": "Insert default",
+			"reset": "Reset"
 		}
 	},
 	"layout": {
@@ -608,7 +608,6 @@
 		"agent": {
 			"probing": "Probing agents…",
 			"none": "No Agents registered yet.",
-			"ready": "Ready",
 			"locationMissing": "Not found",
 			"authLabel": "Sign-in",
 			"authStatus": {
@@ -705,16 +704,18 @@
 			"clearDone": "Logs cleared",
 			"clearFailed": "Couldn't clear logs."
 		},
+		"scratch": {
+			"label": "Paper full-text cache",
+			"summary": "{{papers}} papers · {{size}}",
+			"clear": "Clear cache",
+			"clearDone": "Cache cleared",
+			"clearFailed": "Couldn't clear the paper full-text cache."
+		},
 		"update": {
-			"idle": "Check for the latest Agentero release",
-			"unsupported": "Updates are available in installed desktop builds",
-			"checking": "Checking for updates...",
-			"upToDate": "You're up to date",
 			"available": "Version {{version}} is ready",
 			"downloading": "Downloading update...",
 			"downloadingProgress": "Downloading update: {{progress}}%",
 			"installing": "Installing update and restarting...",
-			"checkFailed": "Couldn't check for updates. Check your network or proxy settings",
 			"installFailed": "Couldn't install the update. Try again",
 			"check": "Check for updates",
 			"downloadInstall": "Install and restart",
@@ -765,11 +766,6 @@
 			"uninstallSuccess": "Finder Quick Action removed",
 			"installFailed": "Could not install the Finder Quick Action",
 			"uninstallFailed": "Could not remove the Finder Quick Action"
-		},
-		"onboarding": {
-			"label": "First-run setup",
-			"description": "Replay the theme, agent and translation setup wizard in the main window",
-			"reopen": "Reopen setup wizard"
 		}
 	},
 	"sync": {

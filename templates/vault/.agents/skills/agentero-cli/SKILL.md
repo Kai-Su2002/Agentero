@@ -1,9 +1,9 @@
 ---
 name: agentero-cli
-version: 16
+version: 18
 description: >-
   Use the Agentero CLI (bin `agentero`) to create, discover, and inspect a local
-  research vault and catalog—list/get papers, import by id/URL, layout regions,
+  research vault and catalog—list/get papers, import by id/URL/PDF, layout regions,
   reading marks, download assets, parse PAPER.md, export bib—without BYOA.
   Prefer --json. Discover unknown flags via `agentero describe`. Use when
   managing a vault headless, scripting Motif/Agentero, or exploring papers via
@@ -17,7 +17,7 @@ description: >-
 You use the **`agentero` CLI** as a stable machine interface to an Agentero vault.
 The CLI is **not** a chat runtime: no BYOA, no ACP, no paper-reader. Reading and
 writing lecture-style `NOTES.md` is **your** job (or use the separate
-`paper-reader` skill / desktop Zap workflow).
+`paper-reader` skill / desktop manual read workflow).
 
 ## Prerequisites
 
@@ -88,6 +88,7 @@ agentero paper list --json
 
 ```bash
 agentero import id <arxiv|doi|url> --json
+agentero import pdf <path...> --json
 agentero paper download papers/<…> --json
 agentero paper parse papers/<…> --json
 agentero paper tag add papers/<…> "label:color" --json

@@ -4,9 +4,10 @@
 //! inside `run_blocking`, keeping the main thread (Windows UI message pump)
 //! free.
 
+use crate::app::command_util::try_vault;
 use crate::core::blocking::run_blocking;
 use crate::core::error::{map_err, ApiResult, AppError};
-use crate::core::fs::{ensure_vault_dir, resolve_paper_dir, resolve_vault};
+use crate::core::fs::{ensure_vault_dir, resolve_paper_dir};
 use crate::features::paper::catalog::papers::{self, PaperRecord};
 use crate::features::paper::catalog::{probe_paper_caps, CapsCache};
 use crate::features::pdf::marks::activity as reading_activity;
@@ -32,10 +33,7 @@ pub struct PaperGetArgs {
 #[specta::specta]
 pub async fn paper_get(args: PaperGetArgs) -> ApiResult<PaperRecord> {
     run_blocking(move || {
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(e) => return map_err(e),
-        };
+        let vault = try_vault!(&args.vault_path);
 
         let result = if let Some(path) = args
             .path
@@ -155,10 +153,7 @@ pub async fn paper_list(
 ) -> Result<ApiResult<Vec<PaperListRow>>, String> {
     let cache = cache.inner().clone();
     Ok(run_blocking(move || {
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(e) => return map_err(e),
-        };
+        let vault = try_vault!(&args.vault_path);
         match papers::list_all_unique_by_id(&vault) {
             Ok(rows) => ApiResult::ok(
                 rows.into_iter()
@@ -189,10 +184,7 @@ pub struct PaperSetIsReadArgs {
 #[specta::specta]
 pub async fn paper_set_is_read(args: PaperSetIsReadArgs) -> ApiResult<PaperRecord> {
     run_blocking(move || {
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(e) => return map_err(e),
-        };
+        let vault = try_vault!(&args.vault_path);
         let path = args.path.trim().trim_matches('/').replace('\\', "/");
         if path.is_empty() {
             return map_err(AppError::message("path is required"));
@@ -220,10 +212,7 @@ pub struct PaperUpdateMetaArgs {
 #[specta::specta]
 pub async fn paper_update_meta(args: PaperUpdateMetaArgs) -> ApiResult<PaperRecord> {
     run_blocking(move || {
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(e) => return map_err(e),
-        };
+        let vault = try_vault!(&args.vault_path);
         let path = args.path.trim().trim_matches('/').replace('\\', "/");
         if path.is_empty() {
             return map_err(AppError::message("path is required"));
@@ -355,10 +344,7 @@ pub struct PaperSetTagsArgs {
 #[specta::specta]
 pub async fn paper_set_tags(args: PaperSetTagsArgs) -> ApiResult<PaperRecord> {
     run_blocking(move || {
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(e) => return map_err(e),
-        };
+        let vault = try_vault!(&args.vault_path);
         let path = args.path.trim().trim_matches('/').replace('\\', "/");
         if path.is_empty() {
             return map_err(AppError::message("path is required"));
@@ -393,13 +379,7 @@ pub async fn paper_rescan(args: PaperRescanArgs) -> ApiResult<PaperRescanResult>
         use crate::core::log_util::OpTimer;
 
         let op = OpTimer::start("paper_rescan");
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(err) => {
-                op.finish_err(&err);
-                return map_err(err);
-            }
-        };
+        let vault = try_vault!(&args.vault_path, op);
         match papers::rebuild_from_disk(&vault) {
             Ok(count) => {
                 op.finish_ok_extra(format!("count={count}"));
@@ -427,10 +407,7 @@ pub async fn paper_page_counts(
     args: PaperPageCountsArgs,
 ) -> ApiResult<std::collections::HashMap<String, i64>> {
     run_blocking(move || {
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(e) => return map_err(e),
-        };
+        let vault = try_vault!(&args.vault_path);
         match papers::list_page_counts(&vault) {
             Ok(counts) => ApiResult::ok(counts),
             Err(e) => map_err(e),
@@ -462,13 +439,7 @@ pub async fn paper_reading_activity_batch(
             "paper_reading_activity_batch",
             format!("papers={}", args.paths.len()),
         );
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(err) => {
-                op.finish_err(&err);
-                return map_err(err);
-            }
-        };
+        let vault = try_vault!(&args.vault_path, op);
         let out = reading_activity::collect_reading_activity(&vault, &args.paths);
         let points: usize = out.values().map(Vec::len).sum();
         op.finish_ok_extra(format!("points={points}"));
@@ -490,10 +461,7 @@ pub struct PaperSetPageCountsArgs {
 #[specta::specta]
 pub async fn paper_set_page_counts(args: PaperSetPageCountsArgs) -> ApiResult<()> {
     run_blocking(move || {
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(e) => return map_err(e),
-        };
+        let vault = try_vault!(&args.vault_path);
         let counts: Vec<(String, i64)> = args
             .counts
             .into_iter()
@@ -508,28 +476,7 @@ pub async fn paper_set_page_counts(args: PaperSetPageCountsArgs) -> ApiResult<()
     .await
 }
 
-#[derive(Debug, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PaperMoveArgs {
-    pub vault_path: String,
-    /// Vault-relative item to move (paper folder, org folder, or file under `papers/`).
-    pub from_rel: String,
-    /// Vault-relative destination parent (`papers` or under `papers/`).
-    pub dest_parent_rel: String,
-    /// Dirty open Markdown/NOTES paths supplied by the renderer. The Host
-    /// rejects a transaction that would move or rewrite one of these files.
-    #[serde(default)]
-    pub dirty_paths: Vec<String>,
-}
-
-#[derive(Debug, Serialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PaperMoveResult {
-    /// New vault-relative path of the moved item.
-    pub new_rel: String,
-    /// Link-aware transaction details for UI refresh and diagnostics.
-    pub link_update: crate::features::markdown::wiki::models::WikiRenameResult,
-}
+pub use super::service::{PaperMoveArgs, PaperMoveResult};
 
 /// Move an item into another `papers/` folder on disk and rewrite matching
 /// catalog path prefixes. Never overwrites an existing target.
@@ -539,60 +486,12 @@ pub async fn paper_move(
     args: PaperMoveArgs,
     index: State<'_, crate::features::vault::rename::WikiIndexState>,
 ) -> Result<ApiResult<PaperMoveResult>, String> {
-    Ok(match paper_move_service(args, index.handle()).await {
-        Ok(result) => ApiResult::ok(result),
-        Err(error) => map_err(error),
-    })
-}
-
-/// Shared application service for callers that need the same complete
-/// filesystem/catalog/wiki transaction as the Tauri command.
-pub(crate) async fn paper_move_service(
-    args: PaperMoveArgs,
-    index: std::sync::Arc<std::sync::Mutex<crate::features::vault::rename::WikiIndex>>,
-) -> Result<PaperMoveResult, AppError> {
-    tauri::async_runtime::spawn_blocking(move || {
-        let mut guard = match index.lock() {
-            Ok(guard) => guard,
-            Err(error) => return Err(AppError::message(format!("wiki index lock: {error}"))),
-        };
-        move_inner(args, &mut guard)
-    })
-    .await
-    .map_err(|error| AppError::message(format!("blocking task failed: {error}")))?
-}
-
-fn move_inner(
-    args: PaperMoveArgs,
-    index: &mut crate::features::vault::rename::WikiIndex,
-) -> Result<PaperMoveResult, AppError> {
-    let vault = resolve_vault(&args.vault_path)?;
-    let (from, new_rel) = crate::features::paper::catalog::plan_paper_move_under(
-        &vault,
-        &args.from_rel,
-        &args.dest_parent_rel,
-    )?;
-    if new_rel == from {
-        return Err(AppError::message("already in this folder"));
-    }
-    let link_update = crate::features::vault::rename::run_local_rename_transaction(
-        &vault,
-        index,
-        &from,
-        &new_rel,
-        &args.dirty_paths,
-        || {
-            papers::move_under_path(&vault, &from, &new_rel)
-                .map(|_| ())
-                .map_err(|error| error.to_string())
+    Ok(
+        match super::service::paper_move_service(args, index.handle()).await {
+            Ok(result) => ApiResult::ok(result),
+            Err(error) => map_err(error),
         },
     )
-    .map_err(|error| AppError::message(error.to_string()))?;
-    crate::core::usage::rename_path_best_effort(args.vault_path.trim(), &from, &new_rel);
-    Ok(PaperMoveResult {
-        new_rel,
-        link_update,
-    })
 }
 
 #[derive(Debug, Deserialize, specta::Type)]
@@ -621,10 +520,7 @@ pub struct PaperRepathResult {
 #[specta::specta]
 pub async fn paper_repath(args: PaperRepathArgs) -> ApiResult<PaperRepathResult> {
     run_blocking(move || {
-        let vault = match resolve_vault(&args.vault_path) {
-            Ok(vault) => vault,
-            Err(e) => return map_err(e),
-        };
+        let vault = try_vault!(&args.vault_path);
         match crate::features::paper::catalog::papers::move_under_path(
             &vault,
             &args.from_rel,
@@ -635,64 +531,4 @@ pub async fn paper_repath(args: PaperRepathArgs) -> ApiResult<PaperRepathResult>
         }
     })
     .await
-}
-
-#[cfg(test)]
-mod move_tests {
-    use super::*;
-    use crate::features::vault::rename::WikiIndex;
-    use std::sync::{Arc, Mutex};
-    use uuid::Uuid;
-
-    #[test]
-    fn paper_move_runs_the_filesystem_move_inside_the_wiki_transaction() {
-        let vault = std::env::temp_dir().join(format!("agentero-paper-move-{}", Uuid::new_v4()));
-        let source = vault.join("papers/inbox/New note.md");
-        fs::create_dir_all(source.parent().expect("source parent")).expect("create source parent");
-        fs::write(&source, "# New note\n").expect("write source");
-
-        let mut index = WikiIndex::default();
-        let result = move_inner(
-            PaperMoveArgs {
-                vault_path: vault.to_string_lossy().to_string(),
-                from_rel: "papers/inbox/New note.md".to_string(),
-                dest_parent_rel: "papers/archive".to_string(),
-                dirty_paths: Vec::new(),
-            },
-            &mut index,
-        )
-        .expect("move succeeds");
-
-        assert_eq!(result.new_rel, "papers/archive/New note.md");
-        assert!(result.link_update.updated_sources.is_empty());
-        assert!(!source.exists());
-        assert!(vault.join(&result.new_rel).exists());
-        let _ = fs::remove_dir_all(vault);
-    }
-
-    #[tokio::test]
-    async fn shared_paper_move_service_uses_the_same_transaction() {
-        let vault =
-            std::env::temp_dir().join(format!("agentero-shared-paper-move-{}", Uuid::new_v4()));
-        let source = vault.join("papers/inbox/paper-1/NOTES.md");
-        fs::create_dir_all(source.parent().expect("source parent")).expect("create source parent");
-        fs::write(&source, "# Paper\n").expect("write source");
-
-        let result = paper_move_service(
-            PaperMoveArgs {
-                vault_path: vault.to_string_lossy().to_string(),
-                from_rel: "papers/inbox/paper-1".into(),
-                dest_parent_rel: "papers/final".into(),
-                dirty_paths: Vec::new(),
-            },
-            Arc::new(Mutex::new(WikiIndex::default())),
-        )
-        .await
-        .expect("shared move succeeds");
-
-        assert_eq!(result.new_rel, "papers/final/paper-1");
-        assert!(!vault.join("papers/inbox/paper-1").exists());
-        assert!(vault.join("papers/final/paper-1/NOTES.md").is_file());
-        let _ = fs::remove_dir_all(vault);
-    }
 }

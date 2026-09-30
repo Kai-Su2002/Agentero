@@ -14,13 +14,19 @@ Settings → **翻译**：
   - Host `settings_get` / `settings:changed` 对 key 按字符 redact 为 `*`；`settings_set` 收到纯 `*` 串时保留原密钥。
   - `translate_text` 在 key 缺省或为 `*` 掩码时从 Host 配置解析真实密钥。
   - 随后做一次连通性 probe。卡片不承担「设为默认」选择。
+  - OpenAI 兼容翻译要求服务支持 **Chat Completions** 格式：`POST {baseUrl}/chat/completions`，返回 `choices[0].message.content`。设置里填写 Base URL（例如 `https://api.openai.com/v1` 或服务商自己的 `/v1` 根地址），不要填写 Responses / Completions 端点；应用会自动追加 `/chat/completions`。
+    用户配置说明见 [配置 OpenAI 兼容翻译](../usage/translate-openai-compatible.md)。
 - 默认服务为 Agent 时展示 Agent / 模型座。
+- **自定义翻译提示词**（`translate.customPrompt`，空 = 内置）：非空时整体替换默认指令块（角色 + 规则），仅对 **Agent 与 OpenAI 兼容**两条 LLM 路径生效（免费引擎与内置 provider 无提示词概念）。支持 `{{targetLang}}` / `{{sourceLang}}` 变量（display name；源语言恒为自动检测 → "the source language"）；**原文与 `[[n]]` 批量规则始终由应用自动追加**，不提供 `{{text}}` 变量，提示词极简也不会破坏批量切分。「填入默认」把当前内置提示词填进输入框供修改，「恢复默认」清空。上限 8000 字符。OpenAI 兼容路径的提示词由 Host 在 `translate_text` 内从 settings 注入（WebView 调用方无感）。
 
 ## 消费方
 
 - PDF 划词菜单「翻译」（首要入口）。
   - 结果卡贴合选区锚点（`trackPin`），PDF 滚轮滚动时随页重定位。
-  - 翻译完成后若未悬停结果卡 / 原文黄高亮 / 页边针，约 700ms 后自动收起；流式输出期间保持可见。隐藏后仍可从页边针重新打开。
+  - 通过卡片关闭按钮、`Esc` 或点击卡片外部可收起；选区锚点随滚动累计移动超过 200px 时也会收起卡片。关闭未钉住的卡片会丢弃译文；如果仍在生成，会尝试取消 Agent 任务并忽略迟到结果。已钉住的译文关闭卡片后仍会保留。
+  - 有本地论文路径时，打开期间的结果和 `pinned` 状态写入 `{paper}/marks/<id>.json`；新译文默认未钉住，旧 JSON 缺少 `pinned` 时按已钉住读取，保留升级前的页边入口，不涉及 SQLite 迁移。
+  - 磁盘刷新保留正在生成、等待保存或删除的本地译文，避免焦点切换或外部文件更新覆盖当前结果；刷新期间发生的本地修改也优先保留。保存或删除失败通过 Toast 提示，并保留当前内存状态。
+  - 卡片在本地存储路径和选区定位都有效时显示钉住开关，提示为「钉住 / 取消钉住」。钉住会同时保留译文记录和页边重开入口；取消钉住会立即移除页边标记，但卡片仍保持打开，关闭后才丢弃译文。卡片关闭后没有单独的删除按钮。每次翻译建立独立记录，流式更新不会清掉当前钉住状态。同一位置的页边标记会纵向错开；多行选区的标记锚定在选区末行，空间不足时仍保持在页面内。
 - PDF **全文翻译**（工具栏 Languages，在视觉批注旁）：
   - 依赖版面分析 + PDF 文字层；翻译 `text` / `abstract` / `header` / `figure_title`（图题·表题）区域（score ≥ 30%）。
   - **不翻译**：算法框及其内部文字；`reference` / `reference_content` 文献条目；“References / Bibliography / 参考文献” 标题；侧栏 `aside_text`。
@@ -30,7 +36,7 @@ Settings → **翻译**：
   - **占位符保护**（`src/lib/translate/mask.ts`）：行内公式 / LaTeX 命令 / URL / DOI 先换成 `⟦n⟧` 再发引擎，回填时还原；引擎吞掉占位符则该 chain 用原文重译一次。
   - 按阅读顺序把 chain **分批**翻译（`buildTranslateBatches`）：批内 payload ≤ 4500 字符（约一页双栏正文），用 `[[n]]` 编号拼成一次请求，让引擎看到上下文；译文按 `[[n]]` 标记切回、逐块写回原 bbox 位置。标记解析不一致时该批**回退为逐段翻译**，保证不丢块。并发 2（Agent 串行）；**每批完成立刻**在 bbox 上盖译文层（非整页等齐）。这里的并发 2 是**前端批次**并发，与内置 provider 在 Host 内对单批做的段级 fan-out（并发 3）正交：选内置时同时在飞的请求最多 2 × 3。
   - 每页纸张右上角外侧常驻窄页签可只翻译本页；页签 hover 不弹出额外文字；本页已有可见译文时，页签切换为隐藏本页译文。隐藏只影响当前 UI 覆盖层，不删除磁盘缓存。
-  - 译文按论文写入 `{paper}/source/layout-translate.json`。缓存命中需匹配 provider / 源语言 / 目标语言 / 非密钥服务配置，并逐块校验 region id + 原文（存的是归一化后的原文，归一化规则变化时旧缓存会 miss 一次并重译）；版面或目标语言变化时只复用仍匹配的块。
+  - 译文按论文写入 `{paper}/source/layout-translate.json`。缓存命中需匹配 provider / 源语言 / 目标语言 / 非密钥服务配置，并逐块校验 region id + 原文（存的是归一化后的原文，归一化规则变化时旧缓存会 miss 一次并重译）；版面或目标语言变化时只复用仍匹配的块。自定义翻译提示词非空时,service key 追加其 FNV-1a 指纹——改提示词即重译；空提示词的 key 与旧版字节一致,存量缓存升级后仍命中。
   - 单页翻译写缓存时按同一 cache key 增量合并，避免只翻译一页时覆盖其它页已经落盘的译文。
   - 运行中再点=停止；有译文再点=清除。实现：`layout-translate.ts` + `layout-translate-source.ts` + `layout-translate-overlay.tsx`。
   - 覆盖层按当前 PDF 页面背景 tone 绘制纸面底色（深字）；暗色下套用与页面栅格相同的 invert filter（`PDF_PAGE_RASTER_DARK_CLASS`），使盖住原文的底色与反转后的纸面一致。排版先以原文尺度估算、再用真实浏览器度量校验：译文膨胀时依次收紧行距（1.25 → 1.10）、缩小字号；遵循严格 CJK 断行，只有不可断的 URL/标识符仍溢出时才允许词内断行。因此普通段落不会过早缩成极小字，并尽量避免裁掉译文。
@@ -49,6 +55,8 @@ Settings → **翻译**：
 - OpenAI-compatible 的 `temperature` 用 0.2（0.0 的直译感太强）。
 
 **内置 provider（`agentero`）不适用以上整套约束**：`tencent/Hunyuan-MT-7B` 是专用 MT 模型而非 instruct 模型，只认它自己的单行模板，Host 改发单条 user message（无 system message），并且**不把 `[[n]]` 喂给模型**——批量对齐依赖指令遵循，对它无效，所以标记由 Host 拆分、逐段请求、按序重组。`⟦n⟧` 占位符仍由前端 `mask.ts` 插入并原样透传。详见 [../backend/builtin-provider.md](../backend/builtin-provider.md) §翻译：Hunyuan-MT。
+
+**自定义提示词（`translate.customPrompt` 非空）替换语义**：前端 `buildTranslatePrompt` 用它整体取代默认指令块（内置模板抽成 `DEFAULT_TRANSLATE_PROMPT_TEMPLATE`，空值渲染结果与旧版字节一致）；Host `openai_translate_messages` 用它取代 system message（`{{targetLang}}`/`{{sourceLang}}` 插值，映射与前端 `targetLangDisplayName` 一致）。两条路径都保留应用侧追加的 `[[n]]` 批量规则与 `Text:` 原文。改一处要同步另一处的约定不变。
 
 ## 路径
 

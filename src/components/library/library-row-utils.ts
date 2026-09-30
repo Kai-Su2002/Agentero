@@ -5,6 +5,7 @@
  */
 import type { ReactNode } from "react";
 import type { PaperLibraryRow, PaperMetadata } from "@/lib/paper";
+import { publicationDateSortKey } from "@/lib/paper/publication-date";
 import type { ReadingHeatmap } from "@/lib/paper/reading-heatmap";
 import { type PaperTag, visiblePaperTags } from "@/lib/paper/tags";
 import type { LibraryColumnKey, LibraryColumnPref } from "@/lib/settings";
@@ -34,10 +35,17 @@ export function isMissingLocalPdf(p: PaperLibraryRow): boolean {
 	return p.has_pdf === false;
 }
 
+/** Catalog timestamps include a timezone; invalid legacy values stay empty. */
+export function addedDate(value: string | undefined): Date | null {
+	const timestamp = value?.trim() ? Date.parse(value) : Number.NaN;
+	return Number.isFinite(timestamp) ? new Date(timestamp) : null;
+}
+
 /** Precomputed per-paper keys so sort/filter avoid O(n log n) re-coerce. */
 export type PaperRow = {
 	paper: PaperLibraryRow;
 	tags: PaperTag[];
+	searchText: string;
 	tagSearch: string;
 	sort: Record<SortKey, string | number>;
 };
@@ -45,17 +53,36 @@ export type PaperRow = {
 export function buildPaperRow(p: PaperLibraryRow): PaperRow {
 	const tags = visiblePaperTags(p.tags);
 	const id = identifierValue(p) ?? "";
+	const tagSearch = tags
+		.map((t) => t.name)
+		.join(" ")
+		.toLocaleLowerCase();
 	return {
 		paper: p,
 		tags,
-		tagSearch: tags
-			.map((t) => t.name)
+		tagSearch,
+		searchText: [
+			p.title,
+			p.id,
+			id,
+			p.path,
+			p.doi,
+			p.arxiv_id,
+			p.pmid ? `PMID:${p.pmid}` : null,
+			p.isbn,
+			p.publication,
+			p.publisher,
+			...(p.authors ?? []),
+			tagSearch,
+		]
+			.filter((value): value is string => Boolean(value?.trim()))
 			.join(" ")
 			.toLocaleLowerCase(),
 		sort: {
 			title: (p.title ?? "").toLocaleLowerCase(),
 			authors: (p.authors?.[0] ?? "").toLocaleLowerCase(),
-			year: p.year ?? Number.NEGATIVE_INFINITY,
+			date: publicationDateSortKey(p) ?? Number.NEGATIVE_INFINITY,
+			addedAt: addedDate(p.added_at)?.getTime() ?? Number.NEGATIVE_INFINITY,
 			publication: (p.publication ?? "").toLocaleLowerCase(),
 			id: id.toLocaleLowerCase(),
 			tags: tags
@@ -77,7 +104,8 @@ export function comparePaperRows(
 	const bv = b.sort[key];
 	let cmp = 0;
 	if (typeof av === "number" && typeof bv === "number") {
-		cmp = av - bv;
+		// Equal missing values (-Infinity) must still use the stable tie-break.
+		cmp = av === bv ? 0 : av - bv;
 	} else {
 		cmp = String(av).localeCompare(String(bv), undefined, {
 			numeric: true,

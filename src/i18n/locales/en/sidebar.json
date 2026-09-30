@@ -13,7 +13,6 @@
 		"copyPathFailed": "Could not copy path",
 		"downloadAssets": "Download paper assets",
 		"downloadAllMissing": "Download all incomplete paper assets",
-		"downloadFailed": "Failed to download paper assets.",
 		"downloadReason": {
 			"noPdf": "Missing PDF",
 			"noBody": "Missing TeX and PAPER.md (either is enough; TeX preferred)"
@@ -125,18 +124,20 @@
 		"rescanFailed": "Rescan failed.",
 		"colTitle": "Title",
 		"colAuthors": "Authors",
-		"colYear": "Year",
+		"colAddedAt": "Date added",
+		"colDate": "Date",
 		"colTags": "Tags",
 		"colId": "ID",
 		"colPublication": "Publication",
 		"colCitations": "Citations",
 		"heatmapTooltip": "{{total}} events · {{highlights}} highlights · {{asks}} asks · {{translates}} translations",
+		"resizeColumn": "Resize {{column}}",
 		"sortBy": "Sort by {{column}}",
 		"copyHint": "Double-click to copy {{label}}",
 		"copied": "Copied {{label}}",
 		"copyFailed": "Could not copy to clipboard",
 		"count": "{{formatted}} papers",
-		"search": "Search by title or tag",
+		"search": "Search title, author, ID, DOI, or tag",
 		"filterTags": "Filter by tag",
 		"filterTagsEmpty": "No tags in this library yet.",
 		"clearTagFilter": "Clear tag filter",
@@ -160,9 +161,6 @@
 		"recognizeArxivRateLimited": "arXiv is rate-limiting metadata lookups ({{id}}). Title/authors were not filled — try Refresh metadata later.",
 		"importFailed": "Import failed",
 		"exportFailed": "Export failed",
-		"backfillPublication": "Backfill venues",
-		"backfillPublicationDone": "Updated {{updated}} of {{total}} venues",
-		"backfillPublicationFailed": "Failed to backfill venues",
 		"desktopOnly": "Import/export requires the desktop app.",
 		"refreshMetadata": "Refresh metadata",
 		"refreshMetadataDone": "Metadata refreshed",
@@ -206,11 +204,6 @@
 			"add": "Add subscription",
 			"urlPlaceholder": "Feed URL",
 			"all": "All",
-			"filter": {
-				"all": "All",
-				"paper": "Papers",
-				"other": "Other"
-			},
 			"refresh": "Refresh",
 			"refreshOne": "Refresh now",
 			"rename": "Rename",
@@ -241,7 +234,8 @@
 				"parse": "Could not parse this feed.",
 				"http": "The feed server returned an error.",
 				"fetch": "Could not fetch this feed.",
-				"body": "Could not read the feed body."
+				"body": "Could not read the feed body.",
+				"opFailed": "The feed operation failed."
 			}
 		},
 		"skills": {
@@ -257,10 +251,6 @@
 				"submit": "Submission"
 			}
 		}
-	},
-	"connector": {
-		"saved": "Saved “{{title}}” from browser",
-		"deduped": "Already in library: “{{title}}”"
 	},
 	"zoteroMigrate": {
 		"button": "Migrate from Zotero",
@@ -282,7 +272,6 @@
 		"allFolders": "All folders",
 		"selectedCount": "{{sel}} / {{total}} selected",
 		"progressLabel": "Migrating {{current}} / {{total}}",
-		"parseProgressLabel": "Parsing PDFs {{current}} / {{total}}",
 		"copyPdfs": "Copy PDFs into the vault",
 		"migrateNotes": "Migrate Zotero notes",
 		"migrateAnnotations": "Migrate PDF annotations",
@@ -343,7 +332,6 @@
 		"fetchFailed": "Failed to fetch metadata.",
 		"needsVault": "Open a vault first.",
 		"batchEmpty": "No valid identifiers found.",
-		"batchSummary": "Imported {{imported}} papers and {{skills}} skills, skipped {{skipped}}, failed {{failed}}",
 		"skillImportTitle": "Choose Skills to install",
 		"skillImportCancel": "Cancel",
 		"skillImportConfirm": "Install {{count}}",
@@ -367,11 +355,22 @@
 		"selectPrompt": "Select a paper to see metadata.",
 		"title": "Title",
 		"authors": "Authors",
-		"year": "Year",
+		"date": "Date",
 		"publication": "Publication",
 		"tags": "Tags",
 		"addTag": "Add tag…",
 		"removeTag": "Remove tag {{tag}}",
+		"editTagColor": "Change color of {{tag}}",
+		"tagColors": {
+			"red": "Red",
+			"orange": "Orange",
+			"yellow": "Yellow",
+			"green": "Green",
+			"teal": "Teal",
+			"blue": "Blue",
+			"indigo": "Indigo",
+			"purple": "Purple"
+		},
 		"tagColor": "Tag color",
 		"tagColorDefault": "Default (no color)",
 		"tagColorNamed": "Color {{color}}",
@@ -389,7 +388,7 @@
 			"fieldTitle": "Title",
 			"fieldAuthors": "Authors",
 			"authorsPlaceholder": "One author per line",
-			"fieldYear": "Year",
+			"fieldDate": "Date",
 			"fieldArxivId": "arXiv ID",
 			"fieldDoi": "DOI",
 			"fieldPublication": "Publication",

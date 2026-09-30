@@ -26,6 +26,7 @@
 		"catVault": "Vault",
 		"catLibrary": "Library",
 		"catTab": "Tab",
+		"catPdf": "PDF",
 		"settingsOpen": "Open Settings",
 		"settingsClose": "Close Settings",
 		"vaultOpen": "Open Vault…",
@@ -47,6 +48,7 @@
 		"tabSplitPane": "Split Pane Right",
 		"tabNext": "Next Tab",
 		"tabPrev": "Previous Tab",
+		"exportAnnotatedPdf": "Export Annotated PDF",
 		"wandOpen": "Magic Wand (Import by ID)"
 	},
 	"titlebar": {
@@ -54,7 +56,6 @@
 		"hideLeftSidebar": "Hide left sidebar",
 		"showSidebarHint": "Show sidebar ({{shortcut}})",
 		"hideSidebarHint": "Hide sidebar ({{shortcut}})",
-		"agentPanel": "Agent panel",
 		"annotationsPanel": "Annotations",
 		"showRightSidebar": "Show right sidebar",
 		"hideRightSidebar": "Hide right sidebar",
@@ -88,7 +89,6 @@
 		"showPdf": "Show PDF version",
 		"openTexPdf": "Open PDF",
 		"texCompiling": "Compiling…",
-		"closeSplit": "Close split · {{title}}",
 		"contextClose": "Close",
 		"contextOpenNotes": "Open Notes",
 		"contextMoveToNewWindow": "Move to New Window",
@@ -110,11 +110,7 @@
 			"blue": "Blue",
 			"indigo": "Indigo",
 			"purple": "Purple"
-		},
-		"splitDropHint": "Drop to open as split",
-		"splitNotAllowed": "This item cannot open in a split pane.",
-		"emptyTitle": "No document open",
-		"emptyHint": "Pick a file or paper from the sidebar to open it in a tab."
+		}
 	},
 	"windows": {
 		"loading": "Loading…",
@@ -157,7 +153,6 @@
 			"repair": "Repair links",
 			"cancel": "Keep links unchanged",
 			"repaired": "Updated links in {{count}} Markdown file(s).",
-			"notRepaired": "The external rename was detected, but links were left unchanged because a safe repair could not be prepared.",
 			"vaultChanged": "The active vault changed before the external rename repair could run.",
 			"failed": "Could not repair links after the external rename."
 		},
@@ -170,12 +165,12 @@
 		"writeDesktopOnly": "Writing local files requires the Tauri app.",
 		"noVaultName": "No vault",
 		"noVaultOpenTitle": "No vault open",
-		"noVaultOpenDescription": "Open or create a vault folder to view files and notes.",
 		"recentTitle": "Recent",
 		"recentEmpty": "No recent vaults yet.",
 		"removeRecent": "Remove {{name}} from recent",
 		"recentMissing": "Folder no longer exists: {{path}}",
 		"openPathMissing": "Cannot open vault — folder does not exist: {{path}}",
+		"restoredVaultMissing": "The last vault no longer exists, please reopen it: {{path}}",
 		"switchVault": "Switch vault",
 		"openVaultButton": "Open vault…",
 		"openRemoteVaultButton": "Open remote…",
@@ -192,7 +187,6 @@
 		"remoteBadge": "Remote",
 		"remoteNoFinder": "Reveal in Finder is not available for remote vaults.",
 		"remoteNoTerminal": "Open in Terminal is not available for remote vaults.",
-		"remoteDeleteDirect": "Remote delete removes files on the server (no recycle bin).",
 		"runTauriPrefix": "Run the app with",
 		"runTauriSuffix": "to open a vault.",
 		"skillsSeeded": "Installed {{count}} new skill(s): {{names}}",
@@ -221,8 +215,6 @@
 	},
 	"tasks": {
 		"title": "Background Tasks",
-		"toggle": "Show or hide background tasks",
-		"collapse": "Collapse",
 		"clearFinished": "Clear finished",
 		"cancel": "Cancel",
 		"cancelled": "Cancelled",

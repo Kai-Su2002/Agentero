@@ -126,7 +126,7 @@ impl SyncBackendConfig {
         self.prefix = self.prefix.trim().trim_matches('/').to_string();
         self.access_key = self.access_key.trim().to_string();
         self.secret_key = self.secret_key.trim().to_string();
-        self.webdav_url = self.webdav_url.trim().trim_end_matches('/').to_string();
+        self.webdav_url = normalize_webdav_url(&self.webdav_url);
         self.webdav_username = self.webdav_username.trim().to_string();
         self.webdav_password = self.webdav_password.trim().to_string();
         if !INTERVAL_CHOICES.contains(&self.interval_minutes) {
@@ -154,6 +154,31 @@ impl SyncBackendConfig {
                 .unwrap_or_default();
         }
     }
+}
+
+/// Folder the app uses when the user points at Jianguoyun's WebDAV root.
+const JIANGUOYUN_ROOT_FOLDER: &str = "agentero";
+
+/// Normalize a user-entered WebDAV directory URL (trailing slashes trimmed).
+///
+/// Jianguoyun's WebDAV root (`https://dav.jianguoyun.com/dav/`) lists the
+/// account tree but refuses file creation inside it — every PUT answers 404
+/// ObjectNotFound — and that root address is exactly what the provider's
+/// docs tell users to copy. Map it onto a dedicated folder under the root so
+/// the paste-the-official-address path just works. Fixed name + pure
+/// function: every device (and every app version) resolves the same
+/// directory. Idempotent, so applying it on top of an already-expanded URL
+/// is a no-op.
+pub(crate) fn normalize_webdav_url(raw: &str) -> String {
+    let trimmed = raw.trim().trim_end_matches('/');
+    let Ok(mut url) = url::Url::parse(trimmed) else {
+        return trimmed.to_string();
+    };
+    if url.host_str() == Some("dav.jianguoyun.com") && url.path() == "/dav" {
+        url.set_path(&format!("/dav/{JIANGUOYUN_ROOT_FOLDER}"));
+        return url.to_string();
+    }
+    trimmed.to_string()
 }
 
 /// https only, plain http reserved for loopback development servers.
@@ -343,6 +368,54 @@ mod tests {
         assert_eq!(cfg.endpoint, "http://x");
         cfg.interval_minutes = 60;
         assert_eq!(cfg.normalized().interval_minutes, 60);
+    }
+
+    #[test]
+    fn jianguoyun_webdav_root_maps_to_the_reserved_folder() {
+        for raw in [
+            "https://dav.jianguoyun.com/dav",
+            "https://dav.jianguoyun.com/dav/",
+            "  https://dav.jianguoyun.com/dav///  ",
+        ] {
+            let effective = normalize_webdav_url(raw);
+            assert_eq!(effective, "https://dav.jianguoyun.com/dav/agentero");
+            // Idempotent: re-saving the expanded address must not move data.
+            assert_eq!(normalize_webdav_url(&effective), effective);
+        }
+        let cfg = SyncBackendConfig {
+            backend: SyncBackendKind::Webdav,
+            webdav_url: "https://dav.jianguoyun.com/dav/".into(),
+            ..SyncBackendConfig::default()
+        };
+        assert_eq!(
+            cfg.normalized().webdav_url,
+            "https://dav.jianguoyun.com/dav/agentero"
+        );
+    }
+
+    #[test]
+    fn webdav_url_normalization_touches_nothing_else() {
+        for (raw, expected) in [
+            (
+                "https://dav.jianguoyun.com/dav/agentero/",
+                "https://dav.jianguoyun.com/dav/agentero",
+            ),
+            (
+                "https://dav.jianguoyun.com/dav/%E8%B5%84%E6%96%99",
+                "https://dav.jianguoyun.com/dav/%E8%B5%84%E6%96%99",
+            ),
+            (
+                "https://cloud.example.com/dav/",
+                "https://cloud.example.com/dav",
+            ),
+            ("https://dav.jianguoyun.com/", "https://dav.jianguoyun.com"),
+            (
+                "http://127.0.0.1:5005/agentero/",
+                "http://127.0.0.1:5005/agentero",
+            ),
+        ] {
+            assert_eq!(normalize_webdav_url(raw), expected, "raw: {raw}");
+        }
     }
 
     #[test]

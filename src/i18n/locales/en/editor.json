@@ -25,7 +25,6 @@
 	},
 	"codeBlock": {
 		"languageLabel": "Code language",
-		"language": "Language",
 		"plainText": "Plain text",
 		"search": "Search language…",
 		"noMatch": "No matching language",
@@ -151,21 +150,15 @@
 		"unsupported": "This embed type is preserved as Markdown but is not rendered yet.",
 		"error": "The embedded content could not be loaded.",
 		"openSource": "Open {{target}}",
-		"annotationHighlight": "Highlight",
-		"annotationVisual": "Visual annotation",
 		"annotationPage": "p.{{page}}",
-		"annotationExpand": "Show more",
-		"annotationCollapse": "Show less",
 		"untitled": "Embed",
 		"annotationRoleUser": "You",
-		"annotationRoleAssistant": "Assistant",
-		"annotationNoTranscript": "No conversation saved for this mark."
+		"annotationRoleAssistant": "Assistant"
 	},
 	"frontmatter": {
 		"title": "Properties",
 		"yamlLabel": "YAML frontmatter",
 		"placeholder": "aliases:\n  - Full paper title\n  - Short title",
-		"hint": "Obsidian-compatible YAML. aliases help wikilink search find this note by title.",
 		"sourceMode": "Edit as YAML source",
 		"formMode": "Edit as form",
 		"sourceOnly": "Complex YAML — source only",
@@ -202,7 +195,8 @@
 			"quote": "Quote",
 			"codeBlock": "Code block",
 			"mermaid": "Mermaid diagram",
-			"callout": "Callout"
+			"callout": "Callout",
+			"columns": "Columns"
 		}
 	},
 	"statusBar": {

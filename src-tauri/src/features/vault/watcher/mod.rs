@@ -138,6 +138,15 @@ impl FsWatchController {
                                 let batch = std::mem::take(&mut pending);
                                 for payload in payloads_from_events(batch) {
                                     invalidate_caps_for_paths(&app, &watch_root, &payload.paths);
+                                    // Watch-folder auto-ingest (papers/
+                                    // adoption); schedules work, never blocks
+                                    // this loop.
+                                    crate::features::paper::ingest::on_fs_batch(
+                                        &app,
+                                        &watch_root,
+                                        &payload.kind,
+                                        &payload.paths,
+                                    );
                                     let _ = app.emit_to(
                                         EventTarget::webview_window(label.clone()),
                                         "vault:file-changed",
@@ -188,9 +197,17 @@ impl FsWatchController {
 }
 
 /// Ignore churn from internal state, VCS metadata, and dependencies.
+/// Sync-store artifacts (`blobs/`, `manifests/`, `HEAD`, `vault.json`)
+/// mirrored into the vault by a desktop WebDAV client are engine churn too,
+/// never user content — matched as any path segment, mirroring
+/// `snapshot::is_ignored_name` so the two never disagree.
 fn is_ignored(path: &str) -> bool {
     let p = path.replace('\\', "/");
-    p.contains("/.agentero/") || p.contains("/.git/") || p.contains("/node_modules/")
+    p.contains("/.agentero/")
+        || p.contains("/.git/")
+        || p.contains("/node_modules/")
+        || p.split('/')
+            .any(crate::features::vault::tree::is_sync_store_artifact)
 }
 
 /// Files whose presence decides `PaperCaps`: a PDF to parse, LaTeX source that
@@ -210,7 +227,7 @@ fn is_caps_relevant(path: &str) -> bool {
 /// is a harmless no-op.
 fn caps_paper_dirs(vault_root: &str, path: &str) -> Vec<String> {
     let root = std::path::Path::new(vault_root);
-    let canonical = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let canonical = crate::core::fs::canonicalize_best_effort(root);
     let file = std::path::Path::new(path);
     let Ok(rel) = file
         .strip_prefix(&canonical)
@@ -362,6 +379,22 @@ mod tests {
         assert!(is_ignored(r"C:\vault\.agentero\catalog.sqlite"));
         assert!(is_ignored("/vault/.agentero/wiki-cache.json"));
         assert!(is_ignored("/vault/.git/index"));
+    }
+
+    #[test]
+    fn mirrored_sync_store_changes_are_ignored() {
+        // Store mirrored at the vault root by a desktop WebDAV client.
+        assert!(is_ignored("/vault/blobs/ab/hash"));
+        assert!(is_ignored("/vault/manifests/0000000001-abcd.json.gz"));
+        assert!(is_ignored("/vault/HEAD"));
+        assert!(is_ignored("/vault/vault.json"));
+        // Same names inside a user-named subfolder of a mirrored target.
+        assert!(is_ignored("/vault/store/blobs/ab/hash"));
+        assert!(is_ignored("/vault/store/HEAD"));
+        // Windows separators, and user files that merely look similar.
+        assert!(is_ignored(r"C:\vault\blobs\ab\hash"));
+        assert!(!is_ignored("/vault/papers/p1/NOTES.md"));
+        assert!(!is_ignored("/vault/notes/HEAD.md"));
     }
 
     #[test]

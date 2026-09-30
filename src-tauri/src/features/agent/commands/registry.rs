@@ -53,7 +53,7 @@ pub fn agent_scan_catalog(registry: State<'_, AgentRegistry>) -> ApiResult<Catal
 }
 
 /// Scan catalog and compare installed CLI versions against silent-update
-/// targets (npm latest / dsh pin). Settings shows Upgrade only when
+/// targets (npm latest). Settings shows Upgrade only when
 /// `updateAvailable === true`. Network / `--version` I/O runs on a worker.
 #[tauri::command]
 #[specta::specta]
@@ -262,6 +262,17 @@ pub async fn agent_run_tool_lifecycle(
 
     match result {
         Ok(()) => {
+            // Refresh the catalog descriptor after managed installs so dynamic
+            // commands (such as Antigravity's managed absolute path) are used
+            // immediately by the next probe.
+            if template_id_for_log == "antigravity-acp" {
+                if let Err(e) = registry.ensure_catalog_agent(&template_id_for_log, false) {
+                    log::warn!(
+                        target: "agentero::agent",
+                        "tool_lifecycle descriptor refresh failed template={template_id_for_log}: {e}"
+                    );
+                }
+            }
             // Uninstall removed binaries; drop the registry entry too so the
             // row goes back to "not installed" (never leave a stale entry).
             if matches!(action, ToolLifecycleAction::Uninstall) {

@@ -8,11 +8,12 @@
 //! starts do not pile up empty threads in agent history.
 
 use crate::features::agent::acp::client::{
-    acp_terminals, client_initialize_request, simplified_agent_cwd, timed_acp_initialize,
-    timed_acp_request, to_acp_agent,
+    acp_terminals, agent_spawn_cwd, client_initialize_request, timed_acp_initialize,
+    timed_acp_new_session, timed_acp_request, to_acp_agent,
 };
 use crate::features::agent::acp::updates::{
-    emit_session_config_options, models_from_config_options,
+    emit_session_config_options, models_from_config_options, models_from_session_models_value,
+    richer_models_event,
 };
 use crate::features::agent::models::{AgentDescriptor, WarmResult};
 use crate::features::agent::runtime::events::AgentEventEmitter;
@@ -24,7 +25,7 @@ use crate::features::agent::session::pool::{
     pool_key, AgentWarmPool, PoolKey, PooledSlot, POOL_IDLE_TTL,
 };
 use agent_client_protocol::schema::v1::{DeleteSessionRequest, NewSessionRequest};
-use agent_client_protocol::{Agent, ConnectionTo};
+use agent_client_protocol::{Agent, ConnectionTo, UntypedMessage};
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
@@ -51,14 +52,19 @@ pub async fn warm_agent(
 ) -> WarmResult {
     let agent_id = desc.id.clone();
     let session_id = Uuid::new_v4().to_string();
-    let cwd = simplified_agent_cwd(&if let Some(ref r) = remote {
-        r.agent_cwd()
-    } else {
-        vault_path
-            .map(PathBuf::from)
-            .filter(|p| p.is_dir())
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
-    });
+    let cwd = match agent_spawn_cwd(remote.as_deref(), vault_path.as_deref()) {
+        Ok(cwd) => cwd,
+        Err(e) => {
+            return WarmResult {
+                agent_id,
+                ok: false,
+                models: None,
+                usage_used: None,
+                usage_size: None,
+                error: Some(e.to_string()),
+            };
+        }
+    };
     let key: PoolKey = pool_key(&agent_id, cwd.clone(), remote.as_ref());
 
     // Healthy pooled slot from an earlier warm: reuse its cached models /
@@ -247,13 +253,25 @@ impl WarmSetupCtx {
         let can_resume = session_caps.resume.is_some();
         let can_load = init.agent_capabilities.load_session;
 
-        let new_session = timed_acp_request(
-            "new_session",
+        // Send session/new untyped so the raw response survives: the schema drops
+        // hermes-agent's pre-stabilization top-level `models` field on deserialize,
+        // and the typed NewSessionResponse would lose it before we can look.
+        let raw_new_session = timed_acp_new_session(
             connection
-                .send_request(NewSessionRequest::new(self.cwd.clone()))
+                .send_request(
+                    UntypedMessage::new("session/new", NewSessionRequest::new(self.cwd.clone()))
+                        .map_err(|e| {
+                            agent_client_protocol::Error::internal_error().data(e.to_string())
+                        })?,
+                )
                 .block_task(),
         )
         .await?;
+        let new_session: agent_client_protocol::schema::v1::NewSessionResponse =
+            agent_client_protocol::JsonRpcResponse::from_value(
+                "session/new",
+                raw_new_session.clone(),
+            )?;
 
         let acp_session_id = new_session.session_id;
         let config_options = apply_model_and_collaboration_prefs(
@@ -267,9 +285,11 @@ impl WarmSetupCtx {
         )
         .await;
         emit_session_config_options(&self.app, &self.session_id, &self.agent_id, &config_options);
-        if let Some(ev) =
-            models_from_config_options(&self.session_id, &self.agent_id, &config_options)
-        {
+        let models_event = richer_models_event(
+            models_from_config_options(&self.session_id, &self.agent_id, &config_options),
+            models_from_session_models_value(&self.session_id, &self.agent_id, &raw_new_session),
+        );
+        if let Some(ev) = models_event {
             if let Ok(mut g) = self.models_out.lock() {
                 *g = Some(ev);
             }

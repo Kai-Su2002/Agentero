@@ -81,8 +81,6 @@ let cache: AppSettings = {
 };
 let loaded = false;
 let loadPromise: Promise<AppSettings> | null = null;
-/** Absolute path reported by Host (empty until loaded in Tauri). */
-let settingsFilePath = "";
 
 function cloneSettings(s: AppSettings): AppSettings {
 	return {
@@ -108,11 +106,6 @@ export function loadSettings(): AppSettings {
 	return cloneSettings(cache);
 }
 
-/** Absolute path to Host settings file, if known. */
-export function getSettingsFilePath(): string {
-	return settingsFilePath;
-}
-
 /**
  * Load settings from Host XDG config (`settings.json`).
  * One-shot: migrates legacy `localStorage` when the file does not exist yet.
@@ -126,7 +119,6 @@ export async function ensureSettingsLoaded(): Promise<AppSettings> {
 				const res = await callApi(() => commands.settingsGet(), {
 					fallback: "settings_get failed",
 				});
-				settingsFilePath = res.path;
 				let next = normalizeSettings(fromSettingsWire(res.settings));
 
 				if (!res.existed) {
@@ -353,6 +345,9 @@ function normalizePartial(
 	if (typeof parsed.autoOpenPaperNotes !== "boolean") {
 		merged.autoOpenPaperNotes = DEFAULT_SETTINGS.autoOpenPaperNotes;
 	}
+	if (typeof parsed.autoIngest !== "boolean") {
+		merged.autoIngest = DEFAULT_SETTINGS.autoIngest;
+	}
 	if (typeof parsed.replaceCurrentTabOnOpenPaper !== "boolean") {
 		merged.replaceCurrentTabOnOpenPaper =
 			DEFAULT_SETTINGS.replaceCurrentTabOnOpenPaper;
@@ -502,12 +497,13 @@ function isTranslateTargetLang(v: unknown): v is TranslateTargetLang {
 
 /**
  * Reconcile stored column prefs against the canonical set:
- * drop unknown/duplicate keys, append missing columns (visible), and keep
+ * drop unknown/duplicate keys, append missing columns with their default visibility, and keep
  * `title` visible so rows stay identifiable.
  *
  * Migration: if the saved order matches the old canonical layout (before the
  * standalone publication column was added), adopt the new canonical order so
- * publication lands right after year. Custom user orders are preserved.
+ * publication lands right after the date. Custom user orders are preserved.
+ * The `year` column key was renamed to `date`; it keeps its saved position.
  */
 function normalizeLibraryColumns(raw: unknown): LibraryColumnPref[] {
 	const known = new Set<string>(LIBRARY_COLUMN_KEYS);
@@ -516,15 +512,21 @@ function normalizeLibraryColumns(raw: unknown): LibraryColumnPref[] {
 	if (Array.isArray(raw)) {
 		for (const item of raw) {
 			if (!item || typeof item !== "object") continue;
-			const key = (item as { key?: unknown }).key;
-			if (typeof key !== "string" || !known.has(key)) continue;
+			const rawKey = (item as { key?: unknown }).key;
+			if (typeof rawKey !== "string") continue;
+			const key = rawKey === "year" ? "date" : rawKey;
+			if (!known.has(key)) continue;
 			const k = key as LibraryColumnKey;
 			if (seen.has(k)) continue;
 			seen.add(k);
 			const visible = (item as { visible?: unknown }).visible;
+			const width = (item as { widthRem?: unknown }).widthRem;
 			saved.push({
 				key: k,
 				visible: typeof visible === "boolean" ? visible : true,
+				...(typeof width === "number" && Number.isFinite(width) && width > 0
+					? { widthRem: Math.min(120, Math.max(5, width)) }
+					: {}),
 			});
 		}
 	}
@@ -532,7 +534,7 @@ function normalizeLibraryColumns(raw: unknown): LibraryColumnPref[] {
 	const oldCanonicalKeys: LibraryColumnKey[] = [
 		"title",
 		"authors",
-		"year",
+		"date",
 		"tags",
 		"id",
 	];
@@ -542,16 +544,14 @@ function normalizeLibraryColumns(raw: unknown): LibraryColumnPref[] {
 
 	const out: LibraryColumnPref[] = [];
 	if (matchesOldLayout) {
-		for (const key of LIBRARY_COLUMN_KEYS) {
-			const pref = saved.find((c) => c.key === key);
-			out.push({ key, visible: pref?.visible ?? true });
+		for (const fallback of DEFAULT_LIBRARY_COLUMNS) {
+			const pref = saved.find((c) => c.key === fallback.key);
+			out.push(pref ?? { ...fallback });
 		}
 	} else {
-		for (const key of LIBRARY_COLUMN_KEYS) {
-			if (!seen.has(key)) out.push({ key, visible: true });
-		}
-		for (const c of saved) {
-			if (seen.has(c.key)) out.push({ ...c });
+		out.push(...saved);
+		for (const fallback of DEFAULT_LIBRARY_COLUMNS) {
+			if (!seen.has(fallback.key)) out.push({ ...fallback });
 		}
 	}
 
@@ -638,6 +638,10 @@ function normalizeTranslateSettings(
 	}
 	if (typeof raw.modelId === "string") {
 		base.modelId = raw.modelId.trim();
+	}
+	if (typeof raw.customPrompt === "string") {
+		// Cap extreme values from hand-edited storage (the UI slices to 8000).
+		base.customPrompt = raw.customPrompt.slice(0, 8000);
 	}
 	return base;
 }

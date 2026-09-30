@@ -45,13 +45,43 @@ mod acp_live {
         assert!(ids.contains(&"codex-acp"));
         assert!(ids.contains(&"hermes"));
         assert!(!ids.contains(&"antigravity"));
+        assert_eq!(
+            ids.contains(&"antigravity-acp"),
+            !cfg!(all(target_os = "macos", target_arch = "x86_64"))
+        );
         assert!(ids.contains(&"qodercli"));
         assert!(ids.contains(&"grok-build"));
         assert!(ids.contains(&"pi"));
         assert!(ids.contains(&"dsh"));
         assert!(ids.contains(&"kimi-code"));
         assert!(ids.contains(&"zcode"));
+        assert!(ids.contains(&"minimax-code"));
         assert!(!ids.contains(&"custom"));
+    }
+
+    #[test]
+    #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
+    fn antigravity_template_uses_the_official_server() {
+        let agent = catalog_templates()
+            .into_iter()
+            .find(|entry| entry.id == "antigravity-acp")
+            .expect("Antigravity template");
+        assert!(agent.command.ends_with(if cfg!(windows) {
+            "agy_acp_server.exe"
+        } else {
+            "agy_acp_server.par"
+        }));
+        assert_eq!(
+            agent.args,
+            if cfg!(target_os = "linux") {
+                vec!["--uid="]
+            } else {
+                vec![]
+            }
+        );
+        // Detect the server itself, not the desktop app or the retired adapter.
+        assert!(agent.detect_command.is_none());
+        assert!(crate::features::agent::registry::lifecycle::supports_lifecycle(&agent.id));
     }
 
     #[test]
@@ -138,6 +168,18 @@ mod acp_live {
         assert_eq!(kimi.command, "kimi");
         assert_eq!(kimi.args, vec!["acp".to_string()]);
         assert_eq!(kimi.detect_command.as_deref(), Some("kimi"));
+    }
+
+    #[test]
+    fn minimax_template_uses_native_acp() {
+        let minimax = catalog_templates()
+            .into_iter()
+            .find(|entry| entry.id == "minimax-code")
+            .expect("MiniMax Code template");
+        assert_eq!(minimax.command, "mcode");
+        assert_eq!(minimax.args, vec!["acp".to_string()]);
+        assert_eq!(minimax.detect_command.as_deref(), Some("mcode"));
+        assert_eq!(minimax.login_command.as_deref(), Some("mcode login"));
     }
 
     /// grok-build must not detect or launch through `npx`: `npx` resolves on any
@@ -267,7 +309,9 @@ mod acp_live {
             "codex-acp",
             vec![],
         );
-        let cwd = std::env::current_dir().expect("cwd");
+        let vault = std::env::current_dir().expect("cwd");
+        let cwd =
+            crate::features::agent::acp::client::agent_spawn_cwd(None, vault.to_str()).unwrap();
         let result = list_acp_sessions(&d, cwd.clone(), None, None)
             .await
             .expect("session/list must succeed");
@@ -408,31 +452,5 @@ mod list_sessions_paging {
             1,
             LIST_SESSIONS_BUDGET
         ));
-    }
-
-    #[test]
-    fn simplified_agent_cwd_strips_extended_prefix() {
-        use crate::features::agent::acp::client::simplified_agent_cwd;
-
-        // Rust canonicalize() hands back extended-length drive paths; MSYS2
-        // shells cannot cd into them, so the agent must receive the plain form.
-        assert_eq!(
-            simplified_agent_cwd(std::path::Path::new(r"\\?\D:\Documents\Zotero")),
-            std::path::PathBuf::from(r"D:\Documents\Zotero")
-        );
-        assert_eq!(
-            simplified_agent_cwd(std::path::Path::new(r"D:\Documents\Zotero")),
-            std::path::PathBuf::from(r"D:\Documents\Zotero")
-        );
-        // UNC layouts have no plain drive form and stay unchanged.
-        assert_eq!(
-            simplified_agent_cwd(std::path::Path::new(r"\\?\UNC\server\share")),
-            std::path::Path::new(r"\\?\UNC\server\share")
-        );
-        // POSIX paths pass through untouched.
-        assert_eq!(
-            simplified_agent_cwd(std::path::Path::new("/home/user/vault")),
-            std::path::Path::new("/home/user/vault")
-        );
     }
 }

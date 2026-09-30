@@ -49,7 +49,7 @@ export const commands = {
 	agentScanCatalog: () => __TAURI_INVOKE<ApiResult<CatalogScanResponse_Serialize>>("agent_scan_catalog"),
 	/**
 	 *  Scan catalog and compare installed CLI versions against silent-update
-	 *  targets (npm latest / dsh pin). Settings shows Upgrade only when
+	 *  targets (npm latest). Settings shows Upgrade only when
 	 *  `updateAvailable === true`. Network / `--version` I/O runs on a worker.
 	 */
 	agentCheckCatalogUpdates: () => typedError<ApiResult<CatalogScanResponse_Serialize>, string>(__TAURI_INVOKE("agent_check_catalog_updates")),
@@ -129,6 +129,12 @@ export const commands = {
 	 *  the per-kind cap (ParseBody = 1) throttles execution. Returns the count.
 	 */
 	jobReconcileVault: (args: JobReconcileVaultArgs) => typedError<ApiResult<number>, string>(__TAURI_INVOKE("job_reconcile_vault", { args })),
+	/**
+	 *  Startup reconcile: adopt bare `papers/` child folders (created while the
+	 *  app was closed) into the library. Fire-and-forget from the frontend's
+	 *  `vault:opened` handler; returns the adopted count.
+	 */
+	paperIngestReconcile: (args: PaperIngestReconcileArgs) => typedError<ApiResult<number>, string>(__TAURI_INVOKE("paper_ingest_reconcile", { args })),
 	/**
 	 *  Vault-relative paths of papers still missing local assets, per §8.4 CapsCache
 	 *  (replaces the frontend `collectPapersNeedingAssetDownload` tree walk). A
@@ -347,13 +353,6 @@ export const commands = {
 	 */
 	paperReadingActivityBatch: (args: PaperReadingActivityBatchArgs) => __TAURI_INVOKE<ApiResult<{ [key in string]: ReadingActivityPoint[] }>>("paper_reading_activity_batch", { args }),
 	/**
-	 *  Resolve and fill missing `publication` values for papers in the catalog.
-	 *  Uses arXiv journal_ref / S2 `publicationVenue`, then DOI → S2 then Crossref,
-	 *  then title → Semantic Scholar. Crossref is last among identifier sources
-	 *  because its `container-title` truncates many conference proceedings.
-	 */
-	paperBackfillPublication: (args: PaperBackfillPublicationArgs) => typedError<ApiResult<PaperBackfillPublicationResult_Serialize>, string>(__TAURI_INVOKE("paper_backfill_publication", { args })),
-	/**
 	 *  Full-text search over the Vault's Markdown files. See `services::search`.
 	 * 
 	 *  Async + `run_blocking`: the walk reads every Markdown file, which must not
@@ -372,6 +371,9 @@ export const commands = {
 	feedsRefresh: (args: FeedsRefreshArgs) => __TAURI_INVOKE<ApiResult<FeedRefreshResult>>("feeds_refresh", { args }),
 	feedsItems: (args: FeedsItemsArgs) => __TAURI_INVOKE<ApiResult<FeedItemsPage>>("feeds_items", { args }),
 	feedsMarkImported: (args: FeedsIdArgs) => __TAURI_INVOKE<ApiResult<FeedItem>>("feeds_mark_imported", { args }),
+	plazaScratchPrepare: (args: PlazaScratchPrepareArgs) => __TAURI_INVOKE<ApiResult<PlazaScratchEntry[]>>("plaza_scratch_prepare", { args }),
+	plazaScratchStats: () => __TAURI_INVOKE<ApiResult<ScratchStats>>("plaza_scratch_stats"),
+	plazaScratchClear: () => __TAURI_INVOKE<ApiResult<ScratchClearResult>>("plaza_scratch_clear"),
 	feedsSetPinned: (args: FeedsSetPinnedArgs) => __TAURI_INVOKE<ApiResult<FeedSub>>("feeds_set_pinned", { args }),
 	feedsResolveBody: (args: FeedsIdArgs) => __TAURI_INVOKE<ApiResult<FeedItem>>("feeds_resolve_body", { args }),
 	/**
@@ -606,6 +608,7 @@ export const commands = {
 	 *  built-in checks instead of erroring on every keystroke.
 	 */
 	chktexLint: (texPath: string, content: string) => __TAURI_INVOKE<ApiResult<LatexLintDiagnostic[]>>("chktex_lint", { texPath, content }),
+	resolveLatexRoot: (texPath: string, vaultPath: string) => __TAURI_INVOKE<ApiResult<LatexRoot>>("resolve_latex_root", { texPath, vaultPath }),
 	jobLatexCompileEnqueue: (args: JobLatexCompileEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_latex_compile_enqueue", { args })),
 };
 
@@ -1249,6 +1252,8 @@ export type AgentTemplate = "opencode" |
  *  Docs: https://github.com/NousResearch/hermes-agent
  */
 "hermes" | "claude-acp" | "codex-acp" | 
+/**  Google Antigravity's official ACP server (separate from the retired `agy-acp` adapter). */
+"antigravity-acp" | 
 /**
  *  Qoder CLI native ACP (`qodercli --acp`).
  *  Docs: https://docs.qoder.com/en/cli/acp
@@ -1265,8 +1270,7 @@ export type AgentTemplate = "opencode" |
  */
 "pi" | 
 /**
- *  DeepSeek Harness automation ACP server (`@deepseek-ai/dsh-acp-demo`),
- *  npm-installed into a managed launcher directory (no repo checkout).
+ *  DeepSeek Harness umbrella CLI with native ACP (`dsh --profile acp`).
  *  Docs: https://github.com/deepseek-ai/deepseek-harness
  */
 "dsh" | 
@@ -1281,7 +1285,12 @@ export type AgentTemplate = "opencode" |
  *  (`~/.zcode`); the adapter auto-discovers the app-bundled CLI.
  *  Docs: https://github.com/william0wang/zcode-acp
  */
-"zcode" | "custom";
+"zcode" | 
+/**
+ *  MiniMax Code CLI with native ACP (`mcode acp`).
+ *  Docs: https://agent.minimax.io/docs/cli/quick-start
+ */
+"minimax-code" | "custom";
 
 /**  ACP tool call create/update for UI (`Tool` element). */
 export type AgentToolEvent = AgentToolEvent_Serialize | AgentToolEvent_Deserialize;
@@ -1423,12 +1432,18 @@ export type AppSettings_Deserialize = {
 	 */
 	autoOpenPaperNotes?: boolean,
 	/**
+	 *  Auto-ingest: adopt bare folders created under `papers/` that hold at
+	 *  least one settled PDF into the library in place (catalog row + NOTES
+	 *  shell + background metadata recognition). Default on.
+	 */
+	autoIngest?: boolean,
+	/**
 	 *  When opening a new paper, close the active tab instead of adding a new one.
 	 *  Default off; useful for users who prefer a single-paper-at-a-time workflow.
 	 */
 	replaceCurrentTabOnOpenPaper?: boolean,
 	autoUpdateInternalLinks?: string,
-	libraryColumns?: LibraryColumnPref[],
+	libraryColumns?: LibraryColumnPref_Deserialize[],
 	connectorEnabled?: boolean,
 	connectorPort?: number,
 	/**  Loopback Streamable HTTP MCP server. Default off. */
@@ -1506,12 +1521,18 @@ export type AppSettings_Serialize = {
 	 */
 	autoOpenPaperNotes: boolean,
 	/**
+	 *  Auto-ingest: adopt bare folders created under `papers/` that hold at
+	 *  least one settled PDF into the library in place (catalog row + NOTES
+	 *  shell + background metadata recognition). Default on.
+	 */
+	autoIngest: boolean,
+	/**
 	 *  When opening a new paper, close the active tab instead of adding a new one.
 	 *  Default off; useful for users who prefer a single-paper-at-a-time workflow.
 	 */
 	replaceCurrentTabOnOpenPaper: boolean,
 	autoUpdateInternalLinks: string,
-	libraryColumns: LibraryColumnPref[],
+	libraryColumns: LibraryColumnPref_Serialize[],
 	connectorEnabled: boolean,
 	connectorPort: number,
 	/**  Loopback Streamable HTTP MCP server. Default off. */
@@ -1808,6 +1829,13 @@ export type CatalogEntry_Deserialize = {
 	resolvedPath?: string | null,
 	/**  ACP entrypoint command found — ACP layer (may equal host for native ACP agents). */
 	acpCommandAvailable: boolean,
+	/**
+	 *  Bundled ACP adapter tier present in app resources (offline fallback;
+	 *  a PATH-installed adapter still wins over it).
+	 */
+	acpBundled?: boolean,
+	/**  Version of the bundled adapter (from the staging manifest), when staged. */
+	acpBundledVersion?: string | null,
 	acpStatus: CatalogAcpStatus,
 	registeredId?: string | null,
 	isDefault: boolean,
@@ -1816,7 +1844,7 @@ export type CatalogEntry_Deserialize = {
 	lastProbedAt?: string | null,
 	/**  Normalized local host CLI version (`detect_command --version`), when known. */
 	installedVersion?: string | null,
-	/**  Target version the silent updater can reach (npm latest or dsh pin). */
+	/**  Target version the silent updater can reach (npm latest). */
 	latestVersion?: string | null,
 	/**
 	 *  True only when a newer silent-update target is known. Settings shows
@@ -1847,6 +1875,13 @@ export type CatalogEntry_Serialize = {
 	resolvedPath?: string | null,
 	/**  ACP entrypoint command found — ACP layer (may equal host for native ACP agents). */
 	acpCommandAvailable: boolean,
+	/**
+	 *  Bundled ACP adapter tier present in app resources (offline fallback;
+	 *  a PATH-installed adapter still wins over it).
+	 */
+	acpBundled: boolean,
+	/**  Version of the bundled adapter (from the staging manifest), when staged. */
+	acpBundledVersion?: string | null,
 	acpStatus: CatalogAcpStatus,
 	registeredId?: string | null,
 	isDefault: boolean,
@@ -1855,7 +1890,7 @@ export type CatalogEntry_Serialize = {
 	lastProbedAt?: string | null,
 	/**  Normalized local host CLI version (`detect_command --version`), when known. */
 	installedVersion?: string | null,
-	/**  Target version the silent updater can reach (npm latest or dsh pin). */
+	/**  Target version the silent updater can reach (npm latest). */
 	latestVersion?: string | null,
 	/**
 	 *  True only when a newer silent-update target is known. Settings shows
@@ -2677,6 +2712,10 @@ export type ImportLocalPdfArgs = {
 	entries?: LocalPdfImportEntry[],
 	/**  JobCenter job id (task id) for parse-phase `job:progress` events. */
 	taskId?: string | null,
+	/**  Whether to run metadata recognition synchronously before committing the paper. */
+	recognizeSync?: boolean,
+	/**  Optional Translator service URL used for identifier resolution. */
+	translatorBaseUrl?: string | null,
 };
 
 export type ImportLocalPdfResult = ImportLocalPdfResult_Serialize | ImportLocalPdfResult_Deserialize;
@@ -2983,6 +3022,25 @@ export type LatexLintDiagnostic = {
 	message: string,
 };
 
+export type LatexRoot = {
+	rootPath: string,
+	source: LatexRootSource,
+};
+
+/**
+ *  How the compile root was determined — for logs/debugging only; the compile
+ *  pipeline treats every variant identically.
+ */
+export type LatexRootSource = 
+/**  `% !TEX root = …` magic-comment chain (loop detection included). */
+"magicComment" | 
+/**  The file itself carries `\documentclass` / `\begin{document}`. */
+"selfIndicator" | 
+/**  Vault scan found a root whose input/include closure contains the file. */
+"vaultScan" | 
+/**  Nothing found — the file compiles itself. */
+"fallbackSelf";
+
 export type LayoutModelStatus = {
 	ready: boolean,
 	path: string,
@@ -3115,9 +3173,20 @@ export type LibraryCitingScanArgs = {
 };
 
 /**  One column in the papers Library table: array order = display order. */
-export type LibraryColumnPref = {
+export type LibraryColumnPref = LibraryColumnPref_Serialize | LibraryColumnPref_Deserialize;
+
+/**  One column in the papers Library table: array order = display order. */
+export type LibraryColumnPref_Deserialize = {
 	key: string,
 	visible: boolean,
+	widthRem?: number | null,
+};
+
+/**  One column in the papers Library table: array order = display order. */
+export type LibraryColumnPref_Serialize = {
+	key: string,
+	visible: boolean,
+	widthRem?: number | null,
 };
 
 export type LinkFragment = { kind: "heading"; path: string[] } | { kind: "block"; id: string } | 
@@ -3404,28 +3473,6 @@ export type PaperAssetsStatus = {
 	paperMd: boolean,
 };
 
-export type PaperBackfillPublicationArgs = {
-	vaultPath: string,
-	/**  Optional Translator base URL; left empty for direct Crossref/arXiv/S2. */
-	translatorBaseUrl?: string | null,
-};
-
-export type PaperBackfillPublicationResult = PaperBackfillPublicationResult_Serialize | PaperBackfillPublicationResult_Deserialize;
-
-export type PaperBackfillPublicationResult_Deserialize = {
-	total: number,
-	updated: number,
-	failed: number,
-	errors?: string[],
-};
-
-export type PaperBackfillPublicationResult_Serialize = {
-	total: number,
-	updated: number,
-	failed: number,
-	errors?: string[],
-};
-
 /**  Uniform result shape for every entry (camelCase matches the frontend). */
 export type PaperCommitResult = {
 	status: CommitStatus,
@@ -3506,6 +3553,10 @@ export type PaperImportResult = {
 
 export type PaperImportedEvent = PaperFactPayload;
 
+export type PaperIngestReconcileArgs = {
+	vaultPath: string,
+};
+
 /**
  *  What identifier the paper was resolved through. Serialized all-lowercase so
  *  the wire form matches the frontend's `PaperMetadata["type"]` union exactly.
@@ -3538,8 +3589,11 @@ export type PaperListRow_Serialize = {
 export type PaperMetaPatch = {
 	title: string | null,
 	authors: string[] | null,
-	/**  Year as text so an empty string can clear it; validated as 1000..=2100. */
-	year: string | null,
+	/**
+	 *  Publication date as text — `YYYY`, `YYYY-MM` or `YYYY-MM-DD` — so an
+	 *  empty string can clear it. `year` is derived from it.
+	 */
+	date: string | null,
 	doi: string | null,
 	arxivId: string | null,
 	publication: string | null,
@@ -3666,7 +3720,9 @@ export type PaperRecord_Deserialize = {
 	title: string,
 	authors: string[],
 	creators: Json | null,
+	/**  Publication year, kept for citation keys / tree labels. */
 	year: number | null,
+	/**  Publication date at source precision: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`. */
 	date: string | null,
 	abstract: string | null,
 	tags?: PaperTag[],
@@ -3721,7 +3777,9 @@ export type PaperRecord_Serialize = {
 	title: string,
 	authors: string[],
 	creators?: Json | null,
+	/**  Publication year, kept for citation keys / tree labels. */
 	year?: number | null,
+	/**  Publication date at source precision: `YYYY`, `YYYY-MM` or `YYYY-MM-DD`. */
 	date?: string | null,
 	abstract?: string | null,
 	tags: PaperTag[],
@@ -3925,6 +3983,19 @@ export type PermissionResponseRequest = {
 	requestId: string,
 	/**  Chosen option id; `None` cancels the request. */
 	optionId?: string | null,
+};
+
+/**  Per-id outcome: one failed paper never blocks the rest of the turn. */
+export type PlazaScratchEntry = {
+	arxivId: string,
+	ok: boolean,
+	markdownPath: string | null,
+	pdfPath: string | null,
+	error: string | null,
+};
+
+export type PlazaScratchPrepareArgs = {
+	arxivIds: string[],
 };
 
 export type ProbeEmbeddingArgs = {
@@ -4287,6 +4358,15 @@ export type RunOnceRequest_Serialize = {
 	hideFromChatHistory: boolean,
 };
 
+export type ScratchClearResult = {
+	freedBytes: number,
+};
+
+export type ScratchStats = {
+	papers: number,
+	bytes: number,
+};
+
 export type SearchHit = SearchHit_Serialize | SearchHit_Deserialize;
 
 export type SearchHit_Deserialize = {
@@ -4585,6 +4665,12 @@ export type TranslateSettings = {
 	dualPaneTranslate?: boolean,
 	agentId?: string,
 	modelId?: string,
+	/**
+	 *  Custom translate prompt replacing the built-in instructions for the
+	 *  Agent and OpenAI-compatible providers (free MT and the built-in ignore
+	 *  it). Empty = built-in. Max 8000 chars.
+	 */
+	customPrompt?: string,
 };
 
 export type TranslateTextArgs = {
@@ -4601,6 +4687,12 @@ export type TranslateTextArgs = {
 	region?: string | null,
 	/**  OpenAI-compatible model id. */
 	model?: string | null,
+	/**
+	 *  Custom translate instruction (settings `translate.customPrompt`); empty →
+	 *  built-in academic prompt. Injected by the Host command; replaces the
+	 *  system+rules block on the OpenAI-compatible path only.
+	 */
+	customPrompt?: string | null,
 	/**
 	 *  Optional request timeout in milliseconds (clamped 1s–30s). Default 30s.
 	 *  Settings probe uses a shorter value for snappy parallel checks.

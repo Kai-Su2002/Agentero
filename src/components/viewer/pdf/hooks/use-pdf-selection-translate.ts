@@ -1,21 +1,23 @@
 /**
  * Selection → 翻译 workflow for the EmbedPDF viewer: the one ephemeral mark kind.
- * A translate card is created straight from the selection menu, streams into the
- * open card, and disappears again unless it is hovered — so this cluster owns the
- * whole run lifecycle (`translateStreaming`, its cancel token, its error chrome)
- * plus the record write to `marks/<id>.json`.
+ * A translate card is created straight from the selection menu and streams into
+ * the open card. It never auto-closes — the reader dismisses it explicitly,
+ * so this cluster owns the whole run lifecycle
+ * (`translateStreaming`, its cancel token, its error chrome) plus the record
+ * write to `marks/<id>.json`.
  *
- * Its own hook because the run has two providers behind one UI contract: an ACP
- * Agent (streamed through the three agent listeners, cancellable) and a plain
- * translate provider (single await). Both funnel into `upsertTranslate` /
- * `persistTranslate` / `markTranslateFailure`, and nothing outside translate
- * touches them.
+ * Its own hook for the record container and card chrome around one run: the
+ * two providers behind the UI contract (an ACP Agent streamed through the
+ * three agent listeners, cancellable; a plain translate provider, single
+ * await) execute in the shared engine {@link runSelectionTranslate}, which
+ * funnels back through `upsertTranslate` / `persistTranslate` /
+ * `markTranslateFailure`, and nothing outside translate touches them.
  *
  * Boundaries:
  * - the persisted array lives in {@link usePdfMarksIo}: setters and the mirror
  *   ref are injected, never re-declared here;
- * - card placement / hover lives in {@link usePdfCards}: this hook only opens,
- *   hides, and re-arms the hover-hide timer for its own card;
+ * - card placement / hover lives in {@link usePdfCards}: this hook only opens
+ *   and hides its own card;
  * - `activeSessionRef` is shared with the ask cluster (at most one PDF agent run
  *   is in flight), so the parent owns it and injects it into both;
  * - the selection menu owns its own teardown, so the parent closes the menu and
@@ -34,13 +36,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import type { PdfViewerProps } from "@/components/viewer/pdf/types";
-import {
-	attachAgentRun,
-	cancelAgentRun,
-	disposeAgentRun,
-	listAgents,
-	runOnce,
-} from "@/lib/agent";
+import { cancelAgentRun, disposeAgentRun } from "@/lib/agent";
 import { errorText } from "@/lib/core/error";
 import { notifyError } from "@/lib/core/notify";
 import type { PdfAskAnchor } from "@/lib/pdf/ask/types";
@@ -48,22 +44,10 @@ import type { ActiveSelectionCard } from "@/lib/pdf/selection";
 import {
 	createTranslateRecord,
 	deletePdfTranslate,
+	runSelectionTranslate,
 	writePdfTranslate,
 } from "@/lib/pdf/translate";
-import {
-	evictAgentTranslateSessionId,
-	getAgentTranslateSessionId,
-	setAgentTranslateSessionId,
-} from "@/lib/pdf/translate/agent-session-cache";
 import type { PdfTranslateRecord } from "@/lib/pdf/translate/types";
-import { loadSettings } from "@/lib/settings";
-import {
-	buildTranslatePrompt,
-	displayTranslateError,
-	prepareTranslateTask,
-	resolveTranslateAgent,
-	runTranslate,
-} from "@/lib/translate";
 
 export type UsePdfSelectionTranslateOptions = {
 	/** Sidecar root for `marks/<id>.json` (null for loose PDFs — nothing persists). */
@@ -76,27 +60,19 @@ export type UsePdfSelectionTranslateOptions = {
 	onOpenSettings: PdfViewerProps["onOpenSettings"];
 	/** Persisted translate records; owned by {@link usePdfMarksIo}. */
 	translatesRef: RefObject<PdfTranslateRecord[]>;
+	protectedTranslateIdsRef: RefObject<Set<string>>;
 	setTranslates: Dispatch<SetStateAction<PdfTranslateRecord[]>>;
-	upsertTranslate: (rec: PdfTranslateRecord) => void;
-	/** Open card, needed as a value: the auto-hide effect re-arms when it changes. */
-	activeCard: ActiveSelectionCard | null;
+	upsertTranslate: (
+		rec: PdfTranslateRecord,
+		options?: { preservePinned?: boolean },
+	) => PdfTranslateRecord;
 	/** Cards cluster; owned by {@link usePdfCards}. */
 	openCard: (card: ActiveSelectionCard) => void;
-	hideActiveCard: () => void;
-	scheduleHoverHide: () => void;
-	cardHoverSurfaceRef: RefObject<boolean>;
-	activeCardRef: RefObject<ActiveSelectionCard | null>;
 	/**
 	 * Single in-flight PDF agent run, shared with the ask cluster. Parent-owned so
 	 * either cluster can cancel the other's session token.
 	 */
 	activeSessionRef: RefObject<string | null>;
-	/**
-	 * Mirror of `translateStreaming`. Created by the parent because
-	 * {@link usePdfCards} is declared first and reads it to keep a streaming
-	 * translate card alive past hover.
-	 */
-	translateStreamingRef: RefObject<boolean>;
 };
 
 export type PdfSelectionTranslate = {
@@ -104,10 +80,12 @@ export type PdfSelectionTranslate = {
 	translateError: string | null;
 	/** Selection-menu action: create the record and start the run. */
 	translateSelection: (anchor: PdfAskAnchor) => void;
+	/** Toggle whether the result survives dismissal, without affecting the run. */
+	toggleTranslatePin: (record: PdfTranslateRecord) => void;
+	/** Discard an unpinned result when its card is dismissed. */
+	discardUnpinnedTranslateOnClose: (id: string) => void;
 	/** Cancel the in-flight run; also wired into {@link usePdfCards}. */
 	stopTranslateSession: () => void;
-	/** Card header delete: drop the record from state + disk and close the card. */
-	deleteTranslateCard: () => void;
 	/** Error card action: open Translate settings. */
 	openTranslateSettings: () => void;
 	/** Per-kind chrome reset for card open / close (wired into `usePdfCards`). */
@@ -120,18 +98,15 @@ export function usePdfSelectionTranslate({
 	vaultPath,
 	onOpenSettings,
 	translatesRef,
+	protectedTranslateIdsRef,
 	setTranslates,
 	upsertTranslate,
-	activeCard,
 	openCard,
-	hideActiveCard,
-	scheduleHoverHide,
-	cardHoverSurfaceRef,
-	activeCardRef,
 	activeSessionRef,
-	translateStreamingRef,
 }: UsePdfSelectionTranslateOptions): PdfSelectionTranslate {
 	const { t } = useTranslation("viewer");
+	const tRef = useRef(t);
+	tRef.current = t;
 	const [translateStreaming, setTranslateStreaming] = useState(false);
 	const [translateError, setTranslateError] = useState<string | null>(null);
 	/** ACP session of the running translate turn (null for provider translate). */
@@ -140,22 +115,14 @@ export function usePdfSelectionTranslate({
 	const translateUnsubsRef = useRef<UnlistenFn[] | null>(null);
 	/** True once the viewer unmounts; guards runs accepted after teardown. */
 	const translateDisposedRef = useRef(false);
-
-	// Closing the viewer must not strand the run's IPC listeners (or the run
-	// itself): terminal events never arrive for a hung run, so teardown cannot
-	// rely on the completed/failed handlers alone.
-	useEffect(() => {
-		translateDisposedRef.current = false;
-		return () => {
-			disposeAgentRun({
-				disposedRef: translateDisposedRef,
-				unsubsRef: translateUnsubsRef,
-				sessionRef: translateSessionRef,
-				activeSessionRef,
-			});
-			translateStreamingRef.current = false;
-		};
-	}, [activeSessionRef, translateStreamingRef]);
+	/** Invalidates callbacks after a temporary result is dismissed or replaced. */
+	const translateGenerationRef = useRef(0);
+	/** The run id lets dismissal cancel only the result attached to that card. */
+	const translateRunIdRef = useRef<string | null>(null);
+	/** Unpinned results are temporary and are cleaned up if the viewer unmounts. */
+	const temporaryTranslateIdsRef = useRef(new Set<string>());
+	/** Serialize writes and removals so late pin toggles cannot win races. */
+	const pendingWritesRef = useRef(new Map<string, Promise<void>>());
 
 	const stopTranslateSession = useCallback(() => {
 		const sid = translateSessionRef.current;
@@ -164,9 +131,8 @@ export function usePdfSelectionTranslate({
 			if (activeSessionRef.current === sid) activeSessionRef.current = null;
 			translateSessionRef.current = null;
 		}
-		translateStreamingRef.current = false;
 		setTranslateStreaming(false);
-	}, [activeSessionRef, translateStreamingRef]);
+	}, [activeSessionRef]);
 
 	const clearTranslateError = useCallback(() => {
 		setTranslateError(null);
@@ -177,54 +143,131 @@ export function usePdfSelectionTranslate({
 	}, [onOpenSettings]);
 
 	const persistTranslate = useCallback(
-		async (rec: PdfTranslateRecord) => {
-			if (!paperAbsPath) return;
-			try {
-				await writePdfTranslate(paperAbsPath, rec);
-			} catch {
-				// keep UI responsive
-			}
-		},
-		[paperAbsPath],
-	);
-
-	const markTranslateFailure = useCallback(
-		(id: string, message: string) => {
-			const latest = translatesRef.current.find((r) => r.id === id);
-			if (latest) {
-				upsertTranslate({
-					...latest,
-					error: message,
-					updatedAt: new Date().toISOString(),
+		(rec: PdfTranslateRecord): Promise<void> => {
+			if (!paperAbsPath) return Promise.resolve();
+			protectedTranslateIdsRef.current.add(rec.id);
+			let saved = false;
+			const previous = pendingWritesRef.current.get(rec.id);
+			const save = (previous ?? Promise.resolve())
+				.catch(() => undefined)
+				.then(() => writePdfTranslate(paperAbsPath, rec))
+				.then(() => {
+					saved = true;
+				})
+				.catch((error) => {
+					notifyError(tRef.current("selection.translateUpdateFailed"), {
+						description: errorText(error),
+					});
 				});
-			}
-			translateStreamingRef.current = false;
-			setTranslateStreaming(false);
-			setTranslateError(message);
+			pendingWritesRef.current.set(rec.id, save);
+			void save.then(() => {
+				if (pendingWritesRef.current.get(rec.id) === save) {
+					pendingWritesRef.current.delete(rec.id);
+					if (saved && translateRunIdRef.current !== rec.id)
+						protectedTranslateIdsRef.current.delete(rec.id);
+				}
+			});
+			return save;
 		},
-		[upsertTranslate, translatesRef, translateStreamingRef],
+		[paperAbsPath, protectedTranslateIdsRef],
 	);
 
-	// Translate cards are ephemeral: once streaming ends, auto-hide unless the
-	// pointer is still over the card, pin, or source highlight.
-	const activeTranslateCardId =
-		activeCard?.kind === "translate" ? activeCard.id : null;
+	const removePersistedTranslate = useCallback(
+		(id: string): Promise<void> => {
+			if (!paperAbsPath) return Promise.resolve();
+			protectedTranslateIdsRef.current.add(id);
+			let removed = false;
+			const previous = pendingWritesRef.current.get(id);
+			const remove = (previous ?? Promise.resolve())
+				.catch(() => undefined)
+				.then(() => deletePdfTranslate(paperAbsPath, id))
+				.then(() => {
+					removed = true;
+				})
+				.catch((error) => {
+					notifyError(tRef.current("selection.translateUpdateFailed"), {
+						description: errorText(error),
+					});
+				});
+			pendingWritesRef.current.set(id, remove);
+			void remove.then(() => {
+				if (pendingWritesRef.current.get(id) === remove) {
+					pendingWritesRef.current.delete(id);
+					if (removed) protectedTranslateIdsRef.current.delete(id);
+				}
+			});
+			return remove;
+		},
+		[paperAbsPath, protectedTranslateIdsRef],
+	);
+
+	// Closing the viewer must not strand the run's IPC listeners (or the run
+	// itself). Unpinned results are temporary, so remove their sidecars on teardown.
 	useEffect(() => {
-		if (!activeTranslateCardId) return;
-		if (translateStreaming) return;
-		if (cardHoverSurfaceRef.current) return;
-		scheduleHoverHide();
-	}, [
-		activeTranslateCardId,
-		translateStreaming,
-		scheduleHoverHide,
-		cardHoverSurfaceRef,
-	]);
+		translateDisposedRef.current = false;
+		return () => {
+			translateGenerationRef.current += 1;
+			disposeAgentRun({
+				disposedRef: translateDisposedRef,
+				unsubsRef: translateUnsubsRef,
+				sessionRef: translateSessionRef,
+				activeSessionRef,
+			});
+			const temporaryIds = [...temporaryTranslateIdsRef.current];
+			temporaryTranslateIdsRef.current.clear();
+			for (const id of temporaryIds) void removePersistedTranslate(id);
+		};
+	}, [activeSessionRef, removePersistedTranslate]);
+
+	const toggleTranslatePin = useCallback(
+		(record: PdfTranslateRecord) => {
+			const current =
+				translatesRef.current.find((item) => item.id === record.id) ?? record;
+			const next = upsertTranslate(
+				{
+					...current,
+					pinned: !current.pinned,
+					updatedAt: new Date().toISOString(),
+				},
+				{ preservePinned: false },
+			);
+			if (next.pinned) temporaryTranslateIdsRef.current.delete(next.id);
+			else temporaryTranslateIdsRef.current.add(next.id);
+			void persistTranslate(next);
+		},
+		[translatesRef, upsertTranslate, persistTranslate],
+	);
+
+	const discardUnpinnedTranslateOnClose = useCallback(
+		(id: string) => {
+			const record = translatesRef.current.find((item) => item.id === id);
+			if (record?.pinned) return;
+
+			temporaryTranslateIdsRef.current.delete(id);
+			if (translateRunIdRef.current === id) {
+				translateGenerationRef.current += 1;
+				translateRunIdRef.current = null;
+				stopTranslateSession();
+			}
+
+			const remaining = translatesRef.current.filter((item) => item.id !== id);
+			translatesRef.current = remaining;
+			setTranslates(remaining);
+			void removePersistedTranslate(id);
+		},
+		[
+			removePersistedTranslate,
+			setTranslates,
+			stopTranslateSession,
+			translatesRef,
+		],
+	);
 
 	const translateSelection = useCallback(
 		(anchor: PdfAskAnchor) => {
 			const quote = anchor.quote?.trim();
 			if (!quote) return;
+			const generation = ++translateGenerationRef.current;
 			stopTranslateSession();
 			const paperPath = paperRelPath || paperAbsPath || "paper";
 			const paperKey = paperRelPath || paperAbsPath || null;
@@ -234,138 +277,73 @@ export function usePdfSelectionTranslate({
 				rects: anchor.rects,
 				quote,
 			});
-			upsertTranslate(rec);
-			// Menu action is not a hover surface; card auto-hides after result.
-			cardHoverSurfaceRef.current = false;
+			let currentRecord = upsertTranslate(rec);
+			protectedTranslateIdsRef.current.add(rec.id);
+			temporaryTranslateIdsRef.current.add(rec.id);
+			translateRunIdRef.current = rec.id;
 			openCard({ kind: "translate", id: rec.id });
-			translateStreamingRef.current = true;
 			setTranslateStreaming(true);
 			setTranslateError(null);
+			const isCurrentRun = () =>
+				translateGenerationRef.current === generation &&
+				!translateDisposedRef.current;
+			const commitResult = (result: string) => {
+				if (!isCurrentRun()) return false;
+				currentRecord = upsertTranslate({
+					...currentRecord,
+					result: result.trim(),
+					updatedAt: new Date().toISOString(),
+					error: undefined,
+				});
+				setTranslateStreaming(false);
+				setTranslateError(null);
+				if (translateRunIdRef.current === rec.id) {
+					translateRunIdRef.current = null;
+				}
+				void persistTranslate(currentRecord);
+				return true;
+			};
 
-			const { providerId, targetLangName } = prepareTranslateTask({
+			void runSelectionTranslate({
 				text: quote,
 				context: { page: anchor.page, surface: "pdf-selection" },
-			});
-
-			if (providerId === "agent") {
-				const prompt = buildTranslatePrompt({
-					text: quote,
-					targetLangName,
-					page: anchor.page,
-					surface: "pdf-selection",
-				});
-				void (async () => {
-					try {
-						const registry = await listAgents().catch(() => null);
-						const resolved = resolveTranslateAgent(
-							loadSettings().translate,
-							registry,
-						);
-						if (!resolved.agentId) {
-							const msg = t("selection.translateNoAgent");
-							notifyError(msg);
-							markTranslateFailure(rec.id, msg);
-							return;
-						}
-						const agentId = resolved.agentId;
-						const modelId = resolved.modelId;
-						const accepted = await runOnce({
-							prompt,
-							agentId,
-							modelId,
-							sessionId:
-								getAgentTranslateSessionId(paperKey, agentId, modelId) ??
-								undefined,
-							vaultPath: vaultPath ?? undefined,
-							workflow: "translate",
-							permissionMode: "auto",
-							hideFromChatHistory: true,
-						});
-						await attachAgentRun({
-							accepted,
-							disposedRef: translateDisposedRef,
-							unsubsRef: translateUnsubsRef,
-							sessionRef: translateSessionRef,
-							activeSessionRef,
-							onStream: (ev) => {
-								const latest =
-									translatesRef.current.find((r) => r.id === rec.id) ?? rec;
-								upsertTranslate({
-									...latest,
-									result: (latest.result ?? "") + ev.chunk,
-									updatedAt: new Date().toISOString(),
-									error: undefined,
-								});
-							},
-							onCompleted: (ev) => {
-								const latest =
-									translatesRef.current.find((r) => r.id === rec.id) ?? rec;
-								const next = {
-									...latest,
-									result: (ev.content || latest.result || "").trim(),
-									updatedAt: new Date().toISOString(),
-									error: undefined,
-								};
-								upsertTranslate(next);
-								void persistTranslate(next);
-								setTranslateError(null);
-								if (ev.providerSessionId && ev.stopReason !== "cancelled") {
-									setAgentTranslateSessionId(
-										paperKey,
-										agentId,
-										modelId,
-										ev.providerSessionId,
-									);
-								}
-							},
-							onFailed: (ev) => {
-								evictAgentTranslateSessionId(paperKey, agentId, modelId);
-								const msg = ev.error || t("pdfAsk.agentFailed");
-								notifyError(msg);
-								markTranslateFailure(rec.id, msg);
-							},
-							onSettled: () => {
-								translateStreamingRef.current = false;
-								setTranslateStreaming(false);
-							},
-						});
-					} catch (e) {
-						const message = errorText(e);
-						notifyError(message);
-						markTranslateFailure(rec.id, message);
-					}
-				})();
-				return;
-			}
-
-			void (async () => {
-				try {
-					const result = await runTranslate(
-						{
-							text: quote,
-							context: { page: anchor.page, surface: "pdf-selection" },
-						},
-						{ providerId },
-					);
-					const latest =
-						translatesRef.current.find((r) => r.id === rec.id) ?? rec;
-					const next = {
-						...latest,
-						result: result.trim(),
+				paperKey,
+				vaultPath,
+				noAgentText: () => t("selection.translateNoAgent"),
+				agentFailedText: () => t("pdfAsk.agentFailed"),
+				disposedRef: translateDisposedRef,
+				unsubsRef: translateUnsubsRef,
+				sessionRef: translateSessionRef,
+				activeSessionRef,
+				appendChunk: (chunk) => {
+					if (!isCurrentRun()) return;
+					currentRecord = upsertTranslate({
+						...currentRecord,
+						result: (currentRecord.result ?? "") + chunk,
 						updatedAt: new Date().toISOString(),
 						error: undefined,
-					};
-					upsertTranslate(next);
-					void persistTranslate(next);
-					translateStreamingRef.current = false;
+					});
+				},
+				commitAgentResult: (ev) =>
+					commitResult(ev.content || currentRecord.result || ""),
+				commitProviderResult: commitResult,
+				markFailed: (message) => {
+					if (!isCurrentRun()) return;
+					currentRecord = upsertTranslate({
+						...currentRecord,
+						error: message,
+						updatedAt: new Date().toISOString(),
+					});
 					setTranslateStreaming(false);
-					setTranslateError(null);
-				} catch (e) {
-					const message = displayTranslateError(errorText(e));
-					notifyError(message);
-					markTranslateFailure(rec.id, message);
-				}
-			})();
+					setTranslateError(message);
+					if (translateRunIdRef.current === rec.id) {
+						translateRunIdRef.current = null;
+					}
+				},
+				stopStreaming: () => {
+					if (isCurrentRun()) setTranslateStreaming(false);
+				},
+			});
 		},
 		[
 			t,
@@ -374,41 +352,20 @@ export function usePdfSelectionTranslate({
 			paperRelPath,
 			stopTranslateSession,
 			upsertTranslate,
+			protectedTranslateIdsRef,
 			persistTranslate,
-			markTranslateFailure,
 			openCard,
-			cardHoverSurfaceRef,
-			translatesRef,
 			activeSessionRef,
-			translateStreamingRef,
 		],
 	);
-
-	const deleteTranslateCard = useCallback(() => {
-		const id =
-			activeCardRef.current?.kind === "translate"
-				? activeCardRef.current.id
-				: null;
-		stopTranslateSession();
-		if (id) {
-			setTranslates((prev) => prev.filter((r) => r.id !== id));
-			if (paperAbsPath) void deletePdfTranslate(paperAbsPath, id);
-		}
-		hideActiveCard();
-	}, [
-		paperAbsPath,
-		stopTranslateSession,
-		hideActiveCard,
-		activeCardRef,
-		setTranslates,
-	]);
 
 	return {
 		translateStreaming,
 		translateError,
 		translateSelection,
+		toggleTranslatePin,
+		discardUnpinnedTranslateOnClose,
 		stopTranslateSession,
-		deleteTranslateCard,
 		openTranslateSettings,
 		clearTranslateError,
 	};

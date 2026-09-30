@@ -356,6 +356,12 @@
 	--radius-4xl: calc(var(--radius) * 2.6);
 	--color-brand: var(--brand);
 	--color-highlight: var(--highlight);
+	/*
+	 * Built-in neutral ink. tweakcn themes restyle --primary / --ring; image
+	 * selection rings and PDF visual-region frames read these copies instead.
+	 */
+	--color-default-primary: var(--default-primary);
+	--color-default-ring: var(--default-ring);
 }
 
 /*
@@ -373,6 +379,8 @@
 	--popover-foreground: oklch(0.21 0.008 260);
 	--primary: oklch(0.25 0.012 260);
 	--primary-foreground: oklch(0.99 0.001 260);
+	--default-primary: oklch(0.25 0.012 260);
+	--default-ring: oklch(0.62 0.02 260);
 	--secondary: oklch(0.96 0.006 260);
 	--secondary-foreground: oklch(0.25 0.012 260);
 	--muted: oklch(0.962 0.006 260);
@@ -411,6 +419,8 @@
 	--popover-foreground: oklch(0.98 0.004 260);
 	--primary: oklch(0.94 0.006 260);
 	--primary-foreground: oklch(0.22 0.01 260);
+	--default-primary: oklch(0.94 0.006 260);
+	--default-ring: oklch(0.58 0.02 260);
 	--secondary: oklch(0.255 0.008 260);
 	--secondary-foreground: oklch(0.98 0.004 260);
 	--muted: oklch(0.255 0.008 260);
@@ -697,6 +707,25 @@
 .agentero-scroll-both:hover {
 	scrollbar-color: color-mix(in oklch, var(--muted-foreground) 32%, transparent)
 		transparent;
+}
+
+/*
+ * Always-visible variant for content clipped by design (translate card):
+ * the thumb stays shown so the overflow is discoverable. Must come after the
+ * rules above to win at equal specificity; `overflow-y: auto` still means no
+ * scrollbar renders until the content actually clips.
+ */
+.agentero-scroll-visible {
+	scrollbar-color: color-mix(in oklch, var(--muted-foreground) 32%, transparent)
+		transparent;
+}
+
+.agentero-scroll-visible::-webkit-scrollbar-thumb {
+	background-color: color-mix(
+		in oklch,
+		var(--muted-foreground) 28%,
+		transparent
+	);
 }
 
 /* dockview: map native theme class to app design tokens */
@@ -1029,17 +1058,12 @@ body.agentero-dockview-dragging * {
 	color: #c9d1d9;
 }
 
-/*
- * Privacy mode: when the window loses focus (see `usePdfPrivacy`), fade out
- * PDF annotation / comment / translate overlays so a screenshot of a
- * different window never leaks them. The page rasters stay visible.
- * Specificity (0,2,0) beats any single utility class on the tagged overlay.
- */
-.pdf-privacy-hidden .pdf-privacy-hide {
-	opacity: 0;
-	pointer-events: none;
-	transition: opacity 150ms ease;
-}
 .dark .agentero-codeblock .hljs-bullet {
 	color: #f2cc60;
+}
+
+::highlight(agentero-context-selection),
+::highlight(agentero-annotation-selection),
+::highlight(agentero-annotation-navigation) {
+	background-color: #3b82f650;
 }

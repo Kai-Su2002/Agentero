@@ -1,13 +1,17 @@
 use crate::core::error::AppError;
+use crate::features::agent::acp::client::{
+    build_child_env, effective_local_agent_env, resolve_command_in_agent_env,
+};
 use crate::features::agent::models::{
     default_agent_proxy_url, AgentDescriptor, AgentRegistryState, AgentTelemetrySummary,
     AgentTemplate, CatalogAcpStatus, CatalogEntry, CatalogScanResponse, ProbeResult,
     UpsertAgentRequest,
 };
-use crate::features::agent::registry::discovery::{probe_command, resolve_command};
+use crate::features::agent::registry::bundled;
+use crate::features::agent::registry::discovery::probe_command;
 use crate::features::agent::registry::lifecycle;
 use crate::features::agent::registry::templates::{
-    catalog_templates, dsh_entrypoint_exists, dsh_launcher_dir, template_from_id, template_info,
+    catalog_templates, template_from_id, template_info,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -219,12 +223,6 @@ impl AgentRegistry {
             .filter(|t| t.id != "custom")
             .ok_or_else(|| AppError::message(format!("unknown catalog template: {template_id}")))?;
 
-        // dsh needs its launcher dir (cordis.yml / package.json) even when the
-        // server itself is already installed elsewhere (home npm root / PATH).
-        if template_id == "dsh" {
-            lifecycle::prepare_dsh_launcher().map_err(AppError::message)?;
-        }
-
         let env = catalog_env(&info);
 
         // Prefer existing registration for this template. Built-in descriptors are owned by the
@@ -339,16 +337,7 @@ impl AgentRegistry {
             if id.is_some_and(|want| want != agent.id) {
                 continue;
             }
-            match probe_command(&agent.command) {
-                Ok(_) => {
-                    agent.available = true;
-                    agent.last_error = None;
-                }
-                Err(e) => {
-                    agent.available = false;
-                    agent.last_error = Some(e);
-                }
-            }
+            probe_or_bundled(agent);
         }
         persist(&self.path, &guard)?;
         Ok(if let Some(want) = id {
@@ -409,36 +398,57 @@ impl AgentRegistry {
             let mut entries = Vec::new();
             let mut registered_new = false;
             for info in catalog_templates() {
-                // dsh lives in a managed launcher dir (project npm install) or as a
-                // global `dsh-acp-demo` on PATH — "installed" means either entrypoint.
-                let (detect_path, binary_available, acp_command_available) = if info.id == "dsh" {
-                    let local = dsh_entrypoint_exists();
-                    let global = resolve_command("dsh-acp-demo");
-                    let ready = local || global.is_some();
-                    (
-                        global.or_else(|| ready.then(dsh_launcher_dir)),
-                        ready,
-                        ready,
-                    )
-                } else {
-                    let detect = info
-                        .detect_command
-                        .as_deref()
-                        .unwrap_or(info.command.as_str());
-                    let detect_path = resolve_command(detect);
-                    let binary_available = detect_path.is_some();
-                    let acp_command_available = resolve_command(&info.command).is_some();
-                    (detect_path, binary_available, acp_command_available)
-                };
-
                 let registered = state.agents.iter().find(|a| {
                     a.template.as_str() == info.id
                         || (a.command == info.command && a.args == info.args)
                 });
+                // Antigravity switches between a PATH command and the
+                // Agentero-managed absolute path as its managed copy appears
+                // or disappears. Refresh stale descriptors before probing.
+                if info.id == "antigravity-acp"
+                    && registered.is_some_and(|agent| {
+                        agent.command != info.command || agent.args != info.args
+                    })
+                    && self.ensure_catalog_agent(&info.id, false).is_ok()
+                {
+                    registered_new = true;
+                    continue;
+                }
+                let descriptor_env = registered
+                    .map(|agent| agent.env.clone())
+                    .unwrap_or_else(|| catalog_env(&info));
+                let environment = build_child_env(
+                    std::env::vars(),
+                    crate::features::agent::registry::discovery::login_shell_env(),
+                    &descriptor_env,
+                );
+                let detect = info
+                    .detect_command
+                    .as_deref()
+                    .unwrap_or(info.command.as_str());
+                let path_acp_available =
+                    resolve_command_in_agent_env(&info.command, &environment).is_some();
+                let bundled = bundled::bundled_adapter(&info.id);
+                let detect_path = if !path_acp_available && bundled.is_some() {
+                    bundled::host_path(&info.id, &environment)
+                } else {
+                    resolve_command_in_agent_env(detect, &environment)
+                };
+                let binary_available = detect_path.is_some();
+                let availability =
+                    local_command_availability(&info.command, &info.id, &environment, || {
+                        bundled::bundled_spawn(&info.id, &environment).is_some()
+                    });
+                let acp_command_available = availability.is_ok();
 
                 let (acp_status, acp_agent_name, last_probe_error, last_probed_at) =
-                    if !acp_command_available && !binary_available {
-                        (CatalogAcpStatus::Missing, None, None, None)
+                    if !acp_command_available {
+                        let error = if binary_available {
+                            bundled::node_blocker_message(&info.id).or_else(|| availability.err())
+                        } else {
+                            availability.err()
+                        };
+                        (CatalogAcpStatus::Missing, None, error, None)
                     } else if let Some(reg) = registered {
                         match reg.last_probe_ok {
                             Some(true) => (
@@ -453,41 +463,10 @@ impl AgentRegistry {
                                 reg.last_probe_error.clone(),
                                 reg.last_probed_at.clone(),
                             ),
-                            None => {
-                                if acp_command_available {
-                                    (CatalogAcpStatus::NotProbed, None, None, None)
-                                } else {
-                                    (
-                                        CatalogAcpStatus::Missing,
-                                        None,
-                                        Some(format!("ACP command `{}` not found", info.command)),
-                                        None,
-                                    )
-                                }
-                            }
+                            None => (CatalogAcpStatus::NotProbed, None, None, None),
                         }
-                    } else if acp_command_available {
-                        (CatalogAcpStatus::NotProbed, None, None, None)
-                    } else if binary_available {
-                        // Host CLI present (e.g. `claude`) but ACP entrypoint missing.
-                        (
-                            CatalogAcpStatus::Missing,
-                            None,
-                            Some(format!("ACP command `{}` not found", info.command)),
-                            None,
-                        )
                     } else {
-                        (
-                            CatalogAcpStatus::Missing,
-                            None,
-                            Some(format!(
-                                "command `{}` not found on PATH",
-                                info.detect_command
-                                    .as_deref()
-                                    .unwrap_or(info.command.as_str())
-                            )),
-                            None,
-                        )
+                        (CatalogAcpStatus::NotProbed, None, None, None)
                     };
 
                 let mut registered_id = registered.map(|a| a.id.clone());
@@ -533,6 +512,8 @@ impl AgentRegistry {
                     binary_available,
                     resolved_path: detect_path.map(|p| p.display().to_string()),
                     acp_command_available,
+                    acp_bundled: bundled.is_some(),
+                    acp_bundled_version: bundled.map(|b| b.version),
                     acp_status,
                     registered_id,
                     is_default,
@@ -701,9 +682,9 @@ fn migrate_legacy_codex_agents(state: &mut AgentRegistryState) -> bool {
     migrated
 }
 
-/// Google Antigravity (community `agy-acp` adapter) and the legacy Gemini CLI
-/// template were removed: Google ships no official ACP entrypoint. Registrations
-/// may still be on disk, and an unknown template string fails the whole parse
+/// The community `agy-acp` adapter and legacy Gemini CLI template were removed.
+/// The official Antigravity server uses the separate `antigravity-acp` template.
+/// Old registrations may still be on disk; an unknown template fails the whole parse
 /// (`read_state` would fall back to an empty registry, dropping every other
 /// agent), so stale rows are stripped from the raw JSON before deserialization.
 const REMOVED_TEMPLATE_IDS: &[&str] = &["antigravity", "gemini"];
@@ -871,6 +852,7 @@ fn apply_user_agent_to_agent(agent: &mut AgentDescriptor, user_agent: &str, prov
         }
         // Other ACP templates: only AGENTERO_USER_AGENT today (agent may ignore it).
         AgentTemplate::Opencode
+        | AgentTemplate::AntigravityAcp
         | AgentTemplate::QoderCli
         | AgentTemplate::GrokBuild
         | AgentTemplate::OpenClaw
@@ -878,7 +860,8 @@ fn apply_user_agent_to_agent(agent: &mut AgentDescriptor, user_agent: &str, prov
         | AgentTemplate::Hermes
         | AgentTemplate::Dsh
         | AgentTemplate::KimiCode
-        | AgentTemplate::Zcode => {}
+        | AgentTemplate::Zcode
+        | AgentTemplate::MinimaxCode => {}
     }
 }
 
@@ -986,17 +969,42 @@ pub fn merge_codex_config_user_agent(
 
 fn refresh_availability(state: &mut AgentRegistryState) {
     for agent in &mut state.agents {
-        match probe_command(&agent.command) {
-            Ok(_) => {
-                agent.available = true;
-                agent.last_error = None;
-            }
-            Err(e) => {
-                agent.available = false;
-                agent.last_error = Some(e);
-            }
+        probe_or_bundled(agent);
+    }
+}
+
+fn local_command_availability(
+    command: &str,
+    template_id: &str,
+    environment: &HashMap<String, String>,
+    bundled_spawnable: impl FnOnce() -> bool,
+) -> Result<(), String> {
+    if resolve_command_in_agent_env(command, environment).is_some() {
+        return Ok(());
+    }
+    if bundled_spawnable() {
+        if bundled::host_path(template_id, environment).is_some() {
+            return Ok(());
+        }
+        if let Some((host, key)) = bundled::host_requirement(template_id) {
+            return Err(format!(
+                "host command `{host}` not found (check its installation or `{key}`)"
+            ));
         }
     }
+    Err(format!("ACP command `{command}` not found"))
+}
+
+fn probe_or_bundled(agent: &mut AgentDescriptor) {
+    let environment = effective_local_agent_env(agent);
+    let availability = local_command_availability(
+        &agent.command,
+        agent.template.as_str(),
+        &environment,
+        || bundled::bundled_spawn(agent.template.as_str(), &environment).is_some(),
+    );
+    agent.available = availability.is_ok();
+    agent.last_error = availability.err();
 }
 
 #[cfg(test)]
@@ -1110,20 +1118,31 @@ mod tests {
                     "args": [],
                     "env": {},
                     "available": true
+                },
+                {
+                    "id": "catalog-antigravity-acp",
+                    "name": "Antigravity",
+                    "template": "antigravity-acp",
+                    "command": "agy_acp_server.par",
+                    "args": [],
+                    "env": {},
+                    "available": true
                 }
             ]
         });
 
         assert!(strip_removed_templates(&mut value));
         let agents = value["agents"].as_array().expect("agents");
-        assert_eq!(agents.len(), 1);
+        assert_eq!(agents.len(), 2);
         assert_eq!(agents[0]["template"], "pi");
+        assert_eq!(agents[1]["template"], "antigravity-acp");
         assert!(value["default_id"].is_null());
         // Registry still deserializes after the strip.
         let state: AgentRegistryState =
             serde_json::from_value(value.clone()).expect("parse cleaned state");
-        assert_eq!(state.agents.len(), 1);
+        assert_eq!(state.agents.len(), 2);
         assert_eq!(state.agents[0].template, AgentTemplate::Pi);
+        assert_eq!(state.agents[1].template, AgentTemplate::AntigravityAcp);
 
         // Idempotent when nothing else references a removed template.
         value["default_id"] = serde_json::json!("catalog-pi");
@@ -1207,6 +1226,49 @@ mod tests {
         assert!(raw.contains("X-Tenant: acme"));
         assert!(raw.contains("User-Agent: claude-cli/2.1.161"));
         assert!(!raw.contains("old-cli/0.1"));
+    }
+
+    #[test]
+    fn bundled_availability_requires_host_but_path_adapters_do_not() {
+        use super::local_command_availability;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut environment =
+            HashMap::from([("PATH".to_string(), tmp.path().display().to_string())]);
+        for (id, command) in [
+            ("claude-acp", "claude-agent-acp"),
+            ("codex-acp", "codex-acp"),
+        ] {
+            let (host, key) = super::bundled::host_requirement(id).unwrap();
+            let error = local_command_availability(command, id, &environment, || true).unwrap_err();
+            assert!(error.contains(host));
+            assert!(error.contains(key));
+
+            let executable = tmp.path().join(if cfg!(windows) {
+                format!("{command}.cmd")
+            } else {
+                command.to_string()
+            });
+            std::fs::write(&executable, "#!/bin/sh\n").unwrap();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755))
+                    .unwrap();
+            }
+            assert!(local_command_availability(command, id, &environment, || {
+                panic!("PATH adapter must bypass the bundled tier")
+            })
+            .is_ok());
+
+            environment.insert(key.to_string(), executable.display().to_string());
+            assert!(
+                local_command_availability("missing-adapter", id, &environment, || true).is_ok()
+            );
+            assert!(
+                local_command_availability("missing-adapter", id, &environment, || false).is_err()
+            );
+        }
     }
 
     #[test]

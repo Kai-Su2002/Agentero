@@ -4,7 +4,7 @@ use crate::config;
 use crate::error::CliError;
 use crate::output::OutputFormat;
 use crate::style::Style;
-use agentero_core::features::catalog::papers::{self, PaperRecord};
+use agentero_core::features::catalog::papers::{self, PaperRecord, PaperRefLookup};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -113,7 +113,7 @@ fn canonicalize_existing(p: &Path) -> Result<PathBuf, CliError> {
             abs.display()
         )));
     }
-    Ok(abs.canonicalize().unwrap_or(abs))
+    Ok(agentero_core::fs::canonicalize_best_effort(&abs))
 }
 
 /// True if path looks like an Agentero vault root.
@@ -129,18 +129,12 @@ fn walk_up_vault(start: &Path) -> Option<PathBuf> {
     let mut cur = start.to_path_buf();
     loop {
         if looks_like_vault(&cur) {
-            return Some(cur.canonicalize().unwrap_or(cur));
+            return Some(agentero_core::fs::canonicalize_best_effort(&cur));
         }
         if !cur.pop() {
             return None;
         }
     }
-}
-
-/// Whether `ref` should be treated as a vault-relative path.
-pub fn looks_like_path(ref_: &str) -> bool {
-    let t = ref_.trim();
-    t.contains('/') || t.contains('\\') || t.starts_with("papers")
 }
 
 /// Resolve paper by path or id (with ambiguity detection).
@@ -152,21 +146,16 @@ pub fn resolve_paper(
     globals: &GlobalOpts,
 ) -> Result<PaperRecord, CliError> {
     let ref_ = ref_.trim();
+    // Keep this precheck: `lookup_paper_ref` reports the same message but as a
+    // generic AppError, which would lose the usage exit code.
     if ref_.is_empty() {
         return Err(CliError::usage("paper ref is required"));
     }
 
-    if looks_like_path(ref_) {
-        let path = ref_.replace('\\', "/").trim_matches('/').to_string();
-        return papers::get_by_path(vault, &path)?.ok_or_else(|| CliError::paper_not_found(ref_));
-    }
-
-    let matches = papers::list_by_id(vault, ref_)?;
-    match matches.len() {
-        0 => Err(CliError::paper_not_found(ref_)),
-        1 => Ok(matches.into_iter().next().expect("len 1")),
-        _ => {
-            let candidates: Vec<String> = matches.iter().map(|p| p.path.clone()).collect();
+    match papers::lookup_paper_ref(vault, ref_)? {
+        PaperRefLookup::Found(record) => Ok(*record),
+        PaperRefLookup::NotFound => Err(CliError::paper_not_found(ref_)),
+        PaperRefLookup::Ambiguous(candidates) => {
             if let Some(path) = crate::prompt::select_one(
                 globals,
                 &format!("Multiple papers match id '{ref_}'. Choose a vault-relative path"),

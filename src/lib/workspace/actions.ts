@@ -17,6 +17,7 @@ import {
 } from "@/lib/agent/citation-href";
 import { errorText } from "@/lib/core/error";
 import { notifyError, notifyUndo, notifyWarning } from "@/lib/core/notify";
+import { openExternalUrl } from "@/lib/core/open-external";
 import { closeTopOverlay } from "@/lib/core/overlay-stack";
 import { isTauri } from "@/lib/core/tauri";
 import { lifecycle } from "@/lib/lifecycle";
@@ -25,7 +26,10 @@ import {
 	isPaperDirectory,
 	isRemoteArxivPath,
 	isUnderPaperAttachments,
+	isUnderPapers,
 	localFileToArrayBuffer,
+	notesPathForPaper,
+	type PaperMetadata,
 	paperDirFromPath,
 	type RemotePaperItem,
 	remoteArxivPath,
@@ -44,6 +48,7 @@ import {
 	paperAbsFromWikiTarget,
 } from "@/lib/pdf/annotation-ref";
 import { removeTabAnnotations } from "@/lib/pdf/annotations-store";
+import { stripEmbedPdfRevision } from "@/lib/pdf/document-id";
 import {
 	buildLayoutDocumentResult,
 	getLayoutDocumentResult,
@@ -63,6 +68,7 @@ import {
 	plazaSourceForPath,
 } from "@/lib/plaza";
 import { loadSettings } from "@/lib/settings";
+import { closeCurrentWindow } from "@/lib/shell/close-window";
 import { setLayoutMode } from "@/lib/shell/ui-store";
 import {
 	ensureLocalFsScope,
@@ -103,7 +109,7 @@ import {
 	takeClosedTab,
 	updateTab,
 } from "@/lib/workspace/store";
-import { flushTextEditorFor } from "@/lib/workspace/text-editor-flush";
+import { flushAllTextEditors } from "@/lib/workspace/text-editor-flush";
 import {
 	type PdfViewerHandle,
 	pdfHandleFor,
@@ -142,6 +148,7 @@ import {
 import {
 	compileTexFile,
 	ensureTexEngines,
+	resolveTexRoot,
 	texCompileStore,
 } from "./tex-compile";
 import {
@@ -152,12 +159,12 @@ import {
 } from "./viewer";
 
 /**
- * When the strip would be empty with a Vault open, insert full Library.
- * Active focus is left to dockview (`onDidActivePanelChange` / sync end).
+ * Library is resident: with a Vault open its tab must always exist in the
+ * strip. Active focus is left to dockview (`onDidActivePanelChange` / sync end).
  */
-function withLibraryIfEmpty(next: DocTab[]): DocTab[] {
-	if (next.length > 0 || !getVaultPath()) return next;
-	return ensureFullLibraryTab([]).tabs;
+function withLibraryPresent(next: DocTab[]): DocTab[] {
+	if (!getVaultPath()) return next;
+	return ensureFullLibraryTab(next).tabs;
 }
 
 /**
@@ -282,6 +289,14 @@ export function openTab(
 			existing.kind === "paper" &&
 			(existing.mode === "pdf" || existing.mode === "html")
 		) {
+			const wantDefaultNotes =
+				!opts?.skipDefaultNotes &&
+				!opts?.placement &&
+				Boolean(existing.notesPath) &&
+				(opts?.forceNotes || loadSettings().autoOpenPaperNotes);
+			if (wantDefaultNotes && !tabHasNotesSplit(getTabs(), existing)) {
+				openTabNotes(existing.id);
+			}
 			activatePaperWithNotes(existing);
 		} else {
 			setActiveTabId(id);
@@ -432,6 +447,9 @@ function openNotesForPaper(
  * closing NOTES leaves the body open.
  */
 export function closeTab(id: string, opts: { remember?: boolean } = {}): void {
+	// Library is resident — never closable (its close affordance is hidden).
+	const target = getTabs().find((t) => t.id === id);
+	if (target && isLibraryVirtualPath(target.path)) return;
 	// Resolve pair before setState so Strict Mode double-invoke is stable.
 	const idsToClose = readingPairCloseIds(getTabs(), id);
 	const active = getActiveTabId();
@@ -451,7 +469,7 @@ export function closeTab(id: string, opts: { remember?: boolean } = {}): void {
 		}
 		if (!removedList.length) return prev;
 		for (const r of removedList) revokeTabMediaSources(r);
-		return withLibraryIfEmpty(next);
+		return withLibraryPresent(next);
 	});
 	removeTabAnnotations(idsToClose);
 }
@@ -506,7 +524,7 @@ export function closePlazaTabs(): void {
 		for (const tab of removed) revokeTabMediaSources(tab);
 		removedIds = removed.map((tab) => tab.id);
 		const tabs = prev.filter((tab) => !removedIds.includes(tab.id));
-		return withLibraryIfEmpty(tabs);
+		return withLibraryPresent(tabs);
 	});
 	if (removedIds.length) removeTabAnnotations(removedIds);
 }
@@ -519,7 +537,7 @@ export function closeTabsUnderPath(path: string): void {
 		if (!removed.length) return prev;
 		for (const t of removed) revokeTabMediaSources(t);
 		removedIds = removed.map((t) => t.id);
-		return withLibraryIfEmpty(tabs);
+		return withLibraryPresent(tabs);
 	});
 	if (removedIds.length) removeTabAnnotations(removedIds);
 }
@@ -541,11 +559,14 @@ function cloneTabForSplit(tab: DocTab, tabs: DocTab[]): DocTab {
 
 /**
  * Open (or refresh) the compiled PDF of a .tex file as a right split of its
- * editor pane — the TeX analogue of the paper→NOTES right split. When the
- * PDF is missing on disk (or `forceCompile`, the compile-button path), the
- * pane opens immediately with a shimmer placeholder while the compile runs,
- * then fills in. Existing PDF tabs are refreshed in place (new bytes
- * identity reloads EmbedPDF) and activated.
+ * editor pane — the TeX analogue of the paper→NOTES right split. The PDF is
+ * the project ROOT's output (magic comment → self indicator → vault
+ * \input/\include reverse scan → the file itself), so triggering this from a
+ * child file still builds and shows the root's PDF. When the PDF is missing
+ * on disk (or `forceCompile`, the compile-button path), the pane opens
+ * immediately with a shimmer placeholder while the compile runs, then fills
+ * in. Existing PDF tabs are refreshed in place (new bytes identity reloads
+ * EmbedPDF) and activated.
  */
 export async function openTexPdf(
 	texPath: string,
@@ -573,7 +594,14 @@ export async function openTexPdf(
 	}
 	const referencePanelId = refId ?? canonicalTexId;
 
-	const pdfPath = texPdfPath(texPath);
+	// Flush every mounted editor's debounced autosave first (a root compile
+	// must read the latest bytes of all its sections — the saveAll
+	// equivalent), then resolve the root from that fresh disk state so a
+	// just-typed magic comment or \input already counts. Both before the
+	// fast path: the pane id must follow the root either way.
+	await flushAllTextEditors();
+	const rootPath = await resolveTexRoot(texPath);
+	const pdfPath = texPdfPath(rootPath);
 	const pdfId = tabIdForPath(pdfPath);
 	await ensureLocalFsScope(vaultStore.getState().vaultPath);
 
@@ -599,11 +627,6 @@ export async function openTexPdf(
 			return;
 		}
 	}
-
-	// Compile-first flow: flush the editor's debounced autosave first so
-	// latexmk reads the just-typed bytes, not the pre-autosave disk snapshot
-	// (saves no longer auto-compile, nothing else would close that gap).
-	await flushTextEditorFor(texPath);
 
 	// Show the PDF pane immediately as a shimmer placeholder, then fill it
 	// once the compile lands.
@@ -634,7 +657,7 @@ export async function openTexPdf(
 		updateTab(insertedId, { texCompiling: true });
 	}
 
-	const compiled = await compileTexFile(texPath);
+	const compiled = await compileTexFile(rootPath, { triggerPath: texPath });
 	const bytes = compiled ? await localFileToArrayBuffer(compiled) : null;
 	if (!compiled || !bytes) {
 		// Failure already notified. Drop a pane we just created (it would sit
@@ -667,10 +690,13 @@ let pendingSaveCompilePath: string | null = null;
 /**
  * Quiet TeX compile + in-place refresh of the open PDF pane: the compile-button
  * flow without the focus steal, pane auto-open and success toast. Called after
- * a manual ⌘S save lands (`compileTexOnManualSave`). The pane's shimmer
- * (`texCompiling`) stays up while latexmk runs so partial watcher writes never
- * flash through; triggers landing mid-compile queue a single trailing run with
- * the latest path.
+ * a manual ⌘S save lands (`compileTexOnManualSave`). The build target is the
+ * project ROOT (saving a child recompiles the root and refreshes the root's
+ * PDF pane), resolved after flushing every mounted editor — ⌘S only guaranteed
+ * the triggered file on disk. The pane's shimmer (`texCompiling`) stays up
+ * while latexmk runs so partial watcher writes never flash through; triggers
+ * landing mid-compile queue a single trailing run with the latest path
+ * (re-resolving the root against the then-current disk state).
  */
 export async function compileTexOnSave(texPath: string): Promise<void> {
 	// Right after a window reload the detection scan may still be in flight:
@@ -684,12 +710,17 @@ export async function compileTexOnSave(texPath: string): Promise<void> {
 		pendingSaveCompilePath = texPath;
 		return;
 	}
-	const pdfPath = texPdfPath(texPath);
+	await flushAllTextEditors();
+	const rootPath = await resolveTexRoot(texPath);
+	const pdfPath = texPdfPath(rootPath);
 	const pdfId = tabIdForPath(pdfPath);
 	const paneOpen = getTabs().some((t) => t.id === pdfId);
 	if (paneOpen) updateTab(pdfId, { texCompiling: true });
 	try {
-		const compiled = await compileTexFile(texPath, { quietSuccess: true });
+		const compiled = await compileTexFile(rootPath, {
+			quietSuccess: true,
+			triggerPath: texPath,
+		});
 		const bytes = compiled ? await localFileToArrayBuffer(compiled) : null;
 		if (!compiled || !bytes) {
 			// Drop the shimmer on the previous content; the failure itself was
@@ -741,6 +772,8 @@ export function splitActivePane(): void {
 	const tabs = getTabs();
 	const active = tabs.find((t) => t.id === id);
 	if (!active) return;
+	// Library is the resident singleton — never clone it into a second pane.
+	if (isLibraryVirtualPath(active.path)) return;
 
 	// TeX editor ⌘\ → open/refresh its compiled PDF as the right split.
 	if (isTexPath(active.path)) {
@@ -783,8 +816,13 @@ export function openTranslationTab(
 ): void {
 	if (!paperAbsPath) return;
 	const tabs = getTabs();
-	const paperTab = tabs.find((t) => t.id === paperTabId);
+	// The caller passes the viewer's document id; bytes-backed viewers suffix a
+	// per-buffer revision (`tab::r<n>`), so fall back to the stripped form.
+	const paperTab =
+		tabs.find((t) => t.id === paperTabId) ??
+		tabs.find((t) => t.id === stripEmbedPdfRevision(paperTabId));
 	if (!paperTab) return;
+	paperTabId = paperTab.id;
 
 	const existing = tabs.find(
 		(t) => t.id === `${tabIdForPath(paperAbsPath)}::translation`,
@@ -844,15 +882,7 @@ export function openTranslationTab(
 }
 
 export function closeWindow(): void {
-	if (!isTauri()) return;
-	void (async () => {
-		try {
-			const { getCurrentWindow } = await import("@tauri-apps/api/window");
-			await getCurrentWindow().close();
-		} catch {
-			// window close unavailable outside the desktop shell
-		}
-	})();
+	closeCurrentWindow();
 }
 
 /**
@@ -903,17 +933,18 @@ function activeNotesTarget(): DocTab | null {
 }
 
 /** Set the active paper's NOTES panel without touching other PDF tabs. */
-export function setNotesSplit(open: boolean): void {
-	setLayoutMode("custom");
+export function setNotesSplit(
+	open: boolean,
+	opts: { preserveLayoutMode?: boolean } = {},
+): void {
+	if (!opts.preserveLayoutMode) setLayoutMode("custom");
 	const target = activeNotesTarget();
 	if (!target?.notesPath) return;
 	const notesId = tabIdForPath(target.notesPath);
 	const isOpen = tabHasNotesSplit(getTabs(), target);
-	if (isOpen === open) {
-		if (open) dockHandle()?.equalizeGridGroups();
-		return;
-	}
+	if (isOpen === open) return;
 	if (!open) {
+		dockHandle()?.rememberNotesSplitWidth(target.id, notesId);
 		closeTab(notesId, { remember: false });
 		return;
 	}
@@ -931,7 +962,9 @@ export function setNotesSplit(open: boolean): void {
 		return [...prev, notesPane];
 	});
 	dockHandle()?.openPanel(notesPane, notesPlacement);
-	dockHandle()?.equalizeGridGroups();
+	if (notesPlacement?.direction === "right") {
+		dockHandle()?.restoreNotesSplitWidth(target.id, notesPane.id);
+	}
 	setActiveTabId(notesPane.id);
 }
 
@@ -988,8 +1021,15 @@ export function openPaper(paperDir: string): void {
 	setTreeSelectedPath(abs);
 	if (loadSettings().replaceCurrentTabOnOpenPaper) {
 		const activeId = getActiveTabId();
-		if (activeId && !getTabs().some((t) => t.id === tabIdForPath(abs))) {
-			closeTab(activeId, { remember: false });
+		const activeTab = activeId
+			? getTabs().find((t) => t.id === activeId)
+			: null;
+		if (
+			activeTab &&
+			!isLibraryVirtualPath(activeTab.path) &&
+			!getTabs().some((t) => t.id === tabIdForPath(abs))
+		) {
+			closeTab(activeTab.id, { remember: false });
 		}
 	}
 	openTab(abs, { preferMode: "pdf" });
@@ -1083,7 +1123,10 @@ function citationPaperKeys(paperAbs: string): string[] {
  * page for restore to prefer, and re-apply the jump a few times while the
  * viewport settles.
  */
-function scheduleCitationJump(paperAbs: string, target: CitationTarget): void {
+export function scheduleCitationJump(
+	paperAbs: string,
+	target: CitationTarget,
+): void {
 	const tabId = tabIdForPath(paperAbs);
 	const keys = citationPaperKeys(paperAbs);
 	const page = target.pageIndex + 1;
@@ -1164,11 +1207,7 @@ export function openCitation(source: string): void {
 	const trimmed = rewriteCitationHrefToPdf(cleanCitationHref(source));
 	if (!trimmed) return;
 	if (/^https?:\/\//i.test(trimmed)) {
-		void import("@tauri-apps/plugin-opener")
-			.then(({ openUrl }) => openUrl(trimmed))
-			.catch(() => {
-				window.open(trimmed, "_blank", "noopener,noreferrer");
-			});
+		openExternalUrl(trimmed);
 		return;
 	}
 
@@ -1722,12 +1761,12 @@ export function persistTextFile(
 	return attempt;
 }
 
-/** Ensure the strip shows the full Library when it would otherwise be empty. */
+/** Ensure the resident Library tab exists (no-op when already present). */
 export function ensureLibraryTabPresent(): void {
-	if (getTabs().length > 0) return;
-	const ensured = ensureFullLibraryTab([]);
+	const ensured = ensureFullLibraryTab(getTabs());
+	if (!ensured.inserted) return;
 	setTabs(ensured.tabs);
-	setActiveTabId(ensured.activeId);
+	if (!getActiveTabId()) setActiveTabId(ensured.activeId);
 }
 
 const placeholderLoads = new Set<string>();
@@ -1747,6 +1786,9 @@ export function hydratePlaceholderTabs(tabIds: readonly string[]): void {
 		if (!tab || tab.loaded || tab.texCompiling || placeholderLoads.has(id)) {
 			continue;
 		}
+		// Paper ownership needs the tree: dotted folder names (e.g. arXiv IDs)
+		// otherwise look like files and resolve to their parent org folder.
+		if (vaultStore.getState().treeLoading && isUnderPapers(tab.path)) continue;
 		placeholderLoads.add(id);
 		void (async () => {
 			const vaultState = vaultStore.getState();
@@ -1792,6 +1834,38 @@ export function hydratePlaceholderTabs(tabIds: readonly string[]): void {
 			}
 		})();
 	}
+}
+
+/**
+ * After the vault tree finishes loading, some restored paper tabs may have been
+ * misclassified as Library because `paperFolders` was still empty during the
+ * first hydration. Reset those tabs to placeholders and hydrate them again.
+ */
+export function rehydrateMisclassifiedPaperTabs(): void {
+	if (!isTauri() || !getVaultPath()) return;
+	const { paperFolders } = vaultStore.getState();
+	if (!paperFolders.length) return;
+
+	const ids: string[] = [];
+	for (const tab of getTabs()) {
+		if (!tab.loaded || tab.kind !== "library") continue;
+		if (
+			isLibraryVirtualPath(tab.path) ||
+			isTrashVirtualPath(tab.path) ||
+			isPlazaVirtualPath(tab.path)
+		) {
+			continue;
+		}
+		if (!isUnderPapers(tab.path)) continue;
+		if (paperDirFromPath(tab.path, paperFolders)) {
+			ids.push(tab.id);
+		}
+	}
+	if (!ids.length) return;
+
+	for (const id of ids) placeholderLoads.delete(id);
+	for (const id of ids) updateTab(id, { loaded: false });
+	hydratePlaceholderTabs(ids);
 }
 
 /** Library tree node: full library scope, single Library tab. */
@@ -1871,4 +1945,126 @@ export function selectFileNode(node: FileNode): void {
 	}
 	if (node.kind !== "file") return;
 	openPath(node.path);
+}
+
+/**
+ * Synchronize open workspace tabs when a paper has been recognized and renamed.
+ * Reloads the paper's metadata, canonical PDF path, and updated NOTES.md content,
+ * bumping editor reload keys and updating dockview panel titles.
+ */
+export async function syncRenamedPaperTabs(
+	vaultId: string,
+	toAbs: string,
+): Promise<void> {
+	const vaultState = vaultStore.getState();
+	let res: Awaited<ReturnType<typeof loadTabResources>>;
+	try {
+		res = await loadTabResources(
+			toAbs,
+			vaultId,
+			vaultState.tree,
+			vaultState.paperFolders,
+		);
+	} catch {
+		return;
+	}
+
+	const paperTabId = tabIdForPath(toAbs);
+	const notesPath = res.notesPath ?? notesPathForPaper(toAbs);
+	const notesTabId = tabIdForPath(notesPath);
+	const currentTabs = getTabs();
+
+	for (const tab of currentTabs) {
+		if (tab.id === paperTabId || tab.path === toAbs) {
+			updateTab(tab.id, {
+				title: res.title || tab.title,
+				paperMeta: res.paperMeta ?? tab.paperMeta,
+				pdfUrl: res.pdfUrl ?? tab.pdfUrl,
+				pdfBytes: res.pdfBytes ?? tab.pdfBytes,
+				notesPath,
+				notesSeed: res.notesSeed,
+				notesKey: tab.notesKey + 1,
+			});
+		} else if (
+			tab.id === notesTabId ||
+			(tab.notesPath &&
+				normalizeTabPath(tab.notesPath) === normalizeTabPath(notesPath)) ||
+			(tab.path && normalizeTabPath(tab.path) === normalizeTabPath(notesPath))
+		) {
+			updateTab(tab.id, {
+				notesSeed: res.notesSeed,
+				markdownSeed: res.notesSeed,
+				notesKey: tab.notesKey + 1,
+				seedKey: tab.seedKey + 1,
+				paperMeta: res.paperMeta ?? tab.paperMeta,
+				notesPath,
+				path: notesPath,
+			});
+		}
+	}
+
+	if (notesPath) {
+		void applyDiskChange(notesPath);
+	}
+}
+
+/**
+ * Synchronize open workspace tabs when a paper's metadata has been edited or refreshed.
+ * Updates the tab's `title` (for paper tabs) and `paperMeta`, and notifies open NOTES.md
+ * of possible title sync on disk.
+ */
+export function syncUpdatedPaperTabs(
+	vaultPath: string,
+	relPath: string,
+	updated: Partial<PaperMetadata>,
+	fallbackId?: string,
+): void {
+	const normRel = relPath.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+	const paperAbs = joinVaultPath(vaultPath, normRel);
+	const notesAbs = joinVaultPath(vaultPath, `${normRel}/NOTES.md`);
+	const normNotesRel = `${normRel}/notes.md`.toLowerCase();
+
+	setTabs((prev) =>
+		prev.map((tab) => {
+			const tabRel = toVaultRelative(vaultPath, tab.path)
+				.replace(/\\/g, "/")
+				.replace(/^\/+|\/+$/g, "");
+			const metaRel = tab.paperMeta?.path
+				?.replace(/\\/g, "/")
+				.replace(/^\/+|\/+$/g, "");
+
+			const isDirectPaperTab =
+				tabRel === normRel || metaRel === normRel || tab.path === paperAbs;
+
+			const isSamePaperId = Boolean(
+				fallbackId && tab.paperMeta?.id && tab.paperMeta.id === fallbackId,
+			);
+
+			const isNotesTab =
+				Boolean(tab.notesPath && tab.notesPath === notesAbs) ||
+				Boolean(tabRel && tabRel.toLowerCase() === normNotesRel);
+
+			if (!isDirectPaperTab && !isSamePaperId && !isNotesTab) {
+				return tab;
+			}
+
+			const nextMeta: PaperMetadata = {
+				...(tab.paperMeta ?? ({} as PaperMetadata)),
+				...updated,
+			};
+
+			const nextTitle =
+				tab.kind === "paper"
+					? nextMeta.title?.trim() || basenameOf(tab.path)
+					: tab.title;
+
+			return {
+				...tab,
+				title: nextTitle,
+				paperMeta: nextMeta,
+			};
+		}),
+	);
+
+	void applyDiskChange(notesAbs);
 }

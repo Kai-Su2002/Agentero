@@ -7,10 +7,7 @@
  * scroll frame.
  */
 
-import type {
-	AskPinAnchor,
-	TranslatePinAnchor,
-} from "@/components/viewer/pdf/hooks/use-pdf-pin-anchors";
+import type { AskPinAnchor } from "@/components/viewer/pdf/hooks/use-pdf-pin-anchors";
 import type { PageAnnotationComment } from "@/components/viewer/pdf/types";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import { tracePreview } from "@/lib/pdf/agent-trace";
@@ -30,13 +27,14 @@ import {
 	pinObscuresBodyText,
 	type SelectionPin,
 } from "@/lib/pdf/selection";
+import type { PdfTranslateRecord } from "@/lib/pdf/translate/types";
 
 export type MarksIndexInput = {
 	highlights: PdfHighlight[];
 	/** Annotation id → normalized rect, for gutter-pin placement. */
 	highlightAnchors: ReadonlyMap<string, NormalizedRect>;
 	askPinAnchors: AskPinAnchor[];
-	translatePinAnchors: TranslatePinAnchor[];
+	translates: PdfTranslateRecord[];
 	visualTraces: PdfVisualSessionTrace[];
 	/** 0-based page index → normalized text rects (missing while unloaded). */
 	pageTextMap: ReadonlyMap<number, NormalizedRect[]>;
@@ -55,7 +53,7 @@ export function buildMarksIndex({
 	highlights,
 	highlightAnchors,
 	askPinAnchors,
-	translatePinAnchors,
+	translates,
 	visualTraces,
 	pageTextMap,
 	paperTitle,
@@ -106,16 +104,20 @@ export function buildMarksIndex({
 			side: pin.side,
 		});
 	}
-	for (const anchor of translatePinAnchors) {
-		if (anchor.hasError) continue;
-		const pageText = pageTextMap.get(anchor.page - 1);
-		const pin = pinFromRects(anchor.rects, pageText);
-		add(anchor.page, {
-			id: anchor.id,
+	for (const translate of translates) {
+		if (!translate.pinned || translate.rects.length === 0) continue;
+		const pageText = pageTextMap.get(translate.page - 1);
+		const pin = pinFromRects(translate.rects, pageText);
+		const preview = (translate.quote || translate.result || "")
+			.replace(/\s+/g, " ")
+			.trim()
+			.slice(0, 96);
+		add(translate.page, {
+			id: translate.id,
 			kind: "translate",
 			x: pin.x,
 			y: pin.y,
-			preview: anchor.preview,
+			preview,
 			overText: pinObscuresBodyText(pin, pageText),
 			side: pin.side,
 		});
@@ -123,9 +125,9 @@ export function buildMarksIndex({
 	for (const trace of visualTraces) {
 		const hasAgent = Boolean(trace.agent);
 		const hasComment = trace.comment.trim().length > 0;
-		// Visual marks with a user note get a comment-rail card. Marks that only
-		// carry an Agent conversation (no note) rely on the gutter pin to open
-		// the chat record, so they don't clutter the rail with an empty card.
+		// Empty crops are in-progress drafts. The open editor injects its own
+		// card; blur / outside click / Escape drops them. Agent-only marks use
+		// the conversation pin instead of an empty comment card.
 		if (hasComment) {
 			const entry: PageAnnotationComment = {
 				id: trace.id,

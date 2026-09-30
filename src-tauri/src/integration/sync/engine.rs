@@ -69,7 +69,13 @@ pub type Progress<'a> = &'a (dyn Fn(&str, usize, usize) + Send + Sync);
 /// PUTs (Aliyun OSS, most WebDAV servers) degrade to plain PUTs before the
 /// first real sync instead of failing mid-pass.
 pub async fn test_connection(cfg: &SyncBackendConfig) -> Result<bool, AppError> {
-    let client = SyncStore::new(cfg)?;
+    // The probe must measure the server, not echo the persisted verdict: a
+    // config re-saved with a different address (or after the server's
+    // behavior changed) must re-evaluate conditional-write support instead
+    // of preserving a stale `conditional_writes = false`.
+    let mut probe = cfg.clone();
+    probe.conditional_writes = true;
+    let client = SyncStore::new(&probe)?;
     client.ensure_root().await?;
     client.probe_conditional_writes().await
 }
@@ -745,6 +751,19 @@ mod tests {
         let packed = gzip(&vec![0u8; 4096]).unwrap();
         assert_eq!(gunzip_limited(&packed, 4096).unwrap().len(), 4096);
         assert!(gunzip_limited(&packed, 4095).is_err());
+    }
+
+    /// The remote layout's artifact names must stay covered by the shared
+    /// ignore list, or a mirrored store would leak back into the blob store.
+    #[test]
+    fn store_artifact_names_cover_the_remote_layout() {
+        use agentero_core::features::vault::tree::SYNC_STORE_ARTIFACT_NAMES;
+        for key in [HEAD_KEY, VAULT_KEY, "blobs", "manifests"] {
+            assert!(
+                SYNC_STORE_ARTIFACT_NAMES.contains(&key),
+                "{key} missing from SYNC_STORE_ARTIFACT_NAMES"
+            );
+        }
     }
 
     /// Full two-device round trip against a live S3 endpoint.

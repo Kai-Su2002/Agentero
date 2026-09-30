@@ -18,9 +18,10 @@ use crate::core::error::AppError;
 use crate::features::lifecycle::{emit_paper_renamed, PaperRenamedEvent};
 use crate::features::paper::catalog::papers::{self, PaperRecord};
 use crate::features::paper::catalog::CapsCache;
-use crate::features::paper::import::recognize::pdf_recognize::PdfIdentProbe;
+use crate::features::paper::import::recognize::pdf_recognize::{
+    apply_probe_fields, canonical_base_id, PdfIdentProbe,
+};
 use crate::features::paper::import::AppHandle;
-use crate::features::paper::import::{doi_slug, slug_from_stem};
 use crate::features::vault::rename::{run_local_rename_transaction, WikiIndex};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -38,62 +39,6 @@ pub(crate) enum RecognizeApply {
     Skipped(&'static str),
 }
 
-/// Folder-safe canonical base id from a resolved probe: bare arXiv id or
-/// DOI slug (mirrors identifier-import naming, e.g. `papers/1706.03762`).
-fn canonical_base_id(probe: &PdfIdentProbe) -> Option<String> {
-    probe
-        .arxiv_id
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(slug_from_stem)
-        .or_else(|| {
-            probe
-                .doi
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(doi_slug)
-        })
-        .filter(|s| !s.is_empty())
-}
-
-/// Copy the recognized fields onto a catalog row. Only `Some`/non-empty
-/// probe values overwrite; placeholders start empty so this never discards
-/// information. `meta_source` records the provenance (`recognize` /
-/// `local-unresolved`).
-fn apply_probe_fields(record: &mut PaperRecord, probe: &PdfIdentProbe, meta_source: &str) {
-    fn take(slot: &mut Option<String>, incoming: &Option<String>) {
-        if let Some(v) = incoming.as_deref().map(str::trim).filter(|v| !v.is_empty()) {
-            *slot = Some(v.to_string());
-        }
-    }
-    if let Some(title) = probe
-        .title
-        .as_deref()
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-    {
-        record.title = title.to_string();
-    }
-    if !probe.authors.is_empty() {
-        record.authors = probe.authors.clone();
-    }
-    if let Some(year) = probe.year {
-        record.year = Some(year);
-    }
-    take(&mut record.doi, &probe.doi);
-    take(&mut record.arxiv_id, &probe.arxiv_id);
-    take(&mut record.abstract_text, &probe.abstract_text);
-    take(&mut record.publication, &probe.publication);
-    take(&mut record.volume, &probe.volume);
-    take(&mut record.issue, &probe.issue);
-    take(&mut record.pages, &probe.pages);
-    take(&mut record.publisher, &probe.publisher);
-    record.meta_source = Some(meta_source.to_string());
-    record.updated_at = crate::core::time::now_rfc3339_millis();
-}
-
 /// Upsert recognized metadata without touching the folder; a changed title
 /// also appends the new title to NOTES.md frontmatter aliases (same
 /// convention as the Edit-Metadata flow).
@@ -108,9 +53,16 @@ fn meta_update_in_place(
     apply_probe_fields(record, probe, meta_source);
     papers::upsert_paper(vault, record)?;
     if record.title != old_title {
-        crate::features::markdown::wiki::append_title_alias_best_effort(
+        log::info!(
+            target: "agentero::import",
+            "recognize in-place syncing NOTES.md: path={path}, old_title={:?}, new_title={:?}",
+            old_title,
+            record.title
+        );
+        crate::features::markdown::wiki::sync_notes_title_and_alias(
             vault,
             &path,
+            &old_title,
             &record.title,
         );
     }
@@ -140,7 +92,7 @@ pub(crate) async fn apply_probe_result(
     };
     // The user edited metadata (Edit-Metadata marks `manual`) before
     // recognition finished — their values win, skip entirely.
-    if record.meta_source.as_deref().is_some_and(|s| s != "local") {
+    if record.meta_source.as_deref() == Some("manual") {
         return Ok(RecognizeApply::Skipped("user-edited"));
     }
 
@@ -256,9 +208,16 @@ async fn rename_to_canonical(
                     "post-rename metadata upsert failed: {e}");
             }
             if record.title != old_title {
-                crate::features::markdown::wiki::append_title_alias_best_effort(
+                log::info!(
+                    target: "agentero::import",
+                    "recognize rename syncing NOTES.md: path={to_rel}, old_title={:?}, new_title={:?}",
+                    old_title,
+                    record.title
+                );
+                crate::features::markdown::wiki::sync_notes_title_and_alias(
                     vault,
                     to_rel,
+                    &old_title,
                     &record.title,
                 );
             }
