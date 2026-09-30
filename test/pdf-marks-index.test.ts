@@ -85,6 +85,7 @@ describe("buildMarksIndex", () => {
 			highlights: [saved],
 			highlightAnchors: new Map([["h1", { x: 0.1, y: 0.5, w: 0.4, h: 0.08 }]]),
 			askPinAnchors: [],
+			translates: [],
 			visualTraces: [],
 			pageTextMap: new Map(),
 			paperTitle: undefined,
