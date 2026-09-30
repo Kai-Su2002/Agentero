@@ -8,7 +8,7 @@ use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::Aes128;
 use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
 use serde_json::Value;
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock, RwLock};
 use std::time::{Duration, Instant};
 
 use super::{http_err, lang_base, read_body};
@@ -20,10 +20,10 @@ const CNKI_MAX_CHARS: usize = 800;
 const CNKI_CHUNK_PAUSE: Duration = Duration::from_secs(2);
 
 /// Extra attempts for a request the WAF dropped on the floor. CNKI's edge
-/// silently RSTs a share of requests once an IP heats up (no HTTP status,
-/// just an empty reply), so one transport failure means nothing — the
-/// zotero-pdf-translate plugin retries the same way.
-const CNKI_SEND_RETRIES: u32 = 2;
+/// silently RSTs requests that arrive without the `SF_cookie_97` clearance
+/// cookie it hands out on the first reply (no HTTP status, just an empty
+/// reply), so one transport failure means nothing — see [`cnki_client`].
+const CNKI_SEND_RETRIES: u32 = 4;
 
 /// Base backoff between send retries (linear: 0.5s, 1s, …).
 const CNKI_RETRY_DELAY: Duration = Duration::from_millis(500);
@@ -37,6 +37,57 @@ struct CnkiTokenCache {
 }
 
 static CNKI_TOKEN: Mutex<Option<CnkiTokenCache>> = Mutex::new(None);
+
+/// Browser-UA client with a persistent cookie jar, cached process-wide.
+///
+/// dict.cnki.net's edge sets an `SF_cookie_97` clearance cookie on its first
+/// successful reply and then RSTs roughly half of the requests that arrive
+/// without it (no HTTP status — reqwest reports `error sending request for
+/// url`). The reference zotero-pdf-translate plugin gets this for free because
+/// Firefox carries cookies; a bare reqwest client does not, which is why even
+/// a green probe was followed by flaky translations. A shared jar means only
+/// the very first request of the process can be dropped — every later one
+/// already carries the cookie. Keyed by proxy so a runtime proxy change
+/// rebuilds it (cookies are then re-established on the next reply).
+static CNKI_CLIENT: OnceLock<RwLock<Option<CachedCnkiClient>>> = OnceLock::new();
+
+struct CachedCnkiClient {
+    proxy: Option<String>,
+    client: reqwest::Client,
+}
+
+/// Per-request timeout is applied on each `RequestBuilder` (not the client), so
+/// the cached client can serve both the snappy Settings probe (5s) and normal
+/// translations (up to 30s).
+fn cnki_client() -> Result<reqwest::Client, AppError> {
+    let proxy = http::effective_proxy_url();
+    let slot = CNKI_CLIENT.get_or_init(|| RwLock::new(None));
+    {
+        let guard = slot
+            .read()
+            .map_err(|_| AppError::message("CNKI client lock poisoned"))?;
+        if let Some(cached) = guard.as_ref() {
+            if cached.proxy == proxy {
+                return Ok(cached.client.clone());
+            }
+        }
+    }
+    let client = http::client_builder()
+        .user_agent(http::BROWSER_USER_AGENT)
+        .redirect(reqwest::redirect::Policy::limited(
+            http::DEFAULT_REDIRECT_LIMIT,
+        ))
+        .cookie_store(true)
+        .build()
+        .map_err(|e| AppError::message(format!("http client: {e}")))?;
+    if let Ok(mut guard) = slot.write() {
+        *guard = Some(CachedCnkiClient {
+            proxy,
+            client: client.clone(),
+        });
+    }
+    Ok(client)
+}
 
 /// One sentence-bounded slice of the input, with the boundary kind needed to
 /// join translated chunks back together (CJK punctuation joins with "",
@@ -71,7 +122,8 @@ pub async fn translate_cnki(
     }
 
     let chunks = split_cnki_chunks(text);
-    let mut token = cnki_token(timeout).await?;
+    let client = cnki_client()?;
+    let mut token = cnki_token(&client, timeout).await?;
     let mut parts: Vec<(String, bool)> = Vec::with_capacity(chunks.len());
     for (i, chunk) in chunks.iter().enumerate() {
         if i > 0 {
@@ -81,7 +133,7 @@ pub async fn translate_cnki(
         // same chunk instead of failing the whole translation.
         let mut refreshed_token = false;
         let translated = loop {
-            match cnki_translate_chunk(&chunk.text, &token, timeout).await {
+            match cnki_translate_chunk(&client, &chunk.text, &token, timeout).await {
                 Ok(translated) => break translated,
                 Err(CnkiError::StaleToken) if !refreshed_token => {
                     refreshed_token = true;
@@ -89,7 +141,7 @@ pub async fn translate_cnki(
                         *guard = None;
                     }
                     tokio::time::sleep(CNKI_RETRY_DELAY).await;
-                    token = cnki_token(timeout).await?;
+                    token = cnki_token(&client, timeout).await?;
                 }
                 Err(CnkiError::StaleToken) => {
                     return Err(AppError::message("CNKI rejected a fresh token (code 401)"))
@@ -156,15 +208,16 @@ fn describe_reqwest_error(err: &reqwest::Error) -> String {
 }
 
 async fn cnki_translate_chunk(
+    client: &reqwest::Client,
     chunk: &str,
     token: &str,
     timeout: Duration,
 ) -> Result<String, CnkiError> {
     let words = cnki_encrypt_words(chunk)?;
-    let client = http::client_with(timeout, http::DEFAULT_REDIRECT_LIMIT, http::BROWSER_USER_AGENT)?;
     let resp = cnki_send(
         client
             .post("https://dict.cnki.net/fyzs-front-api/translate/literaltranslation")
+            .timeout(timeout)
             .header("Content-Type", "application/json;charset=UTF-8")
             .header("Token", token)
             .json(&serde_json::json!({ "words": words, "translateType": null })),
@@ -184,10 +237,19 @@ async fn cnki_translate_chunk(
     let v: Value = serde_json::from_str(&body)
         .map_err(|e| AppError::message(format!("CNKI parse: {e}")))
         .map_err(CnkiError::Http)?;
-    if v.get("code").and_then(Value::as_i64) == Some(401) {
+    let code = v.get("code").and_then(Value::as_i64);
+    if code == Some(401) {
         return Err(CnkiError::StaleToken);
     }
-    if v.pointer("/data/isInputVerificationCode").and_then(Value::as_bool) == Some(true) {
+    // The captcha wall shows up two ways: an explicit `isInputVerificationCode`
+    // on an otherwise-normal reply, or a `code:1004` ("检索过于频繁，需输入验证码")
+    // that carries the captcha image.
+    let needs_captcha = v
+        .pointer("/data/isInputVerificationCode")
+        .and_then(Value::as_bool)
+        == Some(true)
+        || code == Some(1004);
+    if needs_captcha {
         return Err(CnkiError::Http(AppError::message(
             "CNKI requires human verification (temporarily banned). Open https://dict.cnki.net/ and pass the captcha, then retry.",
         )));
@@ -199,7 +261,7 @@ async fn cnki_translate_chunk(
         .map_err(CnkiError::Http)
 }
 
-async fn cnki_token(timeout: Duration) -> Result<String, AppError> {
+async fn cnki_token(client: &reqwest::Client, timeout: Duration) -> Result<String, AppError> {
     {
         let guard = CNKI_TOKEN.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(c) = guard.as_ref() {
@@ -208,10 +270,13 @@ async fn cnki_token(timeout: Duration) -> Result<String, AppError> {
             }
         }
     }
-    let client = http::client_with(timeout, http::DEFAULT_REDIRECT_LIMIT, http::BROWSER_USER_AGENT)?;
-    let resp = cnki_send(client.get("https://dict.cnki.net/fyzs-front-api/getToken"))
-        .await
-        .map_err(|e| AppError::message(format!("CNKI token request failed: {e}")))?;
+    let resp = cnki_send(
+        client
+            .get("https://dict.cnki.net/fyzs-front-api/getToken")
+            .timeout(timeout),
+    )
+    .await
+    .map_err(|e| AppError::message(format!("CNKI token request failed: {e}")))?;
     let (status, body) = read_body(resp).await?;
     if !status.is_success() {
         return Err(http_err(status, &body, "CNKI token"));
