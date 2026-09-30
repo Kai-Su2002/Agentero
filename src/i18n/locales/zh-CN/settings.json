@@ -480,6 +480,8 @@
 		},
 		"providerConfig": {
 			"section": "服务商配置",
+			"sectionHint": "推荐优先配置 Paddle 或 MinerU；其他 OpenAI 兼容服务见下方「其他」。",
+			"other": "其他服务商",
 			"providerName": {
 				"paddle": "Paddle",
 				"mineru": "MinerU",
