@@ -1433,7 +1433,10 @@ export type AppSettings_Deserialize = {
 	 *  `https://webvpn.example.edu/login?url=`. Empty disables the layer.
 	 */
 	institutionProxyPrefix?: string,
-	/**  Session cookie sent along with institution proxy requests. */
+	/**
+	 *  Session cookie sent along with institution proxy requests (pasted from
+	 *  the browser). Empty = no cookie.
+	 */
 	institutionProxyCookie?: string,
 	paperTreeLabelMode?: string,
 	paperTreeSortMode?: string,
@@ -1534,7 +1537,10 @@ export type AppSettings_Serialize = {
 	 *  `https://webvpn.example.edu/login?url=`. Empty disables the layer.
 	 */
 	institutionProxyPrefix: string,
-	/**  Session cookie sent along with institution proxy requests. */
+	/**
+	 *  Session cookie sent along with institution proxy requests (pasted from
+	 *  the browser). Empty = no cookie.
+	 */
 	institutionProxyCookie: string,
 	paperTreeLabelMode: string,
 	paperTreeSortMode: string,
