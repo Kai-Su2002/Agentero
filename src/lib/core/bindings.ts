@@ -34,6 +34,11 @@ export const commands = {
 	 *  rejects the key (non-200 / non-200 code).
 	 */
 	easyScholarProbe: () => __TAURI_INVOKE<ApiResult<boolean>>("easy_scholar_probe"),
+/**
+ *  Probe the configured institution proxy (EZProxy/WebVPN) by fetching a
+ *  known paywalled DOI through the rewrite and checking the response is a
+ *  PDF. Returns a short human-readable result for the settings UI.
+ */
 	institutionProxyProbe: () => __TAURI_INVOKE<ApiResult<string>>("institution_proxy_probe"),
 	/**
 	 *  Query EasyScholar for a publication's rank data.
