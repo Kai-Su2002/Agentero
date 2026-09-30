@@ -197,8 +197,9 @@ export function TranslatePane({
 
 		const initial: FreeMtProbeMap = {};
 		for (const id of FREE_MT_PROVIDER_IDS) {
-			// The built-in is never probed; its availability comes from the Host.
-			if (id === BUILTIN_PROVIDER_ID) continue;
+			// Skip the built-in when its key is not compiled in: the probe
+			// would only re-report the deterministic no-key failure.
+			if (id === BUILTIN_PROVIDER_ID && !builtinAvailable) continue;
 			initial[id] = "probing";
 		}
 		setProbeMap(initial);
@@ -217,7 +218,7 @@ export function TranslatePane({
 				probingRef.current = false;
 			}
 		});
-	}, []);
+	}, [builtinAvailable]);
 
 	const runCommercialProbe = useCallback(
 		(
@@ -370,14 +371,16 @@ export function TranslatePane({
 						<SelectContent className="max-h-72">
 							{providers.map((s) => {
 								const isBuiltin = s.id === BUILTIN_PROVIDER_ID;
-								// The built-in has no probe dot; availability comes from the Host.
-								const status: FreeMtProbeStatus | undefined = isBuiltin
-									? undefined
-									: isFreeMtProvider(s.id)
-										? (probeMap[s.id] ?? "idle")
-										: isCommercialTranslateProvider(s.id)
-											? (commercialProbeMap[s.id] ?? "idle")
-											: undefined;
+								// Unavailable built-in stays dotless (disabled item);
+								// an available one probes live like every free engine.
+								const status: FreeMtProbeStatus | undefined =
+									isBuiltin && !builtinAvailable
+										? undefined
+										: isFreeMtProvider(s.id)
+											? (probeMap[s.id] ?? "idle")
+											: isCommercialTranslateProvider(s.id)
+												? (commercialProbeMap[s.id] ?? "idle")
+												: undefined;
 								const statusLabel =
 									status != null ? t(PROBE_LABEL_KEYS[status]) : null;
 								return (
