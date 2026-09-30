@@ -30,7 +30,8 @@
 		"layout": {
 			"unavailable": "Layout analysis is not ready yet.",
 			"preparingModel": "Preparing layout model…",
-			"failed": "Layout analysis failed"
+			"failed": "Layout analysis failed",
+			"openSettings": "Open analysis settings"
 		},
 		"layoutTranslate": {
 			"start": "Full-text translate",

@@ -30,7 +30,8 @@
 		"layout": {
 			"unavailable": "版面分析尚未就绪。",
 			"preparingModel": "正在准备版面模型…",
-			"failed": "版面分析失败"
+			"failed": "版面分析失败",
+			"openSettings": "打开解析设置"
 		},
 		"layoutTranslate": {
 			"start": "全文翻译",

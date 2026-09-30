@@ -31,6 +31,7 @@ import {
 	setLayoutOverlayVisible,
 } from "@/lib/pdf/layout";
 import { layoutSidecarPath } from "@/lib/pdf/layout/io";
+import { openSettingsWindow } from "@/lib/shell/settings-window";
 import { listenVaultFileChangedGated } from "@/lib/vault/file-change-gate";
 import type { VaultFileChangedPayload } from "@/lib/vault/fs-watch";
 import { normalizePathKey } from "@/lib/vault/path";
@@ -117,6 +118,20 @@ export function usePdfLayoutRun({
 	const layoutTaskRef = useRef<LayoutAnalysisTask | null>(null);
 	const totalPagesRef = useRef(totalPages);
 	totalPagesRef.current = totalPages;
+
+	/** Failure toast that points at the provider settings (issue #656). */
+	const notifyLayoutFailure = useCallback(
+		(message: string) => {
+			notifyError(t("pdf.layout.failed"), {
+				description: message,
+				action: {
+					label: t("pdf.layout.openSettings"),
+					onClick: () => openSettingsWindow("layout"),
+				},
+			});
+		},
+		[t],
+	);
 
 	/**
 	 * Run layout analysis for this document.
@@ -281,8 +296,7 @@ export function usePdfLayoutRun({
 				).catch((e) => {
 					if (isBackgroundTaskCancelledError(e)) return;
 					if (opts?.notifyOnError !== false) {
-						const message = errorText(e);
-						notifyError(t("pdf.layout.failed"), { description: message });
+						notifyLayoutFailure(errorText(e));
 					}
 				});
 				return;
@@ -291,8 +305,7 @@ export function usePdfLayoutRun({
 			void runCore().catch((e) => {
 				if (isBackgroundTaskCancelledError(e)) return;
 				if (opts?.notifyOnError === false) return;
-				const message = errorText(e);
-				notifyError(t("pdf.layout.failed"), { description: message });
+				notifyLayoutFailure(errorText(e));
 			});
 		},
 		[
@@ -300,6 +313,7 @@ export function usePdfLayoutRun({
 			paperAbsPath,
 			paperRelPath,
 			t,
+			notifyLayoutFailure,
 			layoutCapRef,
 			docCap,
 			docCapRef,

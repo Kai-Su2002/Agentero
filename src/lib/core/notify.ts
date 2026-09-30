@@ -15,6 +15,8 @@ export type NotifyOptions = {
 	id?: string | number;
 	/** Auto-dismiss ms; default 7s for errors. */
 	duration?: number;
+	/** Optional inline action (e.g. "Open settings" on a config error). */
+	action?: { label: string; onClick: () => void };
 };
 
 /** Show an error toast in the top-right stack. */
@@ -29,7 +31,10 @@ export function notifyError(
 	return toast.error(text, {
 		description: opts.description,
 		id: opts.id,
-		duration: opts.duration ?? 7000,
+		// Keep the action reachable much longer than a plain error toast, so the
+		// user has time to click through to the settings fix.
+		duration: opts.duration ?? (opts.action ? 20_000 : 7000),
+		action: opts.action,
 	});
 }
 
