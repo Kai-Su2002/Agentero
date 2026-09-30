@@ -222,6 +222,81 @@ function Section({
 	);
 }
 
+/** Eye / EyeOff toggle for the raw layout bbox overlay on the PDF. */
+function OverlayToggleButton({
+	visible,
+	onToggle,
+}: {
+	visible: boolean;
+	onToggle: () => void;
+}) {
+	const { t } = useTranslation("viewer");
+	return (
+		<Tooltip>
+			<TooltipTrigger asChild>
+				<Button
+					type="button"
+					variant={visible ? "secondary" : "ghost"}
+					size="icon-xs"
+					className={cn(
+						"size-6 text-muted-foreground hover:text-foreground",
+						visible && "text-primary",
+					)}
+					aria-label={t("figures.toggleOverlay")}
+					aria-pressed={visible}
+					onClick={onToggle}
+				>
+					{visible ? (
+						<Eye className="size-3.5" aria-hidden />
+					) : (
+						<EyeOff className="size-3.5" aria-hidden />
+					)}
+				</Button>
+			</TooltipTrigger>
+			<TooltipContent side="bottom" className="max-w-52 text-xs">
+				{visible ? t("figures.hideOverlay") : t("figures.showOverlay")}
+			</TooltipContent>
+		</Tooltip>
+	);
+}
+
+/**
+ * Self-contained overlay toggle: reads the layout store and renders nothing
+ * until the document has detections. `className` supplies the wrapper
+ * material/position so callers can slot it into their own chrome (e.g. the
+ * compact PDF panel chip that shares the left toolbar's row).
+ */
+export function FiguresOverlayToggle({
+	documentId,
+	className,
+}: {
+	documentId: string;
+	className?: string;
+}) {
+	const result = useStore(
+		layoutAnalysisStore,
+		(s) => s.byDocument[layoutDocumentKey(documentId)] ?? null,
+	);
+	const visible = useStore(layoutAnalysisStore, (s) =>
+		Boolean(s.overlayVisible[documentId]),
+	);
+	const hasOverlaySource =
+		(result?.rawRegions?.length ?? 0) > 0 || (result?.regions?.length ?? 0) > 0;
+	const handleToggle = useCallback(() => {
+		toggleLayoutOverlayVisible(documentId);
+	}, [documentId]);
+
+	if (!hasOverlaySource) return null;
+
+	return (
+		<div className={className}>
+			<TooltipProvider delayDuration={200}>
+				<OverlayToggleButton visible={visible} onToggle={handleToggle} />
+			</TooltipProvider>
+		</div>
+	);
+}
+
 /**
  * Right-rail gallery: figures / tables / algorithms / numbered formulas.
  * Formulas section is always last. Unnumbered formulas are already dropped
@@ -460,36 +535,10 @@ export function FiguresPanel({
 							<TooltipProvider delayDuration={200}>
 								<div className="flex items-center gap-0.5">
 									{hasOverlaySource ? (
-										<Tooltip>
-											<TooltipTrigger asChild>
-												<Button
-													type="button"
-													variant={overlayVisible ? "secondary" : "ghost"}
-													size="icon-xs"
-													className={cn(
-														"size-6 text-muted-foreground hover:text-foreground",
-														overlayVisible && "text-primary",
-													)}
-													aria-label={t("figures.toggleOverlay")}
-													aria-pressed={overlayVisible}
-													onClick={handleToggleOverlay}
-												>
-													{overlayVisible ? (
-														<Eye className="size-3.5" aria-hidden />
-													) : (
-														<EyeOff className="size-3.5" aria-hidden />
-													)}
-												</Button>
-											</TooltipTrigger>
-											<TooltipContent
-												side="bottom"
-												className="max-w-52 text-xs"
-											>
-												{overlayVisible
-													? t("figures.hideOverlay")
-													: t("figures.showOverlay")}
-											</TooltipContent>
-										</Tooltip>
+										<OverlayToggleButton
+											visible={overlayVisible}
+											onToggle={handleToggleOverlay}
+										/>
 									) : null}
 									<Tooltip>
 										<TooltipTrigger asChild>

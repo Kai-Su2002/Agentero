@@ -160,7 +160,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 
 ## 版面分析（Figures 浮层）
 
-PDF 左侧 **Figures** 按钮 → 页内浮层（原「解析」：分析 / 叠加层）→ 列表（image/chart、table、algorithm、**有编号 formula 置底**）。
+PDF 左侧 **Figures** 按钮 → 页内浮层（原「解析」：分析 / 叠加层）→ 列表（image/chart、table、algorithm、**有编号 formula 置底**）。浮层用紧凑布局：与左侧工具栏**同一行**的右上角常驻 Eye / EyeOff 切换 PDF 上的 bbox 叠加层（有检测结果时显示，避免叠加层开启后无 UI 入口关闭，[#653](https://github.com/poco-ai/Agentero/issues/653)）；无结果时正文居中提供「分析」按钮。
 
 **完整流水线、14 条核心规则、阈值与代码地图**见：
 
