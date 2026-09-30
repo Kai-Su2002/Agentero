@@ -13,6 +13,7 @@ export type FreeTranslateProviderId =
 	| "google"
 	| "googleapi"
 	| "deeplx"
+	| "cnki"
 	| "huoshanweb"
 	| "tencenttransmart";
 
@@ -136,6 +137,7 @@ export const FREE_MT_PROVIDER_IDS: FreeTranslateProviderId[] = [
 	"tencenttransmart",
 	"huoshanweb",
 	"deeplx",
+	"cnki",
 	"googleapi",
 	"google",
 ];

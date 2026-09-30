@@ -13,8 +13,9 @@
 | OpenAI-compatible endpoint | 要求 Chat Completions 兼容：`POST {baseUrl}/chat/completions`，`Authorization: Bearer <key>`，请求体包含 `model`、两条 `messages` 与 `temperature`；解析 `choices[0].message.content`。设置里的 `baseUrl` 应是根地址（如 `https://api.openai.com/v1`），Host 会自动追加 `/chat/completions` |
 | OpenAI-compatible prompt | `openai_translate_messages`：学术译者 system prompt + 规则块（按意思重组语序、公式/符号/引用/`⟦n⟧` 占位符原样、术语一致、只输出译文、批量保留 `[[n]]`）；`temperature` 0.2。与前端 `buildTranslatePrompt` 保持同步。设置 `translate.customPrompt` 非空时（Host 在 `translate_text` 命令内注入 `custom_prompt`，WebView 调用方无感）替换 system message（`{{targetLang}}`/`{{sourceLang}}` 插值，映射与前端 `targetLangDisplayName` 一致）；`[[n]]` 批量规则与 `Text:` 原文仍由 Host 组装 |
 | 密钥存储 | BYOK：明文写在用户本机 `settings.json`（Unix `0600`）；`settings_get` / 广播按字符 redact 为 `*`；`settings_set` 对纯 `*` 串 merge 保留原值。内置 provider 的 key **不落 `settings.json`**，编译期编入二进制、只在 Host 进程内使用（见 [builtin-provider.md](builtin-provider.md) §密钥边界） |
+| 免费 CNKI（`cnki`） | 知网翻译助手 `dict.cnki.net/fyzs-front-api` 逆向接口（同 zotero-pdf-translate）：`words` 字段 AES-128-ECB 加密（key 内置）+ `Token` 头（4 分钟缓存，失败即失效重取）。仅**中英互译**（接口自动判向）；单请求 ≤ 800 字符，超限由 Host 按句切分串行翻译、块间约 2s 防风控；触发验证码（`isInputVerificationCode`）时报错引导用户到 dict.cnki.net 过验证码；海外 IP 常 404。**刻意不进 `ZH_RACE_PROVIDERS`**（竞速会打爆风控且分句路径慢）。实现 `crates/agentero-core/src/features/translate/sources/cnki.rs` |
 | 导入摘要 `free_mt_to_zh` | **并行竞速** 腾讯 / 火山 / DeepLX，取最先成功；单引擎 5s（`FREE_MT_ZH_TIMEOUT_MS`）；全失败则不写翻译。**内置 provider 不参与这条竞速**：`ZH_RACE_PROVIDERS` 只含免费引擎，导入摘要仍走非官方免费接口 |
-| 设置页探测 | 前端 5s / 引擎；内置 provider 不参与探测，可用性直接来自 `builtin_provider_status` |
+| 设置页探测 | 前端 5s / 引擎，不含 Agent；内置 provider 可用时一并探测（真发一次 "Hi" 翻译请求，顺带验证网关连通），不可用时跳过——那只会在下方确定性报 no-key 错误 |
 
 ## 内置 provider（Hunyuan-MT）
 

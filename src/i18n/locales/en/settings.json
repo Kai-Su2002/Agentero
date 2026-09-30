@@ -386,6 +386,7 @@
 			"label": "Default service",
 			"agentero": "Agentero built-in",
 			"deeplx": "DeepLX",
+			"cnki": "CNKI Translate",
 			"huoshanweb": "Volcengine Web",
 			"tencenttransmart": "Tencent Transmart",
 			"googleapi": "Google Translate (API)",

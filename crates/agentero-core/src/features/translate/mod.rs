@@ -26,6 +26,7 @@ pub const FREE_PROVIDERS: &[&str] = &[
     "google",
     "googleapi",
     "deeplx",
+    "cnki",
     "huoshanweb",
     "tencenttransmart",
 ];
@@ -203,6 +204,7 @@ pub async fn translate_text(args: TranslateTextArgs) -> Result<TranslateTextResu
             .await?
         }
         "deeplx" => sources::deeplx::translate_deeplx(text, &source, &target, timeout).await?,
+        "cnki" => sources::cnki::translate_cnki(text, &source, &target, timeout).await?,
         "huoshanweb" => {
             sources::huoshanweb::translate_huoshan_web(text, &source, &target, timeout).await?
         }
@@ -378,6 +380,10 @@ mod tests {
     #[test]
     fn free_providers_listed() {
         assert!(FREE_PROVIDERS.contains(&"deeplx"));
+        assert!(FREE_PROVIDERS.contains(&"cnki"));
+        // CNKI stays out of the zh race: slow (chunked + pauses) and
+        // captcha-prone, racing it would only trip the rate limit.
+        assert!(!ZH_RACE_PROVIDERS.contains(&"cnki"));
         assert!(FREE_PROVIDERS.contains(&"huoshanweb"));
         assert!(FREE_PROVIDERS.contains(&"tencenttransmart"));
         assert!(FREE_PROVIDERS.contains(&"googleapi"));

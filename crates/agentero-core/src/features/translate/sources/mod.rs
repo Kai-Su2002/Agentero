@@ -1,4 +1,5 @@
 pub mod azure;
+pub mod cnki;
 pub mod deepl;
 pub mod deeplx;
 pub mod google;
