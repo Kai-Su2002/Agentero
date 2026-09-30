@@ -506,12 +506,18 @@
  * selection on light paper flips black ink light. WebKit also drops
  * ::selection color unless background-color is in the same rule — a
  * background-only utility is enough to trigger that.
+ *
+ * Sentence spans do not inherit this. A rule on the paragraph styles only
+ * the paragraph's own text; each span matches the global ::selection and
+ * turns white. The descendant rule has to name those spans.
  */
-.pdf-translate-selection::selection {
+.pdf-translate-selection::selection,
+.pdf-translate-selection *::selection {
 	background-color: rgb(96 165 250 / 0.4);
 	color: #18181b;
 }
-.pdf-translate-selection[data-paper="dark"]::selection {
+.pdf-translate-selection[data-paper="dark"]::selection,
+.pdf-translate-selection[data-paper="dark"] *::selection {
 	background-color: rgb(96 165 250 / 0.4);
 	color: #f4f4f5;
 }

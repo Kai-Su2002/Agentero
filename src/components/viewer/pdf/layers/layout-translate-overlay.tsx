@@ -6,10 +6,15 @@
 
 import { Fragment, memo, useLayoutEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/core/utils";
+import {
+	type HighlightColor,
+	highlightFill,
+} from "@/lib/pdf/highlight/palette";
+import type { HighlightQuoteTint } from "@/lib/pdf/highlight/translated-geometry";
 import { isLayoutTranslateHeadingKind } from "@/lib/pdf/layout/labels";
 import {
 	layoutTranslateSentenceNodes,
-	tintedSentenceIndexes,
+	sentenceIndexesCoveredByQuote,
 } from "@/lib/pdf/layout/layout-sentences";
 import type { LayoutTranslateItem } from "@/lib/pdf/layout/layout-translate";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
@@ -30,10 +35,11 @@ type LayoutTranslateOverlayProps = {
 	/** Raw page regions; used as collision blockers for safe overlay expansion. */
 	layoutRegions?: readonly PdfLayoutRegion[];
 	/**
-	 * English highlight quotes on this page. Matching sentences get a faint
-	 * background while the overlay is painted; nothing is written back.
+	 * English highlights on this page that have no translated boxes. A sentence
+	 * that contains the quote is filled with that highlight's color. Nothing
+	 * is written back.
 	 */
-	highlightQuotes?: readonly string[];
+	highlightQuotes?: readonly HighlightQuoteTint[];
 };
 
 const LINE_HEIGHT = 1.25;
@@ -321,8 +327,8 @@ type ExactFitParagraphProps = {
 	isHeading: boolean;
 	/** Dark PDF paper: selection ink stays light, matching the glyphs. */
 	paperDark: boolean;
-	/** Sentence indexes whose translation should show a faint highlight. */
-	tintedSentences?: ReadonlySet<number>;
+	/** Sentence indexes whose translation should show the highlight color. */
+	tintedSentences?: ReadonlyMap<number, HighlightColor>;
 };
 
 /**
@@ -423,10 +429,15 @@ export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 							<span
 								data-sentence={node.index}
 								className={
+									tintedSentences?.has(node.index) ? "rounded-[1px]" : undefined
+								}
+								style={
 									tintedSentences?.has(node.index)
-										? paperDark
-											? "rounded-[1px] bg-yellow-400/30"
-											: "rounded-[1px] bg-yellow-300/35"
+										? {
+												backgroundColor: highlightFill(
+													tintedSentences.get(node.index) ?? "yellow",
+												),
+											}
 										: undefined
 								}
 							>
@@ -466,11 +477,20 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 		[items, layoutRegions],
 	);
 	const tintByItem = useMemo(() => {
-		const map = new Map<string, ReadonlySet<number>>();
+		const map = new Map<string, ReadonlyMap<number, HighlightColor>>();
 		if (!highlightQuotes?.length) return map;
 		for (const item of items) {
-			const indexes = tintedSentenceIndexes(item.sentences, highlightQuotes);
-			if (indexes.length > 0) map.set(item.id, new Set(indexes));
+			if (!item.sentences?.length) continue;
+			const colors = new Map<number, HighlightColor>();
+			for (const tint of highlightQuotes) {
+				for (const index of sentenceIndexesCoveredByQuote(
+					item.sentences,
+					tint.quote,
+				)) {
+					if (!colors.has(index)) colors.set(index, tint.color);
+				}
+			}
+			if (colors.size > 0) map.set(item.id, colors);
 		}
 		return map;
 	}, [highlightQuotes, items]);

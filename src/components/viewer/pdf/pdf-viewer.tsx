@@ -108,6 +108,7 @@ import type {
 	PdfViewerProps,
 	RailEditState,
 	SelectionCommentDraft,
+	SelectionMenuState,
 } from "@/components/viewer/pdf/types";
 import { ActiveCardScrollSync } from "@/components/viewer/pdf/viewport/active-card-scroll-sync";
 import { DockviewViewport } from "@/components/viewer/pdf/viewport/dockview-viewport";
@@ -128,6 +129,7 @@ import {
 } from "@/lib/pdf/annotation-ref";
 import { embedPdfDocumentId } from "@/lib/pdf/document-id";
 import { HIGHLIGHT_HEX_LIST } from "@/lib/pdf/highlight/palette";
+import { partitionHighlightPaint } from "@/lib/pdf/highlight/translated-geometry";
 import {
 	getPdfAiRuntime,
 	layoutAnalysisStore,
@@ -135,6 +137,7 @@ import {
 	type PdfLayoutRegion,
 	setFocusedLayoutRegion,
 } from "@/lib/pdf/layout";
+import { selectionAnchorFromVisible } from "@/lib/pdf/layout/visible-selection-rects";
 import {
 	type ActiveSelectionCard,
 	selectionAnchorKey,
@@ -354,6 +357,29 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 		</div>
 	);
 });
+
+/** Identity of the selected text. Screen position is not part of it, so scrolling does not look like a new selection. */
+function selectionCommentKey(menu: SelectionMenuState | null): string {
+	if (!menu) return "";
+	const glyph = menu.pages
+		.map((page) => {
+			const { origin, size } = page.rect;
+			return `${page.pageIndex}:${origin.x}:${origin.y}:${size.width}:${size.height}`;
+		})
+		.join(";");
+	const visible =
+		menu.visiblePages
+			?.map((page) =>
+				page.rects
+					.map(
+						(rect) =>
+							`${page.pageIndex}:${rect.x}:${rect.y}:${rect.w}:${rect.h}`,
+					)
+					.join(","),
+			)
+			.join(";") ?? "";
+	return `${menu.anchor.quote}\u0000${menu.anchor.page}\u0000${glyph}\u0000${visible}`;
+}
 
 function PdfViewerInner({
 	docId,
@@ -1243,55 +1269,69 @@ function PdfViewerInner({
 		translateSelection(selectionMenu.anchor);
 	}, [autoTranslateSelection, plainViewer, selectionMenu, translateSelection]);
 
-	// Sticky right-rail annotate chip. Hover focuses the field and EmbedPDF may
-	// clear the live selection; keep the snapped draft after the chip has been
-	// interacted with so leave-empty can collapse back to the icon card.
+	// Right-rail note for the current selection. Focusing the field clears the
+	// browser selection, so the draft (and its veil) stay while the field is
+	// engaged. A new gesture outside that field drops them.
 	const [selectionCommentDraft, setSelectionCommentDraft] =
 		useState<SelectionCommentDraft | null>(null);
-	const selectionCommentInteractedRef = useRef(false);
+	const selectionCommentDraftRef = useRef(selectionCommentDraft);
+	selectionCommentDraftRef.current = selectionCommentDraft;
+	const selectionCommentEngagedRef = useRef(false);
+	const selectionMenuRef = useRef(selectionMenu);
+	selectionMenuRef.current = selectionMenu;
+	const selectionCommentKeyValue = selectionCommentKey(selectionMenu);
 
 	useEffect(() => {
-		if (isRemotePaper || plainViewer) {
-			selectionCommentInteractedRef.current = false;
+		if (isRemotePaper || plainViewer || regionSelecting) {
+			selectionCommentEngagedRef.current = false;
 			setSelectionCommentDraft(null);
 			return;
 		}
-		if (selectionMenu) {
-			selectionCommentInteractedRef.current = false;
+		const menu = selectionMenuRef.current;
+		if (selectionCommentKeyValue && menu) {
+			const visible = selectionAnchorFromVisible(menu.visiblePages ?? []);
 			setSelectionCommentDraft({
-				page: selectionMenu.anchor.page,
-				anchorY: selectionMenu.anchor.rects[0]?.y ?? 0,
-				quote: selectionMenu.anchor.quote ?? "",
-				pages: selectionMenu.pages,
+				page: visible?.page ?? menu.anchor.page,
+				anchorY: visible?.anchorY ?? menu.anchor.rects[0]?.y ?? 0,
+				quote: menu.anchor.quote ?? "",
+				pages: menu.pages,
+				visiblePages: menu.visiblePages,
 			});
 			return;
 		}
-		if (!selectionCommentInteractedRef.current) {
+		if (!selectionCommentEngagedRef.current) {
 			setSelectionCommentDraft(null);
 		}
-	}, [isRemotePaper, plainViewer, selectionMenu]);
+	}, [isRemotePaper, plainViewer, regionSelecting, selectionCommentKeyValue]);
 
 	const handleSelectionCommentActiveChange = useCallback((active: boolean) => {
-		if (active) selectionCommentInteractedRef.current = true;
+		selectionCommentEngagedRef.current = active;
 	}, []);
 
 	const handleDismissSelectionComment = useCallback(() => {
-		selectionCommentInteractedRef.current = false;
+		selectionCommentEngagedRef.current = false;
 		setSelectionCommentDraft(null);
-	}, []);
+		setSelectionMenu(null);
+		selectionCap?.clear(docId);
+	}, [setSelectionMenu, selectionCap, docId]);
 
 	const handleCommitSelectionComment = useCallback(
 		(comment: string) => {
-			const draft = selectionCommentDraft;
-			selectionCommentInteractedRef.current = false;
+			const draft = selectionCommentDraftRef.current;
+			selectionCommentEngagedRef.current = false;
+			selectionCommentDraftRef.current = null;
 			setSelectionCommentDraft(null);
-			if (!draft) return;
+			if (!draft?.pages.length) return;
 			handleCommitSelectionNote(
-				{ pages: draft.pages, quote: draft.quote },
+				{
+					pages: draft.pages,
+					quote: draft.quote,
+					visiblePages: draft.visiblePages,
+				},
 				comment,
 			);
 		},
-		[selectionCommentDraft, handleCommitSelectionNote],
+		[handleCommitSelectionNote],
 	);
 
 	// ---- In-PDF highlight selection menu ----
@@ -1382,17 +1422,10 @@ function PdfViewerInner({
 		toggleLayoutTranslate: handleToggleLayoutTranslateWithDualPane,
 	});
 
-	const highlightQuotesByPage = useMemo(() => {
-		const byPage = new Map<number, string[]>();
-		for (const highlight of highlights) {
-			const quote = highlight.quote.trim();
-			if (!quote) continue;
-			const list = byPage.get(highlight.page);
-			if (list) list.push(quote);
-			else byPage.set(highlight.page, [quote]);
-		}
-		return byPage;
-	}, [highlights]);
+	const {
+		quotesByPage: highlightQuotesByPage,
+		translatedByPage: translatedHighlightsByPage,
+	} = useMemo(() => partitionHighlightPaint(highlights), [highlights]);
 
 	const pageMarks = useMemo<PdfPageMarksSlice>(
 		() => ({
@@ -1415,6 +1448,7 @@ function PdfViewerInner({
 			selectionCommentDraft,
 			translateHighlightsByPage,
 			highlightQuotesByPage,
+			translatedHighlightsByPage,
 		}),
 		[
 			activeAskAnchor,
@@ -1435,6 +1469,7 @@ function PdfViewerInner({
 			selectionCommentDraft,
 			translateHighlightsByPage,
 			highlightQuotesByPage,
+			translatedHighlightsByPage,
 		],
 	);
 

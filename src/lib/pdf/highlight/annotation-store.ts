@@ -9,6 +9,7 @@ import {
 	type HighlightColor,
 	highlightColorFromHex,
 } from "@/lib/pdf/highlight/palette";
+import { sanitizeTranslatedRects } from "@/lib/pdf/highlight/translated-geometry";
 import type { PdfHighlight } from "@/lib/pdf/highlight/types";
 import {
 	ANNOTATIONS_JSON,
@@ -155,6 +156,11 @@ export type HighlightCustom = {
 	app?: string;
 	paletteKey?: HighlightColor;
 	quote?: string;
+	/**
+	 * Page-fraction boxes of the translated selection on this annotation's
+	 * page. Absent for a highlight made on the English text layer.
+	 */
+	translatedRects?: PdfHighlight["translatedRects"];
 };
 
 export function highlightColorOf(obj: PdfHighlightAnnoObject): HighlightColor {
@@ -189,5 +195,9 @@ export function highlightViewFromObject(
 		color: highlightColorOf(obj),
 	};
 	if (comment) view.comment = comment;
+	const translated = sanitizeTranslatedRects(
+		(obj.custom as HighlightCustom | undefined)?.translatedRects,
+	);
+	if (translated.length > 0) view.translatedRects = translated;
 	return view;
 }

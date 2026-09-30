@@ -14,6 +14,7 @@ import { type RefObject, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	anchorFromEmbedSelection,
+	EMBED_PAGE_ATTR,
 	pageElByIndex,
 	rectTopCenterScreen,
 } from "@/components/viewer/pdf/coords";
@@ -21,14 +22,20 @@ import type { SelectionMenuState } from "@/components/viewer/pdf/types";
 import { publishSelection } from "@/lib/agent/selection-store";
 import {
 	bboxToPageRect,
-	locateQuoteGlyphs,
+	locateQuoteInBlock,
 	type TranslationPagePick,
 	type TranslationSelection,
 	translationHitsFromRange,
 	translationSelectionFromHits,
 	unionPageRect,
 } from "@/lib/pdf/layout/layout-sentence-selection";
+import { normalizeSentenceKey } from "@/lib/pdf/layout/layout-sentences";
 import type { LayoutTranslateItem } from "@/lib/pdf/layout/types";
+import {
+	type PageFrame,
+	visibleMenuPoint,
+	visiblePagesFromClientRects,
+} from "@/lib/pdf/layout/visible-selection-rects";
 import { loadSettings } from "@/lib/settings/store";
 import { langsFromSettings } from "@/lib/translate/lang";
 
@@ -59,6 +66,24 @@ function caretInsideLayoutItem(host: HTMLElement | null): boolean {
 	if (!node) return false;
 	const el = node instanceof Element ? node : node.parentElement;
 	return Boolean(el && host.contains(el) && el.closest("[data-layout-item]"));
+}
+
+function pageFrames(host: HTMLElement): PageFrame[] {
+	const frames: PageFrame[] = [];
+	for (const el of host.querySelectorAll<HTMLElement>(`[${EMBED_PAGE_ATTR}]`)) {
+		const pageIndex = Number(el.getAttribute(EMBED_PAGE_ATTR));
+		if (!Number.isInteger(pageIndex)) continue;
+		const box = el.getBoundingClientRect();
+		if (box.width <= 0 || box.height <= 0) continue;
+		frames.push({
+			pageIndex,
+			left: box.left,
+			top: box.top,
+			width: box.width,
+			height: box.height,
+		});
+	}
+	return frames;
 }
 
 function hostRange(host: HTMLElement): Range | null {
@@ -93,27 +118,51 @@ async function locatePages(
 		const page = doc?.pages[pageIndex];
 		const size = page?.size;
 		if (!page || !size || size.width <= 0 || size.height <= 0) continue;
-		let glyphs: { content: string; rect: Rect }[] = [];
+		let runs: { text: string; rect: Rect }[] = [];
 		if (engine && doc) {
 			try {
-				const raw = await engine.getPageTextRects(doc, page).toPromise();
-				glyphs = raw ?? [];
+				const pageRuns = await engine.getPageTextRuns(doc, page).toPromise();
+				runs = (pageRuns?.runs ?? []).map((run) => ({
+					text: run.text ?? "",
+					rect: run.rect,
+				}));
 			} catch {
-				glyphs = [];
+				runs = [];
+			}
+			if (!runs.length) {
+				try {
+					const raw = await engine.getPageTextRects(doc, page).toPromise();
+					runs = (raw ?? []).map((glyph) => ({
+						text: glyph.content ?? "",
+						rect: glyph.rect,
+					}));
+				} catch {
+					runs = [];
+				}
 			}
 		}
 		if (!generation()) return null;
-		const rects = picks.flatMap((pick) =>
-			glyphs.length
-				? locateQuoteGlyphs({
+		const rects = picks.flatMap((pick) => {
+			const located = runs.length
+				? locateQuoteInBlock({
 						quote: pick.locateText,
-						glyphs,
+						runs,
 						pageWidth: size.width,
 						pageHeight: size.height,
 						bbox: pick.bbox,
+						blockText: pick.blockText,
 					})
-				: [bboxToPageRect(pick.bbox, size.width, size.height)],
-		);
+				: [];
+			if (located.length) return located;
+			// The whole block is the annotation only when the selection is that
+			// block. A sentence that missed the text layer must not fill the block.
+			const quote = normalizeSentenceKey(pick.locateText);
+			const block = normalizeSentenceKey(pick.blockText);
+			if (quote && quote === block) {
+				return [bboxToPageRect(pick.bbox, size.width, size.height)];
+			}
+			return [];
+		});
 		if (!rects.length) continue;
 		formatted.push({
 			pageIndex,
@@ -159,17 +208,21 @@ export function usePdfTranslationSelection({
 		if (!host) return;
 
 		const commit = () => {
-			const generation = ++genRef.current;
-			const alive = () => genRef.current === generation;
 			const root = hostRef.current;
 			if (!root) return;
 			const range = hostRange(root);
 			if (!range) {
+				// Do not bump the generation. A focus move collapses the range
+				// after pointerup, and that must not cancel the locate already
+				// started for the text the reader just selected.
 				if (menuRef.current?.fromTranslation && caretInsideLayoutItem(root)) {
 					closeSelectionMenu();
 				}
 				return;
 			}
+			const selectedText = range.toString();
+			const generation = ++genRef.current;
+			const alive = () => genRef.current === generation;
 			const hits = translationHitsFromRange(range, root);
 			if (!hits.length) return;
 			const items = [...itemsRef.current.values()].flat();
@@ -196,6 +249,7 @@ export function usePdfTranslationSelection({
 				const live = hostRange(root);
 				if (
 					!live ||
+					live.toString() !== selectedText ||
 					translationHitsFromRange(live, root).length === 0 ||
 					!alive()
 				) {
@@ -211,10 +265,22 @@ export function usePdfTranslationSelection({
 					"selection",
 					anchorPage.pageIndex,
 				);
+				const frames = pageFrames(root);
+				const visiblePages = visiblePagesFromClientRects(
+					Array.from(live.getClientRects()),
+					frames,
+				);
 				const pageEl = pageElByIndex(root, anchorPage.pageIndex);
-				const screen = pageEl
-					? rectTopCenterScreen(pageEl, anchorPage.rect, zoomRef.current)
-					: null;
+				const screen =
+					visibleMenuPoint(
+						visiblePages,
+						anchorPage.pageIndex,
+						(pageIndex) =>
+							frames.find((frame) => frame.pageIndex === pageIndex) ?? null,
+					) ??
+					(pageEl
+						? rectTopCenterScreen(pageEl, anchorPage.rect, zoomRef.current)
+						: null);
 				if (!anchor || !screen || !alive()) return;
 				setSelectionMenu({
 					screen,
@@ -223,6 +289,7 @@ export function usePdfTranslationSelection({
 					copyText: resolved.copyText,
 					fromTranslation: true,
 					pairedTranslation: resolved.paired || undefined,
+					visiblePages: visiblePages.length ? visiblePages : undefined,
 				});
 				publishSelection({
 					text: resolved.quote,
@@ -241,12 +308,10 @@ export function usePdfTranslationSelection({
 		const onPointerDown = () => {
 			pointerDownRef.current = true;
 		};
-		const onPointerUp = (event: PointerEvent) => {
+		// The page ends a text drag on bubble pointerup. Stopping that event
+		// here leaves the drag active, so later moves keep extending it.
+		const onPointerUp = () => {
 			pointerDownRef.current = false;
-			const range = hostRange(host);
-			if (range && translationHitsFromRange(range, host).length > 0) {
-				event.stopPropagation();
-			}
 			commit();
 		};
 		const onSelectionChange = () => {

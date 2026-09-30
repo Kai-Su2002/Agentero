@@ -656,6 +656,8 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 	onActiveChangeRef.current = onActiveChange;
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
+	const aliveRef = useRef(true);
+	const closingRef = useRef(false);
 	const { isBlockedByIme, compositionProps } = useImeGuard();
 
 	const editing = hovered || focused;
@@ -679,13 +681,14 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 	);
 
 	const enterEdit = useCallback(() => {
-		if (committedRef.current) return;
+		if (committedRef.current || closingRef.current) return;
 		setHovered(true);
 		setFocused(true);
 		// Mark sticky before focus so EmbedPDF clearing the selection does not
 		// unmount this chip mid-hover.
 		onActiveChangeRef.current?.(true);
 		requestAnimationFrame(() => {
+			if (committedRef.current || closingRef.current) return;
 			const el = textareaRef.current;
 			if (!el) return;
 			el.focus();
@@ -707,15 +710,41 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 		const trimmed = text.trim();
 		if (!trimmed) return;
 		committedRef.current = true;
+		closingRef.current = true;
 		onActiveChangeRef.current?.(false);
 		onCommitRef.current(trimmed);
 	}, []);
 
 	useEffect(() => {
 		return () => {
+			aliveRef.current = false;
 			onActiveChangeRef.current?.(false);
 		};
 	}, []);
+
+	// Clicking the page does not blur this field (same as a saved comment
+	// card). Commit typed text, or drop an empty open note, on that press.
+	useEffect(() => {
+		if (!editing) return;
+		const onPointerDown = (event: PointerEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node) || rootRef.current?.contains(target)) {
+				return;
+			}
+			const text = (textareaRef.current?.value ?? draftTextRef.current).trim();
+			closingRef.current = true;
+			if (text) {
+				commit(text);
+			} else {
+				onDismissRef.current?.();
+			}
+			textareaRef.current?.blur();
+		};
+		document.addEventListener("pointerdown", onPointerDown, true);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown, true);
+		};
+	}, [editing, commit]);
 
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: hosts a textarea; native <button> cannot wrap it
@@ -724,6 +753,7 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 			role="group"
 			aria-label={t("selection.note")}
 			data-pdf-chrome
+			data-selection-comment=""
 			className={cn(
 				COMMENT_DRAFT_SURFACE_CLASS,
 				"transition-[width,box-shadow,background-color] duration-200 ease-out motion-reduce:transition-none",
@@ -796,6 +826,7 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 						autosizeTextarea(e.currentTarget);
 					}}
 					onBlur={(e) => {
+						if (!aliveRef.current || closingRef.current) return;
 						const next = e.relatedTarget as Node | null;
 						if (next && rootRef.current?.contains(next)) return;
 						const text = draftTextRef.current;

@@ -148,13 +148,64 @@ describe("locateQuoteGlyphs", () => {
 		expect(rects[0]?.origin.y).toBe(400);
 	});
 
-	it("falls back to glyphs inside the block when the quote is missing", () => {
+	it("highlights only the sentence, not the other lines in the block", () => {
+		const rects = locateQuoteGlyphs({
+			quote: "Second sentence.",
+			glyphs: [
+				glyph("First sentence.", 40, 80, 140),
+				glyph("Second sentence.", 40, 100, 150),
+				glyph("Third sentence.", 40, 120, 130),
+			],
+			...page,
+			bbox: { x: 0.05, y: 0.08, w: 0.4, h: 0.1 },
+		});
+		expect(rects).toHaveLength(1);
+		expect(rects[0]?.origin.y).toBe(100);
+		expect(rects[0]?.size.width).toBe(150);
+	});
+
+	it("does not paint the whole block when the quote is missing", () => {
 		const rects = locateQuoteGlyphs({
 			quote: "not on this page",
-			glyphs: [glyph("other words", 70, 200, 100)],
+			glyphs: [
+				glyph("First sentence.", 40, 80, 140),
+				glyph("Second sentence.", 40, 100, 150),
+			],
 			...page,
-			bbox: { x: 70 / 600, y: 200 / 800, w: 100 / 600, h: 12 / 800 },
+			bbox: { x: 0.05, y: 0.08, w: 0.4, h: 0.08 },
+			blockText: "First sentence. Second sentence.",
 		});
-		expect(rects[0]?.origin).toEqual({ x: 70, y: 200 });
+		expect(rects).toEqual([]);
+	});
+
+	it("slices the block by the sentence instead of filling it", () => {
+		const rects = locateQuoteGlyphs({
+			quote: "Second sentence.",
+			glyphs: [
+				glyph("AAAA", 40, 80, 80),
+				glyph("BBBB", 40, 100, 80),
+				glyph("CCCC", 40, 120, 80),
+			],
+			...page,
+			bbox: { x: 0.05, y: 0.08, w: 0.4, h: 0.1 },
+			blockText: "First sentence. Second sentence. Third sentence.",
+		});
+		expect(rects.length).toBeGreaterThan(0);
+		expect(rects.every((rect) => rect.origin.y === 100)).toBe(true);
+	});
+
+	it("places a hyphenated sentence on the runs that contain it", () => {
+		const rects = locateQuoteGlyphs({
+			quote: "representation stays.",
+			glyphs: [
+				glyph("Earlier words.", 40, 80, 100),
+				glyph("repre-", 40, 100, 40),
+				glyph("sentation stays.", 84, 100, 110),
+			],
+			...page,
+			bbox: { x: 0.05, y: 0.08, w: 0.5, h: 0.08 },
+		});
+		expect(rects.map((rect) => rect.origin.y)).toEqual([100, 100]);
+		expect(rects.some((rect) => rect.origin.y === 80)).toBe(false);
 	});
 });

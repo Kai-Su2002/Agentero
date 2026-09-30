@@ -34,6 +34,8 @@ export type TranslationPagePick = {
 	bbox: TranslationBlockRef["bbox"];
 	/** Text-layer slice to search on this page. */
 	locateText: string;
+	/** This block's text-layer string. Used to place a sentence inside it. */
+	blockText: string;
 };
 
 export type TranslationSelection = {
@@ -42,13 +44,6 @@ export type TranslationSelection = {
 	paired: string;
 	pages: TranslationPagePick[];
 };
-
-type Glyph = {
-	content: string;
-	rect: Rect;
-};
-
-type CharRef = { glyph: number; offset: number };
 
 function memberLocateText(
 	item: TranslationBlockRef,
@@ -122,7 +117,12 @@ export function translationSelectionFromHits(
 		}
 		const locateText = memberLocateText(item, quotes);
 		if (!locateText) continue;
-		pages.push({ pageIndex: item.pageIndex, bbox: item.bbox, locateText });
+		pages.push({
+			pageIndex: item.pageIndex,
+			bbox: item.bbox,
+			locateText,
+			blockText: normalizeSentenceKey(item.raw || item.source),
+		});
 	}
 	const quote = sentenceQuotes.join(" ");
 	if (!quote || pages.length === 0) return null;
@@ -132,6 +132,39 @@ export function translationSelectionFromHits(
 		paired: joinTranslatedDisplays(pairedParts, targetLang),
 		pages,
 	};
+}
+
+/**
+ * Text of `element` that `range` actually covers.
+ *
+ * Chinese sentence spans sit against each other with no gap node. A selection
+ * that starts on the boundary is reported by `intersectsNode` as also hitting
+ * the previous span, which then anchors that previous English sentence.
+ * Boundary contact with no characters does not count.
+ */
+export function selectedTextWithin(range: Range, element: HTMLElement): string {
+	const nodeRange = document.createRange();
+	try {
+		nodeRange.selectNodeContents(element);
+		// Constant names are this-point to source-point, but the spec pairs
+		// END_TO_START with (this start, source end) and START_TO_END with
+		// (this end, source start). A shared boundary has no characters.
+		const startBeforeNodeEnd =
+			range.compareBoundaryPoints(Range.END_TO_START, nodeRange) < 0;
+		const endAfterNodeStart =
+			range.compareBoundaryPoints(Range.START_TO_END, nodeRange) > 0;
+		if (!startBeforeNodeEnd || !endAfterNodeStart) return "";
+		const slice = range.cloneRange();
+		if (slice.compareBoundaryPoints(Range.START_TO_START, nodeRange) < 0) {
+			slice.setStart(nodeRange.startContainer, nodeRange.startOffset);
+		}
+		if (slice.compareBoundaryPoints(Range.END_TO_END, nodeRange) > 0) {
+			slice.setEnd(nodeRange.endContainer, nodeRange.endOffset);
+		}
+		return slice.collapsed ? "" : slice.toString();
+	} catch {
+		return "";
+	}
 }
 
 /** Span hits inside `root` covered by `range`, in document order. */
@@ -146,7 +179,7 @@ export function translationHitsFromRange(
 		"[data-layout-item] [data-sentence]",
 	);
 	for (const span of spans) {
-		if (!rangeIntersects(range, span)) continue;
+		if (!selectedTextWithin(range, span).trim()) continue;
 		const block = span.closest<HTMLElement>("[data-layout-item]");
 		const itemId = block?.getAttribute("data-layout-item");
 		const sentenceIndex = Number(span.getAttribute("data-sentence"));
@@ -159,193 +192,237 @@ export function translationHitsFromRange(
 		const itemId = block.getAttribute("data-layout-item");
 		if (!itemId || seenBlocks.has(itemId)) continue;
 		if (block.querySelector("[data-sentence]")) continue;
-		if (!rangeIntersects(range, block)) continue;
+		if (!selectedTextWithin(range, block).trim()) continue;
 		hits.push({ itemId, sentenceIndex: null });
 	}
 	return hits;
 }
 
-function rangeIntersects(range: Range, node: Node): boolean {
-	try {
-		return range.intersectsNode(node);
-	} catch {
-		return false;
+type TextPiece = { text: string; rect: Rect };
+
+type PieceRef = { piece: number; offset: number };
+
+function centerInBbox(
+	rect: Rect,
+	bbox: { x: number; y: number; w: number; h: number },
+	pageWidth: number,
+	pageHeight: number,
+): boolean {
+	const cx = (rect.origin.x + rect.size.width / 2) / pageWidth;
+	const cy = (rect.origin.y + rect.size.height / 2) / pageHeight;
+	return (
+		cx >= bbox.x &&
+		cx <= bbox.x + bbox.w &&
+		cy >= bbox.y &&
+		cy <= bbox.y + bbox.h
+	);
+}
+
+/**
+ * Same join as the layout text that sentences were cut from: trim each run,
+ * separate runs with one space, reading order top-to-bottom then left-to-right.
+ */
+function joinedPieces(pieces: readonly TextPiece[]): {
+	text: string;
+	refs: PieceRef[];
+	trimmed: string[];
+} {
+	let text = "";
+	const refs: PieceRef[] = [];
+	const trimmed: string[] = [];
+	const ordered = pieces
+		.map((piece, index) => ({ piece, index }))
+		.sort(
+			(a, b) =>
+				a.piece.rect.origin.y - b.piece.rect.origin.y ||
+				a.piece.rect.origin.x - b.piece.rect.origin.x,
+		);
+	for (const { piece, index } of ordered) {
+		const value = piece.text.replace(/\s+/g, " ").trim();
+		trimmed[index] = value;
+		if (!value) continue;
+		if (text) {
+			text += " ";
+			refs.push({ piece: -1, offset: -1 });
+		}
+		for (let offset = 0; offset < value.length; offset++) {
+			text += value[offset] ?? "";
+			refs.push({ piece: index, offset });
+		}
 	}
+	return { text, refs, trimmed };
 }
 
-function buildCorpus(
-	glyphs: readonly Glyph[],
-	insertGaps: boolean,
-): { raw: string; refs: CharRef[] } {
-	let raw = "";
-	const refs: CharRef[] = [];
-	glyphs.forEach((glyph, index) => {
-		const content = glyph.content ?? "";
-		if (
-			insertGaps &&
-			raw &&
-			content &&
-			!/\s$/.test(raw) &&
-			!/^\s/.test(content)
-		) {
-			raw += " ";
-			refs.push({ glyph: index, offset: -1 });
-		}
-		for (let offset = 0; offset < content.length; offset++) {
-			raw += content[offset] ?? "";
-			refs.push({ glyph: index, offset });
-		}
-	});
-	return { raw, refs };
-}
-
-function collapseCorpus(
-	raw: string,
-	refs: readonly CharRef[],
-): { text: string; refs: CharRef[] } {
-	const text: string[] = [];
-	const out: CharRef[] = [];
+/** Drop a line-break hyphen (`repre- sentation`) so both sides can still meet. */
+function foldHyphenBreak(text: string): { text: string; map: number[] } {
 	let index = 0;
-	while (index < raw.length && /\s/.test(raw[index] ?? "")) index += 1;
-	while (index < raw.length) {
-		const ch = raw[index] ?? "";
-		if (/\s/.test(ch)) {
-			let next = index;
-			while (next < raw.length && /\s/.test(raw[next] ?? "")) next += 1;
-			if (next >= raw.length) break;
-			text.push(" ");
-			out.push(refs[index] ?? { glyph: 0, offset: -1 });
-			index = next;
+	const out: string[] = [];
+	const map: number[] = [];
+	while (index < text.length) {
+		const ch = text[index] ?? "";
+		if (
+			(ch === "-" || ch === "\u00ad") &&
+			index + 1 < text.length &&
+			/\s/.test(text[index + 1] ?? "")
+		) {
+			index += 1;
+			while (index < text.length && /\s/.test(text[index] ?? "")) index += 1;
 			continue;
 		}
-		text.push(ch);
-		out.push(refs[index] ?? { glyph: 0, offset: -1 });
+		if (ch === "\u00ad") {
+			index += 1;
+			continue;
+		}
+		out.push(ch);
+		map.push(index);
 		index += 1;
 	}
-	return { text: text.join(""), refs: out };
+	return { text: out.join(""), map };
 }
 
-function sliceGlyphRect(glyph: Glyph, start: number, end: number): Rect {
-	const length = glyph.content.length;
-	if (length <= 0 || (start <= 0 && end >= length)) return glyph.rect;
-	const unit = glyph.rect.size.width / length;
-	const from = Math.max(0, start);
-	const to = Math.min(length, end);
-	return {
-		origin: {
-			x: glyph.rect.origin.x + from * unit,
-			y: glyph.rect.origin.y,
-		},
-		size: {
-			width: Math.max(unit * (to - from), 0.4),
-			height: glyph.rect.size.height,
-		},
-	};
-}
-
-function rectsForMatch(
-	glyphs: readonly Glyph[],
-	refs: readonly CharRef[],
+function rectsForPieceRange(
+	pieces: readonly TextPiece[],
+	trimmed: readonly string[],
+	refs: readonly PieceRef[],
 	start: number,
 	end: number,
 ): Rect[] {
 	const covered = new Map<number, { start: number; end: number }>();
 	for (let index = start; index < end; index++) {
 		const ref = refs[index];
-		if (!ref || ref.offset < 0) continue;
-		const current = covered.get(ref.glyph);
-		if (!current)
-			covered.set(ref.glyph, { start: ref.offset, end: ref.offset + 1 });
-		else {
+		if (!ref || ref.piece < 0 || ref.offset < 0) continue;
+		const current = covered.get(ref.piece);
+		if (!current) {
+			covered.set(ref.piece, { start: ref.offset, end: ref.offset + 1 });
+		} else {
 			current.start = Math.min(current.start, ref.offset);
 			current.end = Math.max(current.end, ref.offset + 1);
 		}
 	}
 	const rects: Rect[] = [];
-	for (const [glyphIndex, range] of covered) {
-		const glyph = glyphs[glyphIndex];
-		if (!glyph) continue;
-		rects.push(sliceGlyphRect(glyph, range.start, range.end));
+	for (const [pieceIndex, range] of covered) {
+		const piece = pieces[pieceIndex];
+		const length = trimmed[pieceIndex]?.length ?? 0;
+		if (!piece || length <= 0) continue;
+		if (range.start <= 0 && range.end >= length) {
+			rects.push(piece.rect);
+			continue;
+		}
+		const unit = piece.rect.size.width / length;
+		const from = Math.max(0, range.start);
+		const to = Math.min(length, range.end);
+		rects.push({
+			origin: {
+				x: piece.rect.origin.x + from * unit,
+				y: piece.rect.origin.y,
+			},
+			size: {
+				width: Math.max(unit * (to - from), 0.4),
+				height: piece.rect.size.height,
+			},
+		});
 	}
 	return rects;
 }
 
-function overlapArea(
-	a: { x: number; y: number; w: number; h: number },
-	b: { x: number; y: number; w: number; h: number },
-): number {
-	const w = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-	const h = Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y);
-	if (w <= 0 || h <= 0) return 0;
-	return w * h;
-}
-
-function rectToBbox(
-	rect: Rect,
-	pageWidth: number,
-	pageHeight: number,
-): { x: number; y: number; w: number; h: number } {
-	return {
-		x: rect.origin.x / pageWidth,
-		y: rect.origin.y / pageHeight,
-		w: rect.size.width / pageWidth,
-		h: rect.size.height / pageHeight,
-	};
-}
-
-function matchQuote(
-	glyphs: readonly Glyph[],
+function matchJoined(
+	pieces: readonly TextPiece[],
 	quote: string,
-	insertGaps: boolean,
-): { start: number; refs: CharRef[]; rects: Rect[] }[] {
-	const corpus = buildCorpus(glyphs, insertGaps);
-	const collapsed = collapseCorpus(corpus.raw, corpus.refs);
+): Rect[] | null {
 	const needle = normalizeSentenceKey(quote);
-	if (!needle || !collapsed.text) return [];
-	const found: { start: number; refs: CharRef[]; rects: Rect[] }[] = [];
-	let from = 0;
-	while (from <= collapsed.text.length) {
-		const start = collapsed.text.indexOf(needle, from);
-		if (start < 0) break;
-		const rects = rectsForMatch(
-			glyphs,
-			collapsed.refs,
-			start,
-			start + needle.length,
-		);
-		if (rects.length > 0) found.push({ start, refs: collapsed.refs, rects });
-		from = start + Math.max(1, needle.length);
-	}
-	return found;
-}
-
-function scoreRects(
-	rects: readonly Rect[],
-	bbox: { x: number; y: number; w: number; h: number },
-	pageWidth: number,
-	pageHeight: number,
-): number {
-	return rects.reduce(
-		(sum, rect) =>
-			sum + overlapArea(rectToBbox(rect, pageWidth, pageHeight), bbox),
-		0,
+	if (!needle) return null;
+	const joined = joinedPieces(pieces);
+	const start = joined.text.indexOf(needle);
+	if (start < 0) return null;
+	const rects = rectsForPieceRange(
+		pieces,
+		joined.trimmed,
+		joined.refs,
+		start,
+		start + needle.length,
 	);
+	return rects.length > 0 ? rects : null;
 }
 
-function glyphsOverlapping(
-	glyphs: readonly Glyph[],
-	bboxes: readonly { x: number; y: number; w: number; h: number }[],
-	pageWidth: number,
-	pageHeight: number,
-): Rect[] {
-	const rects: Rect[] = [];
-	for (const glyph of glyphs) {
-		if (!glyph.content.trim()) continue;
-		const box = rectToBbox(glyph.rect, pageWidth, pageHeight);
-		if (bboxes.some((bbox) => overlapArea(box, bbox) > 0))
-			rects.push(glyph.rect);
-	}
-	return rects;
+function matchFolded(
+	pieces: readonly TextPiece[],
+	quote: string,
+): Rect[] | null {
+	const joined = joinedPieces(pieces);
+	const hay = foldHyphenBreak(joined.text);
+	const needle = foldHyphenBreak(normalizeSentenceKey(quote));
+	if (!needle.text) return null;
+	const start = hay.text.indexOf(needle.text);
+	if (start < 0) return null;
+	const from = hay.map[start];
+	const to = hay.map[start + needle.text.length - 1];
+	if (from == null || to == null) return null;
+	const rects = rectsForPieceRange(
+		pieces,
+		joined.trimmed,
+		joined.refs,
+		from,
+		to + 1,
+	);
+	return rects.length > 0 ? rects : null;
+}
+
+function sliceByBlockOffset(
+	pieces: readonly TextPiece[],
+	quote: string,
+	blockText: string,
+): Rect[] | null {
+	const block = normalizeSentenceKey(blockText);
+	const needle = normalizeSentenceKey(quote);
+	if (!block || !needle) return null;
+	const at = block.indexOf(needle);
+	if (at < 0) return null;
+	const joined = joinedPieces(pieces);
+	const length = joined.text.length;
+	if (length === 0) return null;
+	const start = Math.min(length - 1, Math.floor((at / block.length) * length));
+	const end = Math.max(
+		start + 1,
+		Math.ceil(((at + needle.length) / block.length) * length),
+	);
+	const rects = rectsForPieceRange(
+		pieces,
+		joined.trimmed,
+		joined.refs,
+		start,
+		Math.min(length, end),
+	);
+	return rects.length > 0 ? rects : null;
+}
+
+/**
+ * Glyph boxes for one sentence inside a layout block.
+ *
+ * Runs are limited to the block and joined in reading order, the same way the
+ * sentence quote was cut. A miss does not paint every glyph in the block.
+ */
+export function locateQuoteInBlock(options: {
+	quote: string;
+	runs: readonly TextPiece[];
+	pageWidth: number;
+	pageHeight: number;
+	bbox: { x: number; y: number; w: number; h: number };
+	blockText?: string;
+}): Rect[] {
+	const { quote, runs, pageWidth, pageHeight, bbox, blockText } = options;
+	if (!(pageWidth > 0) || !(pageHeight > 0)) return [];
+	const inside = runs.filter(
+		(run) =>
+			Boolean(run.text.trim()) &&
+			centerInBbox(run.rect, bbox, pageWidth, pageHeight),
+	);
+	if (!inside.length) return [];
+	return (
+		matchJoined(inside, quote) ??
+		matchFolded(inside, quote) ??
+		(blockText ? sliceByBlockOffset(inside, quote, blockText) : null) ??
+		[]
+	);
 }
 
 export function bboxToPageRect(
@@ -360,35 +437,28 @@ export function bboxToPageRect(
 }
 
 /**
- * Glyph boxes for `quote` on one page. Prefer the hit that overlaps `bbox`.
- * When the quote is not in the text layer, use glyphs that overlap `bbox`.
- * The bbox itself is the last resort so the annotation still has geometry.
+ * Glyph boxes for `quote` inside `bbox`. A sentence that is not found stays
+ * empty instead of expanding to every glyph in the block.
  */
 export function locateQuoteGlyphs(options: {
 	quote: string;
-	glyphs: readonly Glyph[];
+	glyphs: readonly { content: string; rect: Rect }[];
 	pageWidth: number;
 	pageHeight: number;
 	bbox: { x: number; y: number; w: number; h: number };
+	blockText?: string;
 }): Rect[] {
-	const { quote, glyphs, pageWidth, pageHeight, bbox } = options;
-	if (!(pageWidth > 0) || !(pageHeight > 0)) return [];
-	let best: Rect[] | null = null;
-	let bestScore = -1;
-	for (const insertGaps of [false, true]) {
-		for (const match of matchQuote(glyphs, quote, insertGaps)) {
-			const score = scoreRects(match.rects, bbox, pageWidth, pageHeight);
-			if (score > bestScore) {
-				best = match.rects;
-				bestScore = score;
-			}
-		}
-		if (best && bestScore > 0) break;
-	}
-	if (best && best.length > 0) return best;
-	const inside = glyphsOverlapping(glyphs, [bbox], pageWidth, pageHeight);
-	if (inside.length > 0) return inside;
-	return [bboxToPageRect(bbox, pageWidth, pageHeight)];
+	return locateQuoteInBlock({
+		quote: options.quote,
+		runs: options.glyphs.map((glyph) => ({
+			text: glyph.content,
+			rect: glyph.rect,
+		})),
+		pageWidth: options.pageWidth,
+		pageHeight: options.pageHeight,
+		bbox: options.bbox,
+		blockText: options.blockText,
+	});
 }
 
 export function unionPageRect(rects: readonly Rect[]): Rect {

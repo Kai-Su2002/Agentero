@@ -198,7 +198,8 @@ export function matchingSentenceIndexes(
 /**
  * Sentences to tint while a translation is on screen. A highlight may quote
  * sentences that continue in another box; a sentence still matches when the
- * highlight quote is exactly that sentence or contains it as a whole sentence.
+ * highlight quote is exactly that sentence, contains it as a whole sentence,
+ * or is a long enough fragment inside it.
  */
 export function sentenceIndexesCoveredByQuote(
 	sentences: readonly { quote: string }[],
@@ -221,7 +222,31 @@ export function sentenceIndexesCoveredByQuote(
 			hit.push(index);
 		}
 	});
-	return hit;
+	if (hit.length > 0) return hit;
+	// A highlight made on the English text layer often drops the final period,
+	// starts mid-word, or keeps a different space before a comma. Fold both
+	// sides to letters and digits. Short tokens still match too many sentences.
+	const foldedTarget = foldQuoteKey(target);
+	if (!foldedTarget) return [];
+	const partial: number[] = [];
+	sentences.forEach((sentence, index) => {
+		const piece = foldQuoteKey(sentence.quote);
+		if (!piece) return;
+		// Same letters: the highlight dropped punctuation such as the final period.
+		if (piece === foldedTarget) {
+			partial.push(index);
+			return;
+		}
+		if (foldedTarget.length >= 12 && piece.includes(foldedTarget)) {
+			partial.push(index);
+		}
+	});
+	return partial;
+}
+
+/** Letters and digits only, so spacing and punctuation do not block a match. */
+function foldQuoteKey(text: string): string {
+	return text.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 }
 
 /** Union of sentences a page's highlight quotes should tint. */

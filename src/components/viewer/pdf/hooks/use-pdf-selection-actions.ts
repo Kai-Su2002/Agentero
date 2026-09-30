@@ -29,6 +29,7 @@ import {
 	DEFAULT_HIGHLIGHT_COLOR,
 	type HighlightColor,
 } from "@/lib/pdf/highlight/palette";
+import type { VisibleSelectionPage } from "@/lib/pdf/layout/visible-selection-rects";
 
 export type UsePdfSelectionActionsOptions = {
 	/** Placed menu; every action no-ops when null. */
@@ -39,6 +40,7 @@ export type UsePdfSelectionActionsOptions = {
 		pages: FormattedSelection[],
 		color: HighlightColor,
 		quote: string,
+		translatedPages?: readonly VisibleSelectionPage[],
 	) => { pageIndex: number; id: string }[];
 	/** Write the note body onto a freshly created highlight. */
 	updateHighlightComment: (
@@ -65,6 +67,7 @@ export type PdfSelectionActions = {
 		draft: {
 			pages: FormattedSelection[];
 			quote: string;
+			visiblePages?: readonly VisibleSelectionPage[];
 		},
 		comment: string,
 	) => void;
@@ -97,7 +100,12 @@ export function usePdfSelectionActions({
 		(color: HighlightColor) => {
 			const menu = selectionMenuRef.current;
 			if (!menu) return;
-			createHighlights(menu.pages, color, menu.anchor.quote ?? "");
+			createHighlights(
+				menu.pages,
+				color,
+				menu.anchor.quote ?? "",
+				menu.visiblePages,
+			);
 			closeSelectionMenu();
 		},
 		[createHighlights, closeSelectionMenu],
@@ -105,7 +113,11 @@ export function usePdfSelectionActions({
 
 	const handleCommitSelectionNote = useCallback(
 		(
-			draft: { pages: FormattedSelection[]; quote: string },
+			draft: {
+				pages: FormattedSelection[];
+				quote: string;
+				visiblePages?: readonly VisibleSelectionPage[];
+			},
 			comment: string,
 		) => {
 			const trimmed = comment.trim();
@@ -114,6 +126,7 @@ export function usePdfSelectionActions({
 				draft.pages,
 				DEFAULT_HIGHLIGHT_COLOR,
 				draft.quote,
+				draft.visiblePages,
 			);
 			const first = created[0];
 			closeSelectionMenu();

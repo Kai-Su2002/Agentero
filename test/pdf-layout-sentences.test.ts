@@ -167,6 +167,27 @@ describe("matchingSentenceIndexes", () => {
 		).toEqual([0]);
 	});
 
+	it("tints the sentence that contains a pre-translation highlight", () => {
+		expect(sentenceIndexesCoveredByQuote(sentences, "Beta follows")).toEqual([
+			1,
+		]);
+		expect(sentenceIndexesCoveredByQuote(sentences, "follows. Gamma")).toEqual(
+			[],
+		);
+		expect(
+			sentenceIndexesCoveredByQuote(
+				[
+					{
+						quote:
+							"We address this with Harbor Adapters , which unify diverse agentic evaluations.",
+					},
+				],
+				"bor Adapters, which unify divers",
+			),
+		).toEqual([0]);
+		expect(sentenceIndexesCoveredByQuote(sentences, "runs")).toEqual([]);
+	});
+
 	it("unions page quotes and does not widen an exact sentence match", () => {
 		expect(
 			tintedSentenceIndexes(sentences, ["Gamma ends.", "Beta follows."]),

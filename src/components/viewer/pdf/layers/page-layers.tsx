@@ -64,6 +64,7 @@ import { PdfTextSelectionLayer } from "@/components/viewer/pdf/layers/pdf-text-s
 import { PdfRegionSelectLayer } from "@/components/viewer/pdf/layers/region-select-layer";
 import { SelectionGutter } from "@/components/viewer/pdf/layers/selection-gutter";
 import { PDF_VISUAL_REGION_FRAME_CLASS } from "@/components/viewer/pdf/layers/visual-region-frame";
+import { commentForVisibleTranslation } from "@/components/viewer/pdf/marks-index";
 import type {
 	PageAnnotationComment,
 	SelectionCommentDraft,
@@ -72,6 +73,8 @@ import { cn } from "@/lib/core/utils";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
 import {
+	HIGHLIGHT_HEX,
+	HIGHLIGHT_OPACITY,
 	type HighlightColor,
 	highlightHoverOverlayColor,
 } from "@/lib/pdf/highlight/palette";
@@ -141,12 +144,97 @@ const PASSIVE_HIGHLIGHT_RENDERERS: BoxedAnnotationRenderer[] = [
 	PASSIVE_HIGHLIGHT_RENDERER,
 ];
 
+/** English glyph boxes do not line up with reflowed translation. */
+const HIDDEN_HIGHLIGHT_RENDERERS: BoxedAnnotationRenderer[] = [
+	{
+		...PASSIVE_HIGHLIGHT_RENDERER,
+		render: () => <></>,
+	},
+];
+
+/**
+ * Saved translation selection. Same yellow as the English highlight, placed
+ * in page fractions so it stays on the sentence the reader boxed.
+ */
+function TranslatedHighlightLayer({
+	paints,
+}: {
+	paints: readonly {
+		id: string;
+		color: HighlightColor;
+		rects: PdfAskNormalizedRect[];
+	}[];
+}) {
+	if (!paints.length) return null;
+	return (
+		<div
+			aria-hidden="true"
+			className="pointer-events-none absolute inset-0 z-[5]"
+			style={{ isolation: "isolate", mixBlendMode: "multiply" }}
+		>
+			{paints.flatMap((paint) =>
+				paint.rects.map((rect) => (
+					<div
+						key={`${paint.id}:${rect.x}:${rect.y}:${rect.w}:${rect.h}`}
+						style={{
+							position: "absolute",
+							left: `${rect.x * 100}%`,
+							top: `${rect.y * 100}%`,
+							width: `${rect.w * 100}%`,
+							height: `${rect.h * 100}%`,
+							backgroundColor: HIGHLIGHT_HEX[paint.color],
+							opacity: HIGHLIGHT_OPACITY,
+						}}
+					/>
+				)),
+			)}
+		</div>
+	);
+}
+
 /**
  * Text-selection highlight tint: a light translucent blue (Zotero-style) so the
  * underlying glyphs stay legible under the selection. Module-level so every
  * page shares one stable value.
  */
 const PDF_TEXT_SELECTION_BACKGROUND = "rgba(96, 165, 250, 0.28)";
+
+/**
+ * Keeps a translation selection visible after focus moves into the note chip.
+ * Sits with the English selection tint: above the translation paper, under
+ * the glyphs, so the characters stay readable.
+ */
+function TranslationSelectionVeil({
+	pages,
+	pageIndex,
+}: {
+	pages: SelectionCommentDraft["visiblePages"];
+	pageIndex: number;
+}) {
+	const rects = pages?.find((page) => page.pageIndex === pageIndex)?.rects;
+	if (!rects?.length) return null;
+	return (
+		<div
+			aria-hidden="true"
+			className="pointer-events-none absolute inset-0 z-[5]"
+			style={{ isolation: "isolate", mixBlendMode: "multiply" }}
+		>
+			{rects.map((rect) => (
+				<div
+					key={`${rect.x}:${rect.y}:${rect.w}:${rect.h}`}
+					style={{
+						position: "absolute",
+						left: `${rect.x * 100}%`,
+						top: `${rect.y * 100}%`,
+						width: `${rect.w * 100}%`,
+						height: `${rect.h * 100}%`,
+						background: PDF_TEXT_SELECTION_BACKGROUND,
+					}}
+				/>
+			))}
+		</div>
+	);
+}
 
 /** A mark region pinned to a page (visual draft frame / formula legend frame). */
 type PageRegion = { page: number; region: PdfAskNormalizedRect } | null;
@@ -309,10 +397,22 @@ export type PdfPageMarksSlice = {
 		{ id: string; rects: PdfAskNormalizedRect[] }[]
 	>;
 	/**
-	 * English highlight quotes keyed by 1-based page. The translation overlay
-	 * tints matching sentences from this list and does not write them back.
+	 * English highlights keyed by 1-based page that have no translated boxes.
+	 * The overlay fills the sentence that contains the quote. Nothing is written
+	 * back. Highlights that stored their own translated boxes are omitted.
 	 */
-	highlightQuotesByPage: ReadonlyMap<number, readonly string[]>;
+	highlightQuotesByPage: ReadonlyMap<
+		number,
+		readonly { quote: string; color: HighlightColor }[]
+	>;
+	/**
+	 * Translated selection boxes keyed by 1-based page. Painted instead of the
+	 * English glyph boxes while this page's translation overlay is showing.
+	 */
+	translatedHighlightsByPage: ReadonlyMap<
+		number,
+		{ id: string; color: HighlightColor; rects: PdfAskNormalizedRect[] }[]
+	>;
 };
 
 /** Layout-analysis derived overlays (hover targets, debug boxes, translations). */
@@ -546,23 +646,36 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 		marks.translateHighlightsByPage.get(pageNumber) ?? [];
 	const layoutTranslateOnPage =
 		layout.layoutTranslateItemsByPage.get(pageIndex);
+	const translationVisible = (layoutTranslateOnPage?.length ?? 0) > 0;
+	const shownComments = translationVisible
+		? comments.map((comment) => commentForVisibleTranslation(comment, true))
+		: comments;
 	const pageTranslateState = layout.layoutTranslatePageStateByPage.get(
 		pageIndex,
 	) ?? { active: false, running: false };
 	const emphasizedCommentId = marks.hoveredCommentId ?? marks.editingCommentId;
 	const emphasizedComment = emphasizedCommentId
-		? (comments.find((c) => c.id === emphasizedCommentId) ?? null)
+		? (shownComments.find((c) => c.id === emphasizedCommentId) ?? null)
 		: null;
+	const highlightRenderers = useMemo(
+		() =>
+			translationVisible
+				? HIDDEN_HIGHLIGHT_RENDERERS
+				: PASSIVE_HIGHLIGHT_RENDERERS,
+		[translationVisible],
+	);
+	const translatedPaints =
+		marks.translatedHighlightsByPage.get(pageNumber) ?? [];
 
 	const textCommentAtPoint = (clientX: number, clientY: number) => {
-		if (!comments.length) return null;
+		if (!shownComments.length) return null;
 		const pageRect = pageShellRef.current?.getBoundingClientRect();
 		if (!pageRect?.width || !pageRect.height) return null;
 		const x = (clientX - pageRect.left) / pageRect.width;
 		const y = (clientY - pageRect.top) / pageRect.height;
 		if (x < 0 || x > 1 || y < 0 || y > 1) return null;
 		return (
-			comments.find(
+			shownComments.find(
 				(comment) =>
 					comment.kind !== "visual" &&
 					comment.rects.some(
@@ -582,6 +695,31 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 		const pageX = ((clientX - pageRect.left) / pageRect.width) * width;
 		const pageY = ((clientY - pageRect.top) / pageRect.height) * height;
 		if (pageX < 0 || pageX > width || pageY < 0 || pageY > height) return null;
+		if (translationVisible) {
+			const x = pageX / width;
+			const y = pageY / height;
+			const hit = translatedPaints.find((paint) =>
+				paint.rects.some(
+					(rect) =>
+						x >= rect.x &&
+						x <= rect.x + rect.w &&
+						y >= rect.y &&
+						y <= rect.y + rect.h,
+				),
+			);
+			if (!hit) return null;
+			const object = annotationCap
+				.forDocument(docId)
+				.getAnnotationById(hit.id)?.object;
+			if (
+				!object ||
+				object.type !== PdfAnnotationSubtype.HIGHLIGHT ||
+				object.pageIndex !== pageIndex
+			) {
+				return null;
+			}
+			return object;
+		}
 		const pageXPt = pageX / zoomRef.current;
 		const pageYPt = pageY / zoomRef.current;
 		const highlights = annotationCap
@@ -776,7 +914,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 						<AnnotationLayer
 							documentId={docId}
 							pageIndex={pageIndex}
-							annotationRenderers={PASSIVE_HIGHLIGHT_RENDERERS}
+							annotationRenderers={highlightRenderers}
 							selectionMenu={(menuProps) => (
 								<HighlightAnnotationMenu
 									{...menuProps}
@@ -859,6 +997,13 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				 * z-5); glyphs are z-6 so the tint cannot wash them out.
 				 */}
 				{translateOverlay}
+				{translationVisible ? (
+					<TranslatedHighlightLayer paints={translatedPaints} />
+				) : null}
+				<TranslationSelectionVeil
+					pages={marks.selectionCommentDraft?.visiblePages}
+					pageIndex={pageIndex}
+				/>
 				{/*
 				 * Selection-translate spans stay tinted after the result card
 				 * closes, above the opaque translation paper (z-3) and under
@@ -1134,7 +1279,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				 * text highlights with a note do the same, while plain highlights
 				 * (not in `comments`) still use EmbedPDF's annotation menu.
 				 */}
-				{comments.map((comment) =>
+				{shownComments.map((comment) =>
 					comment.rects.map((rect) =>
 						comment.kind === "visual" ? (
 							<button
@@ -1160,7 +1305,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				)}
 				{!mode.plainViewer ? (
 					<CommentCardsLayer
-						items={comments}
+						items={shownComments}
 						pageWidthPx={width}
 						pageHeightPx={height}
 						editingId={marks.editingCommentId}
