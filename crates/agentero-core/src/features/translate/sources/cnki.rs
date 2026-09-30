@@ -118,7 +118,11 @@ pub async fn translate_cnki(
 ) -> Result<String, AppError> {
     match lang_base(target).to_ascii_lowercase().as_str() {
         "zh" | "en" => {}
-        _ => return Err(AppError::message("CNKI translates between Chinese and English only")),
+        _ => {
+            return Err(AppError::message(
+                "CNKI translates between Chinese and English only",
+            ))
+        }
     }
 
     let chunks = split_cnki_chunks(text);
