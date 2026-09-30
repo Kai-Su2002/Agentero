@@ -316,7 +316,7 @@ type PdfLayoutRegion = {
 
 ## 限制与后续
 
-- 实验路径；大模型推理可能卡顿。后端为本地模型时，主窗口每次启动（onboarding 完成后）会弹一次右上角提醒（提示本机模型的性能代价，可「打开版面解析设置」或「不再提醒」，见 [settings.md](settings.md) §低频配置提醒）。
+- 实验路径；大模型推理可能卡顿。后端为本地模型时，主窗口每次启动都会弹一次右上角提醒（仅首次运行向导覆盖时暂停；提示本机模型的性能代价，可「打开版面解析设置」或「不再提醒」，见 [settings.md](settings.md) §低频配置提醒）。
 - 不改 PDF 二进制；只写可重建的 `{paper}/source/layout.json`。
 - `layout.json` 只缓存 raw layout，不等同于未来 `agentero-figures.json` / 缩略图资产 sidecar。
 - **模型级整面板误标仍会漏图**（merge 层无法救回，页上没有可用 image/chart 检测）：ViT 附录 Fig 14（注意力图网格被标 `header` 0.91，同框 `image` 仅 0.05）、Transformer 附录 Fig 4（注意力可视化被标 `table` 0.88）。四篇论文（resnet / vit / transformer / swin，单双栏混合）实测图题召回 28/30 ≈ 93%，在容忍范围内；后续如换更强检测模型可回归 `test/pdf-layout-arxiv.test.ts` 复核。
