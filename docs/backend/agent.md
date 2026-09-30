@@ -130,6 +130,10 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
 - 设置页会将 ACP 探测中的认证错误（如 `invalid_grant` / `failed to authenticate` /
   `authentication required` / `not logged in`）
   显示为「未登录」，其他握手或进程错误仍显示为「ACP 失败」。
+- 「登录」按钮（`doctor_open_agent_login_terminal`）在确认式终端里执行模板
+  `login_command`；写入脚本前先把命令首个可执行文件解析为绝对路径（用注册 Agent 的合并
+  env / login-shell PATH），避免 `bash -lc` 看不到 zsh 的 `~/.local/bin` 而报
+  `command not found`（#686）。终端只打印命令、等回车确认后才真正执行。
 - 后台熔断（`AgentWarmGate`）：`agent_warm` / `agent_list_sessions` 失败后进入
   120s 冷却，冷却期内直接返回上次错误、不再 spawn；成功或用户消息
   （`agent_run_once`）成功后清除。详见
