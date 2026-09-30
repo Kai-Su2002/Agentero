@@ -147,6 +147,9 @@ export function notifyReminder(
 		duration: duration ?? 20_000,
 		action: { label: actionLabel, onClick: onAction },
 		cancel: { label: dismissLabel, onClick: onDismiss },
+		// Stack the actions below the text instead of Sonner's default inline row
+		// (see `cn-reminder-toast` in index.css).
+		classNames: { toast: "cn-reminder-toast" },
 	});
 }
 
