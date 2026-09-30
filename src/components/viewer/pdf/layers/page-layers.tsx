@@ -308,6 +308,11 @@ export type PdfPageMarksSlice = {
 		number,
 		{ id: string; rects: PdfAskNormalizedRect[] }[]
 	>;
+	/**
+	 * English highlight quotes keyed by 1-based page. The translation overlay
+	 * tints matching sentences from this list and does not write them back.
+	 */
+	highlightQuotesByPage: ReadonlyMap<number, readonly string[]>;
 };
 
 /** Layout-analysis derived overlays (hover targets, debug boxes, translations). */
@@ -671,6 +676,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				pageHeightPx={height}
 				tone={tone}
 				layoutRegions={layout.rawRegionsByPage.get(pageIndex)}
+				highlightQuotes={marks.highlightQuotesByPage.get(pageNumber)}
 			/>
 		) : null;
 
@@ -760,7 +766,10 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				{!mode.plainViewer ? (
 					<div
 						className={cn(
-							"absolute inset-0",
+							// Above translation paper (z-3), under glyphs (z-6), same
+							// slot as the selection tint. The highlight menu lifts the
+							// layer so it stays clickable over the glyphs.
+							"absolute inset-0 z-[5] has-[[data-pdf-chrome]]:z-[7]",
 							pdfDark && PDF_ANNOTATION_DARK_CLASS,
 						)}
 					>

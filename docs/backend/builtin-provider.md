@@ -83,7 +83,7 @@
 3. 每段一个独立请求，`StreamExt::buffered(3)`——既有并发上限又保证结果顺序，省掉索引管线。并发数 3 对齐 `openai_vlm.rs` 的 `PAGE_CONCURRENCY`。
 4. 重组为 `"{marker} {text}"` 以 `"\n\n"` 连接，与前端 `buildNumberedPayload` 的输出字节一致。
 
-段数少于前端预期时，`parseNumberedTranslation` 返回 null 并**回退为逐段翻译**，段落不会错位。
+段数少于前端预期时，`parseNumberedTranslation` 返回 null 并**回退为逐句翻译**，句子不会错位。
 
 `⟦n⟧` 行内占位符（前端 `mask.ts` 用于保护引用 / URL / 行内公式）**原样透传**，不剥离。这是一个**未经真实 key 验证的假设**，见下方「限制与后续」。
 

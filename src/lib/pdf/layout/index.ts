@@ -97,6 +97,7 @@ export {
 	type LayoutTranslateItemStatus,
 	type LayoutTranslateJobStatus,
 	type LayoutTranslateRegion,
+	type LayoutTranslateSentence,
 	type LayoutTranslateSidecar,
 	type LayoutTranslateSidecarItem,
 	layoutRegionSourceText,

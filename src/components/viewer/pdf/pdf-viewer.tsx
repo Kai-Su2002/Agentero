@@ -86,6 +86,7 @@ import { usePdfSelectionActions } from "@/components/viewer/pdf/hooks/use-pdf-se
 import { usePdfSelectionTranslate } from "@/components/viewer/pdf/hooks/use-pdf-selection-translate";
 import { usePdfSidebarPanels } from "@/components/viewer/pdf/hooks/use-pdf-sidebar-panels";
 import { usePdfTextSelection } from "@/components/viewer/pdf/hooks/use-pdf-text-selection";
+import { usePdfTranslationSelection } from "@/components/viewer/pdf/hooks/use-pdf-translation-selection";
 import { usePdfViewerHandle } from "@/components/viewer/pdf/hooks/use-pdf-viewer-handle";
 import { usePdfVisualMarks } from "@/components/viewer/pdf/hooks/use-pdf-visual-marks";
 import { usePdfZoomControls } from "@/components/viewer/pdf/hooks/use-pdf-zoom-controls";
@@ -940,6 +941,21 @@ function PdfViewerInner({
 		plainViewer,
 	});
 
+	usePdfTranslationSelection({
+		enabled: layoutTranslateActive && !translationOnly && !plainViewer,
+		hostRef,
+		zoomRef,
+		engineRef,
+		docCapRef,
+		docId,
+		itemsByPage: layoutTranslateItemsByPage,
+		selectionMenu,
+		setSelectionMenu,
+		closeSelectionMenu,
+		paperRelPath,
+		paperAbsPath,
+	});
+
 	const handleToggleLayoutTranslateWithDualPane = useCallback(() => {
 		if (plainViewer) return;
 		if (!dualPaneTranslate) {
@@ -1181,11 +1197,9 @@ function PdfViewerInner({
 		handleMenuCopy,
 	} = usePdfSelectionActions({
 		selectionMenu,
-		setSelectionMenu,
 		closeSelectionMenu,
 		createHighlights,
 		updateHighlightComment,
-		selectionCap,
 		docId,
 		startFromAnchor,
 		translateSelection,
@@ -1211,6 +1225,9 @@ function PdfViewerInner({
 	// menu-identity key re-translated once per wheel tick and stacked a 文A pin
 	// per tick.
 	useEffect(() => {
+		// The translation overlay already has this sentence's translation.
+		// Sending the recovered English back would open another translate card.
+		if (selectionMenu?.fromTranslation) return;
 		const anchorKey = selectionAnchorKey(selectionMenu?.anchor);
 		if (
 			!selectionMenu ||
@@ -1365,6 +1382,18 @@ function PdfViewerInner({
 		toggleLayoutTranslate: handleToggleLayoutTranslateWithDualPane,
 	});
 
+	const highlightQuotesByPage = useMemo(() => {
+		const byPage = new Map<number, string[]>();
+		for (const highlight of highlights) {
+			const quote = highlight.quote.trim();
+			if (!quote) continue;
+			const list = byPage.get(highlight.page);
+			if (list) list.push(quote);
+			else byPage.set(highlight.page, [quote]);
+		}
+		return byPage;
+	}, [highlights]);
+
 	const pageMarks = useMemo<PdfPageMarksSlice>(
 		() => ({
 			activeAskAnchor,
@@ -1385,6 +1414,7 @@ function PdfViewerInner({
 			hoveredCommentId,
 			selectionCommentDraft,
 			translateHighlightsByPage,
+			highlightQuotesByPage,
 		}),
 		[
 			activeAskAnchor,
@@ -1404,6 +1434,7 @@ function PdfViewerInner({
 			hoveredCommentId,
 			selectionCommentDraft,
 			translateHighlightsByPage,
+			highlightQuotesByPage,
 		],
 	);
 
@@ -1702,7 +1733,8 @@ function PdfViewerInner({
 						onTranslate: handleMenuTranslate,
 						onCopy: handleMenuCopy,
 						showHighlight: !isRemotePaper && !plainViewer,
-						showTranslate: !isRemotePaper && !plainViewer,
+						showTranslate:
+							!selectionMenu?.fromTranslation && !isRemotePaper && !plainViewer,
 					}}
 					citationPreview={{
 						state: citationPreview,

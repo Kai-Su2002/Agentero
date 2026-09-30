@@ -13,16 +13,20 @@ import {
 	isLayoutTranslatableKind,
 } from "@/lib/pdf/layout/labels";
 import {
+	draftChainSentences,
+	type LayoutSentenceDraft,
+	paintSentenceTranslations,
+} from "@/lib/pdf/layout/layout-sentences";
+import {
 	buildLayoutTranslateChains,
 	type LayoutTranslateChain,
 	normalizeLayoutSourceText,
-	splitChainTranslation,
 } from "@/lib/pdf/layout/layout-translate-source";
 import { bboxCoveredBy } from "@/lib/pdf/layout/merge-captions";
 import type {
 	LayoutTranslateItem,
-	LayoutTranslateItemStatus,
 	LayoutTranslateRegion,
+	LayoutTranslateSentence,
 	PdfLayoutRegion,
 } from "@/lib/pdf/layout/types";
 import {
@@ -60,7 +64,7 @@ export const LAYOUT_TRANSLATE_CONCURRENCY = 2;
  */
 export const LAYOUT_TRANSLATE_BATCH_CHARS = 4500;
 
-export const LAYOUT_TRANSLATE_SIDECAR_SCHEMA_VERSION = 1;
+export const LAYOUT_TRANSLATE_SIDECAR_SCHEMA_VERSION = 2;
 export const LAYOUT_TRANSLATE_SIDECAR_FILE = "layout-translate.json";
 
 /**
@@ -81,6 +85,7 @@ export type {
 	LayoutTranslateItem,
 	LayoutTranslateItemStatus,
 	LayoutTranslateRegion,
+	LayoutTranslateSentence,
 } from "@/lib/pdf/layout/types";
 
 export type LayoutTranslateJobStatus =
@@ -104,6 +109,8 @@ export type LayoutTranslateSidecarItem = {
 	readingOrder: number;
 	source: string;
 	translated: string;
+	/** Present when this block was paired sentence by sentence. */
+	sentences?: LayoutTranslateSentence[];
 };
 
 export type LayoutTranslateSidecar = {
@@ -206,7 +213,8 @@ export function listTranslatableLayoutRegions(
 		if (isInsideAlgorithmRegion(r, algorithms)) continue;
 		// Text/headers nested inside a reference block (e.g. multi-line cites).
 		if (isInsideAlgorithmRegion(r, referenceBlocks)) continue;
-		const full = normalizeLayoutSourceText(layoutRegionSourceText(r), r.kind);
+		const raw = layoutRegionSourceText(r);
+		const full = normalizeLayoutSourceText(raw, r.kind);
 		if (!full) continue;
 		if (isAlgorithmTitleText(full)) continue;
 		if (isReferenceSectionTitle(full)) continue;
@@ -221,6 +229,7 @@ export function listTranslatableLayoutRegions(
 			kind: r.kind,
 			readingOrder: r.readingOrder,
 			source,
+			raw,
 		});
 	}
 	out.sort(
@@ -334,6 +343,44 @@ export function layoutTranslateSidecarPath(paperAbsPath: string): string {
 	);
 }
 
+/**
+ * Drop malformed sentence entries. A bad entry does not reject the block or
+ * the file; the block simply has fewer pairs, or none.
+ */
+function parseSidecarSentences(
+	value: unknown,
+): LayoutTranslateSentence[] | undefined {
+	if (!Array.isArray(value)) return undefined;
+	const out: LayoutTranslateSentence[] = [];
+	for (const entry of value) {
+		if (!isObject(entry)) continue;
+		const { quote, source, translated, display } = entry;
+		if (typeof quote !== "string" || !quote.trim()) continue;
+		if (typeof source !== "string" || !source.trim()) continue;
+		if (typeof translated !== "string" || !translated.trim()) continue;
+		const sentence: LayoutTranslateSentence = {
+			quote,
+			source,
+			translated: translated.trim(),
+		};
+		if (
+			typeof display === "string" &&
+			display.trim() &&
+			display.trim() !== sentence.translated
+		) {
+			sentence.display = display.trim();
+		}
+		out.push(sentence);
+	}
+	return out.length > 0 ? out : undefined;
+}
+
+function sidecarSentences(
+	sentences: readonly LayoutTranslateSentence[] | undefined,
+): LayoutTranslateSentence[] | undefined {
+	return parseSidecarSentences(sentences);
+}
+
 function parseLayoutTranslateSidecarItem(
 	value: unknown,
 ): LayoutTranslateSidecarItem | null {
@@ -352,7 +399,7 @@ function parseLayoutTranslateSidecarItem(
 	}
 	const parsedBbox = parseBbox(bbox);
 	if (!parsedBbox) return null;
-	return {
+	const item: LayoutTranslateSidecarItem = {
 		id,
 		pageIndex,
 		bbox: parsedBbox,
@@ -361,6 +408,9 @@ function parseLayoutTranslateSidecarItem(
 		source,
 		translated,
 	};
+	const sentences = parseSidecarSentences(value.sentences);
+	if (sentences) item.sentences = sentences;
+	return item;
 }
 
 export function parseLayoutTranslateSidecar(
@@ -435,6 +485,7 @@ export function applyLayoutTranslateSidecar(
 			...item,
 			status: "done" as const,
 			translated: cached.translated.trim(),
+			sentences: cached.sentences,
 			error: undefined,
 		};
 	});
@@ -449,8 +500,8 @@ export async function writeLayoutTranslateSidecar(
 	if (!paperAbsPath) return;
 	const done = items
 		.filter((item) => item.status === "done" && item.translated?.trim())
-		.map(
-			(item): LayoutTranslateSidecarItem => ({
+		.map((item): LayoutTranslateSidecarItem => {
+			const written: LayoutTranslateSidecarItem = {
 				id: item.id,
 				pageIndex: item.pageIndex,
 				bbox: item.bbox,
@@ -458,8 +509,11 @@ export async function writeLayoutTranslateSidecar(
 				readingOrder: item.readingOrder,
 				source: item.source,
 				translated: item.translated?.trim() ?? "",
-			}),
-		);
+			};
+			const sentences = sidecarSentences(item.sentences);
+			if (sentences) written.sentences = sentences;
+			return written;
+		});
 	const merged = new Map<string, LayoutTranslateSidecarItem>();
 	if (options.preserveExisting) {
 		const existing = await readLayoutTranslateSidecar(paperAbsPath, key);
@@ -540,8 +594,18 @@ function sameLayoutTranslateBucketSlot(
 		before !== undefined &&
 		before.id === after.id &&
 		before.status === after.status &&
-		before.translated === after.translated
+		before.translated === after.translated &&
+		sentencePaintKey(before) === sentencePaintKey(after)
 	);
+}
+
+function sentencePaintKey(item: LayoutTranslateItem): string {
+	return (item.sentences ?? [])
+		.map(
+			(sentence) =>
+				`${sentence.quote}\0${sentence.display ?? sentence.translated}`,
+		)
+		.join("\n");
 }
 
 /**
@@ -640,7 +704,7 @@ async function resolveLayoutTranslateAgentOpts(options: {
 }
 
 /**
- * Marker used to number paragraphs inside a batch payload, e.g. `[[1]] …`.
+ * Marker used to number sentences inside a batch payload, e.g. `[[1]] …`.
  * Double brackets distinguish it from single-bracket citations (`[1]`) that the
  * translation may legitimately contain.
  */
@@ -697,7 +761,7 @@ export function buildNumberedPayload(batch: readonly TranslateUnit[]): string {
 /**
  * Split a numbered translation back into `expected` segments by `[[n]]` markers.
  * Returns null when markers are missing/out of order or any segment is empty, so
- * the caller can fall back to translating each paragraph individually.
+ * the caller can fall back to translating each sentence individually.
  */
 export function parseNumberedTranslation(
 	result: string,
@@ -737,11 +801,10 @@ export function parseNumberedTranslation(
  * Translate regions with bounded concurrency. Invokes `onUpdate` after each
  * batch settles so the UI can paint overlays progressively.
  *
- * A paragraph continued in the next column or on the next page is one layout
- * region per fragment; those are chained into a single translation unit and the
- * result is split back per bbox. Units are then grouped into reading-order
- * batches translated in one numbered request so the engine sees surrounding
- * context; on a parse mismatch the batch falls back to per-unit translation.
+ * Continuation fragments are still chained, then cut into sentences on the
+ * text-layer strings. Each sentence is one numbered unit. A sentence that
+ * spans boxes is split back only within itself. If any sentence in a chain
+ * fails, that chain does not store sentence pairs.
  */
 export async function runLayoutRegionTranslate(options: {
 	items: LayoutTranslateItem[];
@@ -762,8 +825,46 @@ export async function runLayoutRegionTranslate(options: {
 	);
 	const items = options.items.map((it) => ({ ...it }));
 	const signal = options.signal;
-	const pending = buildLayoutTranslateChains(items).filter(chainNeedsTranslate);
-	const batches = buildTranslateBatches(pending);
+	const targetLang = langsFromSettings(
+		loadSettings().translate,
+		i18n.language ?? "en",
+	).targetLang;
+
+	type SentenceSlot = { state: "pending" | "ok" | "fail"; text: string };
+	type ChainJob = {
+		chain: LayoutTranslateChain;
+		drafts: LayoutSentenceDraft[];
+		slots: SentenceSlot[];
+	};
+	type SentenceUnit = {
+		source: string;
+		job: ChainJob;
+		draftIndex: number;
+	};
+
+	const units: SentenceUnit[] = [];
+	for (const chain of buildLayoutTranslateChains(items).filter(
+		chainNeedsTranslate,
+	)) {
+		const drafts = draftChainSentences(chain.members);
+		if (drafts.length === 0) {
+			for (const member of chain.members) {
+				member.status = "error";
+				member.error = "Empty translation result";
+				member.sentences = undefined;
+			}
+			continue;
+		}
+		const job: ChainJob = {
+			chain,
+			drafts,
+			slots: drafts.map(() => ({ state: "pending", text: "" })),
+		};
+		drafts.forEach((draft, draftIndex) => {
+			units.push({ source: draft.source, job, draftIndex });
+		});
+	}
+	const batches = buildTranslateBatches(units);
 	let nextBatch = 0;
 
 	const publish = () => options.onUpdate(items.map((it) => ({ ...it })));
@@ -785,67 +886,123 @@ export async function runLayoutRegionTranslate(options: {
 		return translated.trim();
 	};
 
-	/** Restore masked tokens; retry unmasked when the engine ate a placeholder. */
-	const finalizeSegment = async (
-		chain: LayoutTranslateChain,
+	const pageOf = (unit: SentenceUnit) => unit.job.chain.members[0]?.pageIndex;
+
+	/** Restore masked tokens; retry that sentence unmasked when one is missing. */
+	const finalizeSentence = async (
+		unit: SentenceUnit,
 		segment: string,
 		tokens: readonly MaskedToken[],
 	): Promise<string> => {
 		if (tokens.length === 0) return segment.trim();
 		const restored = restoreInlineTokens(segment.trim(), tokens);
 		if (restored.missing === 0) return restored.text;
-		return await translateText(chain.source, chain.members[0]?.pageIndex);
+		return await translateText(unit.source, pageOf(unit));
 	};
 
-	const applyChain = (chain: LayoutTranslateChain, translated: string) => {
-		const segments = splitChainTranslation(
-			translated,
-			chain.members.map((m) => m.source.length),
+	const failUnit = (unit: SentenceUnit, error?: unknown) => {
+		if (signal?.aborted) return;
+		const slot = unit.job.slots[unit.draftIndex];
+		if (!slot || slot.state === "ok") return;
+		slot.state = "fail";
+		slot.text = "";
+		if (!error) return;
+		const message = errorText(error);
+		for (const member of unit.job.chain.members) {
+			if (!member.error) member.error = message;
+		}
+	};
+
+	const succeedUnit = (unit: SentenceUnit, text: string) => {
+		const slot = unit.job.slots[unit.draftIndex];
+		if (!slot) return;
+		slot.state = "ok";
+		slot.text = text.trim();
+	};
+
+	const paintJob = (job: ChainJob) => {
+		if (signal?.aborted) return;
+		if (job.slots.some((slot) => slot.state === "pending")) return;
+		const failed = job.slots.some((slot) => slot.state !== "ok");
+		const painted = paintSentenceTranslations(
+			job.drafts,
+			job.slots.map((slot) => slot.text),
+			job.chain.members.length,
+			targetLang,
 		);
-		chain.members.forEach((member, i) => {
-			const segment = segments[i]?.trim();
-			if (segment) {
-				member.translated = segment;
+		job.chain.members.forEach((member, index) => {
+			const paint = painted[index];
+			if (!failed && paint?.translated) {
+				member.translated = paint.translated;
+				member.sentences = paint.sentences;
 				member.status = "done";
-			} else {
-				member.status = "error";
-				member.error = "Empty translation result";
+				member.error = undefined;
+				return;
 			}
+			member.sentences = undefined;
+			member.translated = paint?.translated || undefined;
+			member.status = "error";
+			member.error = member.error || "Sentence translation failed";
 		});
 	};
 
-	const settleError = (item: LayoutTranslateItem, e: unknown) => {
-		if (signal?.aborted) {
-			item.status = "skipped";
-		} else {
-			item.status = "error";
-			item.error = errorText(e);
-		}
+	const translateSentence = async (unit: SentenceUnit) => {
+		const masked = maskInlineTokens(unit.source);
+		const raw = await translateText(masked.text, pageOf(unit));
+		if (signal?.aborted) return;
+		const text = await finalizeSentence(unit, raw, masked.tokens);
+		if (signal?.aborted) return;
+		if (text) succeedUnit(unit, text);
+		else failUnit(unit);
 	};
 
-	const markChain = (
-		chain: LayoutTranslateChain,
-		status: LayoutTranslateItemStatus,
-	) => {
-		for (const member of chain.members) member.status = status;
-	};
-
-	const translateChain = async (chain: LayoutTranslateChain) => {
-		const masked = maskInlineTokens(chain.source);
-		const raw = await translateText(masked.text, chain.members[0]?.pageIndex);
-		const text = await finalizeSegment(chain, raw, masked.tokens);
-		if (signal?.aborted) {
-			markChain(chain, "skipped");
-			return;
-		}
-		if (!text) {
-			markChain(chain, "error");
-			for (const member of chain.members) {
-				member.error = "Empty translation result";
+	const translateSentenceBatch = async (batch: readonly SentenceUnit[]) => {
+		const maskedUnits = batch.map((unit) => {
+			const masked = maskInlineTokens(unit.source);
+			return { unit, source: masked.text, tokens: masked.tokens };
+		});
+		const result = await translateText(
+			buildNumberedPayload(maskedUnits),
+			pageOf(batch[0] as SentenceUnit),
+		);
+		if (signal?.aborted) return;
+		const segments = parseNumberedTranslation(result, batch.length);
+		if (!segments) {
+			for (const unit of batch) {
+				if (signal?.aborted) return;
+				try {
+					await translateSentence(unit);
+				} catch (error) {
+					failUnit(unit, error);
+				}
 			}
 			return;
 		}
-		applyChain(chain, text);
+		for (const [index, masked] of maskedUnits.entries()) {
+			if (signal?.aborted) return;
+			try {
+				const text = await finalizeSentence(
+					masked.unit,
+					segments[index] ?? "",
+					masked.tokens,
+				);
+				if (text) succeedUnit(masked.unit, text);
+				else failUnit(masked.unit);
+			} catch (error) {
+				failUnit(masked.unit, error);
+			}
+		}
+	};
+
+	const jobsIn = (batch: readonly SentenceUnit[]): ChainJob[] => {
+		const seen = new Set<ChainJob>();
+		const out: ChainJob[] = [];
+		for (const unit of batch) {
+			if (seen.has(unit.job)) continue;
+			seen.add(unit.job);
+			out.push(unit.job);
+		}
+		return out;
 	};
 
 	const worker = async () => {
@@ -856,64 +1013,21 @@ export async function runLayoutRegionTranslate(options: {
 			if (b >= batches.length) return;
 			const batch = batches[b];
 			if (!batch || batch.length === 0) continue;
-			for (const chain of batch) markChain(chain, "running");
-			publish();
-			try {
-				if (signal?.aborted) {
-					for (const chain of batch) markChain(chain, "skipped");
-					publish();
-					return;
-				}
-				const first = batch[0];
-				if (batch.length === 1 && first) {
-					await translateChain(first);
-				} else {
-					const maskedUnits = batch.map((chain) => {
-						const masked = maskInlineTokens(chain.source);
-						return { chain, source: masked.text, tokens: masked.tokens };
-					});
-					const result = await translateText(
-						buildNumberedPayload(maskedUnits),
-						first?.members[0]?.pageIndex,
-					);
-					const segments = parseNumberedTranslation(result, batch.length);
-					if (signal?.aborted) {
-						for (const chain of batch) markChain(chain, "skipped");
-					} else if (segments) {
-						for (const [i, unit] of maskedUnits.entries()) {
-							const text = await finalizeSegment(
-								unit.chain,
-								segments[i] ?? "",
-								unit.tokens,
-							);
-							if (text) applyChain(unit.chain, text);
-							else {
-								markChain(unit.chain, "error");
-								for (const member of unit.chain.members) {
-									member.error = "Empty translation result";
-								}
-							}
-						}
-					} else {
-						// Marker split failed — fall back to per-paragraph translation.
-						for (const chain of batch) {
-							if (signal?.aborted) {
-								markChain(chain, "skipped");
-								continue;
-							}
-							try {
-								await translateChain(chain);
-							} catch (e) {
-								for (const member of chain.members) settleError(member, e);
-							}
-						}
-					}
-				}
-			} catch (e) {
-				for (const chain of batch) {
-					for (const member of chain.members) settleError(member, e);
+			for (const unit of batch) {
+				for (const member of unit.job.chain.members) {
+					if (member.status !== "done") member.status = "running";
 				}
 			}
+			publish();
+			try {
+				if (signal?.aborted) return;
+				const only = batch[0];
+				if (batch.length === 1 && only) await translateSentence(only);
+				else await translateSentenceBatch(batch);
+			} catch (error) {
+				for (const unit of batch) failUnit(unit, error);
+			}
+			for (const job of jobsIn(batch)) paintJob(job);
 			publish();
 		}
 	};

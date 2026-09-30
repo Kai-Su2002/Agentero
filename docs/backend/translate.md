@@ -24,7 +24,7 @@
 |---|---|
 | 模板 | `Translate the following segment into <target_language>, without additional explanation.<source_text>`（逐字；指令与原文之间无空格无换行） |
 | 消息 | 单条 user message，**无 system message**；`sourceLang` 不参与（模板没有它的位置，模型自动检测） |
-| `[[n]]` | Host 侧按行首标记拆分（从 1 递增；行中或乱序即停止扫描）→ 每段一个请求 → `buffered(3)` 保序并发 → 按 `"{marker} {text}"` + `"\n\n"` 重组，与前端 `buildNumberedPayload` 字节一致。空段丢弃，段数变少时前端回退逐段翻译 |
+| `[[n]]` | Host 侧按行首标记拆分（从 1 递增；行中或乱序即停止扫描）→ 每句一个请求 → `buffered(3)` 保序并发 → 按 `"{marker} {text}"` + `"\n\n"` 重组，与前端 `buildNumberedPayload` 字节一致。空段丢弃，段数变少时前端回退逐句翻译 |
 | `⟦n⟧` | `mask.ts` 插入的行内占位符原样透传，不剥离（**未经真实 key 验证**） |
 | 目标语言 | 只映射可达值：`zh-CN` → Chinese，`en` → English，防御性 `ui` → English，未知/`auto`/空 → English。上限由 `TR_TARGETS` 决定，模型侧的 37 语言见 [builtin-provider.md](builtin-provider.md) §支持语言 |
 | 无 key | `commands.rs` 在任何 `.await` 前返回 `AppError::domain(ERR_NO_BUILTIN_KEY)`（`translate.no_builtin_key`），不放一个无法认证的请求出去 |

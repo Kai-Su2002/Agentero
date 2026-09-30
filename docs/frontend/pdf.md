@@ -50,7 +50,7 @@ PDFium engine 由窗口共享。默认优先 **worker 引擎**（PDFium WASM 跑
 | 快速对话（Ask） | `marks/<id>.json`（kind ask）；远程仅内存 | 划词工具栏文字「快速对话」；迷你问答；页边针；**hover / 打开卡片时高亮**锚定选区原文；打开时停在用户问题处，不自动滚到回复底部；卡片右上角 ChatGPT / Claude 图标可把 论文标题 + 页码 + 划选文本 发送到对应外部 AI |
 | 快速对话 | 页内 Ask 浮层（ephemeral） | 划词工具栏文字按钮 / `⌘K`；打开 PDF Ask 对话卡，不强制打开 Agent 侧栏 |
 | 加入对话 | 发送该轮后写 `marks/<id>.json`（kind `ask`）；远程无 pin 落盘 | 划词工具栏文字按钮 / `⌘L` / `⇧⌘A`（额外聚焦）；点击或快捷键后选区固定为 Agent composer 文本 chip 并打开侧栏；**发送**后在选区旁插入**对话卡片**页边针（与「快速对话」同一 ask 卡 / 非视觉批注）；hover / 打开同样高亮原文，见 [agent.md](agent.md) |
-| 翻译 | `marks/<id>.json`（kind translate） | 浮层结果卡：贴合选区随滚轮重定位；未悬停卡片 / 原文高亮 / 页边针时自动收起（流式中除外）。原文选区在卡片关闭后仍保留浅黄高亮。全文翻译的纸面不挡住划词高亮，字形画在高亮之上；选中译文时墨色跟纸面走，不跟界面前景色反色；译文本身可选中，并显示选区底色。见 [translate.md](translate.md) |
+| 翻译 | `marks/<id>.json`（kind translate） | 浮层结果卡：贴合选区随滚轮重定位；未悬停卡片 / 原文高亮 / 页边针时自动收起（流式中除外）。原文选区在卡片关闭后仍保留浅黄高亮。全文翻译的纸面不挡住划词高亮和已有英文高亮，字形画在高亮之上；在译文上划选时高亮锚回对应英文句子。选中译文时墨色跟纸面走，不跟界面前景色反色；译文本身可选中，并显示选区底色。见 [translate.md](translate.md) |
 | 视觉批注 | `marks/<id>.json`（kind `visual` v2）：区域 + 用户批注 + 可选嵌套 `agent`；裁剪图 `marks/assets/<id>.png`。默认形态为纯批注（与文字「批注备注」同壳）；有 Agent 会话时仍保留页边针以便定位。旧版 `agent-trace` v1 仍可读，Doctor 可一键升 v2 | 框选或单击 layout 区域后在页右缘打开就地编辑；备注为空时不落盘。失焦、点到卡片外或 Esc 且没有输入时取消这次批注，选框和草稿一起消失。已输入的备注在失焦或 ⌘/Ctrl+Enter 时落盘。评论卡 hover 工具栏含「加入侧边栏对话」图标，点击将裁剪送入 Agent sidebar composer；删除图标也在卡上。「加入」传递的是 mark id，而草稿 id 就是落盘后的 `marks/<id>.json`，因此同一 mark 在 composer 中至多一枚 chip：重复点击刷新该枚（备注 / 区域 / 裁剪图），不会堆出共享同一 id 的重复项（重复项会共用 React key，点掉一个即全部消失）。没有用户备注但已有 Agent 会话时，点击页边针在针旁打开浮动对话卡，展示已保存 transcript，并可隐藏或删除该视觉批注；其余续聊统一在右侧 Agent 面板进行。视口窄于 640px 时评论列回退为页边针。`marks/annotations.json` 读写会按 annotation id 去重，避免重复导入脏数据 |
 
 - 不改 PDF 二进制；不自动写入 `NOTES.md`。
@@ -165,7 +165,7 @@ PDF 左侧 **Figures** 按钮 → 页内浮层（原「解析」：分析 / 叠�
 
 → **[pdf-layout-analysis.md](pdf-layout-analysis.md)**
 
-要点：先文字角色再联图；图题须整框在 figure bbox 内；图无 title 丢弃；默认置信度 30%；Paper PDF 的初步解析结果缓存到 `{paper}/source/layout.json`，后续 merge/filter 可重复计算。全文翻译先归一化文字层原文（断词 / ligature / 页眉页脚残留），把跨栏跨页的续段合并成一个翻译单元，再按阅读顺序**分批**请求（`buildTranslateBatches`，批内 `[[n]]` 标记保上下文，解析失败回退逐段），缓存独立写入 `{paper}/source/layout-translate.json`，按 provider / 语言 / region 原文校验后复用。详见 [translate.md](translate.md)。
+要点：先文字角色再联图；图题须整框在 figure bbox 内；图无 title 丢弃；默认置信度 30%；Paper PDF 的初步解析结果缓存到 `{paper}/source/layout.json`，后续 merge/filter 可重复计算。全文翻译先把跨栏跨页的续段拼成一条，再按句切开（拉丁 `.` `!` `?` 要空白或结尾，`。` `！` `？` 单独即可；缩写和小数不切），归一化后按阅读顺序分批请求（`buildTranslateBatches`，一个 `[[n]]` 一句，标记解析失败则逐句重译）。缓存写入 `{paper}/source/layout-translate.json`（schema 2，含句对），按 provider / 语言 / region 原文校验后复用。详见 [translate.md](translate.md)。
 
 **单击视觉批注：** hover 插图 / 表 / 算法 / 公式的命中框时，框上出现默认主题的中性 2px 描边（不跟随外观配色）（即将裁剪的确切 bbox）与右上角「单击进行批注」提示；单击裁剪该区域并直接保存为 note-only visual mark，同时在页右缘评论列打开就地编辑（与手动框选相同；不自动发送 Agent）。框选模式或裁剪进行中时命中框不挂载。
 

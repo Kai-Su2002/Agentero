@@ -34,6 +34,7 @@ import {
 	rectTopCenterScreen,
 } from "@/components/viewer/pdf/coords";
 import {
+	clearDomSelectionInside,
 	hasNativeSelectionOutsideHost,
 	isEditableClipboardTarget,
 } from "@/components/viewer/pdf/host-dom";
@@ -45,6 +46,8 @@ import {
 	clearActiveSelection,
 	publishSelection,
 } from "@/lib/agent/selection-store";
+import { copyTextToClipboard } from "@/lib/core/clipboard";
+import { translationHitsFromRange } from "@/lib/pdf/layout/layout-sentence-selection";
 
 type SelectionCapabilityProvides = ReturnType<
 	typeof useSelectionCapability
@@ -127,9 +130,11 @@ export function usePdfTextSelection({
 	const [isSelecting, setIsSelecting] = useState(false);
 
 	const closeSelectionMenu = useCallback(() => {
+		clearDomSelectionInside(hostRef.current);
 		setSelectionMenu(null);
 		selectionCap?.clear(docId);
-	}, [selectionCap, docId]);
+		clearActiveSelection("pdf");
+	}, [selectionCap, docId, hostRef]);
 
 	const rePlaceSelectionMenu = useCallback(() => {
 		setSelectionMenu((prev) => {
@@ -154,6 +159,21 @@ export function usePdfTextSelection({
 		if (!selectionCap || !docCap) return;
 
 		const scope = selectionCap.forDocument(docId);
+		// A translation-overlay selection is a DOM range, so EmbedPDF reports an
+		// empty PDFium selection and would dismiss the menu we just opened.
+		const selectionInsideTranslation = (): boolean => {
+			const host = hostRef.current;
+			const selection = window.getSelection();
+			if (
+				!host ||
+				!selection ||
+				selection.isCollapsed ||
+				selection.rangeCount === 0
+			) {
+				return false;
+			}
+			return translationHitsFromRange(selection.getRangeAt(0), host).length > 0;
+		};
 		const offBegin = scope.onBeginSelection(() => {
 			setIsSelecting(true);
 		});
@@ -161,6 +181,7 @@ export function usePdfTextSelection({
 			const rawPages = selectionCap.getFormattedSelection(docId);
 			if (!rawPages.length) {
 				setIsSelecting(false);
+				if (selectionInsideTranslation()) return;
 				setSelectionMenu(null);
 				return;
 			}
@@ -230,6 +251,7 @@ export function usePdfTextSelection({
 		const offChange = scope.onSelectionChange((sel) => {
 			if (!sel) {
 				setIsSelecting(false);
+				if (selectionInsideTranslation()) return;
 				setSelectionMenu(null);
 				clearActiveSelection("pdf");
 			}
@@ -255,8 +277,12 @@ export function usePdfTextSelection({
 	// yields the selected PDF text instead of nothing.
 	useEffect(() => {
 		if (!isActive || !selectionMenu || !selectionCap) return;
-		const selectedText = selectionMenu.anchor.quote ?? "";
-		if (!selectedText.trim()) return;
+		const selectedText = (
+			selectionMenu.copyText ??
+			selectionMenu.anchor.quote ??
+			""
+		).trim();
+		if (!selectedText) return;
 		const host = hostRef.current;
 
 		const shouldHandlePdfCopy = (target: EventTarget | null): boolean => {
@@ -277,6 +303,12 @@ export function usePdfTextSelection({
 				return;
 			if (!shouldHandlePdfCopy(event.target)) return;
 			event.preventDefault();
+			// PDFium's clipboard is the English text layer. A translation
+			// selection has no PDFium range; copy the visible translation.
+			if (selectionMenu.fromTranslation) {
+				void copyTextToClipboard(selectedText);
+				return;
+			}
 			selectionCap.copyToClipboard(docId);
 		};
 

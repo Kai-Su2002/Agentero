@@ -229,7 +229,7 @@ describe("translate prompts", () => {
 		// Page line, [[n]] batch rules and the text payload stay app-composed.
 		expect(p).toContain("page 7");
 		expect(p).toContain("[[n]] marker");
-		expect(p).toContain("Do not merge paragraphs.");
+		expect(p).toContain("do not merge markers");
 		expect(p.endsWith("Text:\n\n[[1]] alpha\n\n[[2]] beta")).toBe(true);
 	});
 

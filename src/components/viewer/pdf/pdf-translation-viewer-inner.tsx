@@ -50,6 +50,7 @@ const EMPTY_MARKS: PdfPageMarksSlice = {
 	hoveredCommentId: null,
 	selectionCommentDraft: null,
 	translateHighlightsByPage: EMPTY_PAGE_MAP,
+	highlightQuotesByPage: EMPTY_PAGE_MAP,
 };
 
 const NOOP = () => undefined;

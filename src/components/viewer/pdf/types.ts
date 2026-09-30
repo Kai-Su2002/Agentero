@@ -125,6 +125,15 @@ export type SelectionMenuState = {
 	screen: ScreenPoint;
 	anchor: PdfAskAnchor;
 	pages: FormattedSelection[];
+	/**
+	 * Visible text to put on the clipboard. Set when the selection is on a
+	 * translation span, so copy does not replace it with the English quote.
+	 */
+	copyText?: string;
+	/** The anchor quote is English recovered from the translation selection. */
+	fromTranslation?: boolean;
+	/** Sentence translations passed to chat as context, not stored on the mark. */
+	pairedTranslation?: string;
 };
 
 /**

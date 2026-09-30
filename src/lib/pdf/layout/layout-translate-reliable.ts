@@ -7,12 +7,14 @@
  * and retried before the UI is told that the job is complete.
  */
 
+import i18n from "@/i18n";
 import { errorText } from "@/lib/core/error";
 import { LAYOUT_SIDEBAR_MIN_SCORE } from "@/lib/pdf/layout/constants";
 import {
 	isAlgorithmLayoutKind,
 	isLayoutTranslatableKind,
 } from "@/lib/pdf/layout/labels";
+import { joinTranslatedDisplays } from "@/lib/pdf/layout/layout-sentences";
 import {
 	isAlgorithmTitleText,
 	isAsideTextLayoutLabel,
@@ -26,8 +28,11 @@ import { normalizeLayoutSourceText } from "@/lib/pdf/layout/layout-translate-sou
 import type {
 	LayoutTranslateItem,
 	LayoutTranslateRegion,
+	LayoutTranslateSentence,
 	PdfLayoutRegion,
 } from "@/lib/pdf/layout/types";
+import { loadSettings } from "@/lib/settings";
+import { langsFromSettings } from "@/lib/translate/lang";
 
 export {
 	applyLayoutTranslateSidecar,
@@ -52,6 +57,7 @@ export type {
 	LayoutTranslateItem,
 	LayoutTranslateItemStatus,
 	LayoutTranslateRegion,
+	LayoutTranslateSentence,
 } from "@/lib/pdf/layout/types";
 
 /**
@@ -133,7 +139,8 @@ export function listTranslatableLayoutRegions(
 		if (!(r.bbox.w > 0 && r.bbox.h > 0)) continue;
 		if (isInsideAlgorithmRegion(r, algorithms)) continue;
 		if (isInsideAlgorithmRegion(r, referenceBlocks)) continue;
-		const source = normalizeLayoutSourceText(layoutRegionSourceText(r), r.kind);
+		const raw = layoutRegionSourceText(r);
+		const source = normalizeLayoutSourceText(raw, r.kind);
 		if (!source) continue;
 		if (isAlgorithmTitleText(source)) continue;
 		if (isReferenceSectionTitle(source)) continue;
@@ -144,6 +151,7 @@ export function listTranslatableLayoutRegions(
 			kind: r.kind,
 			readingOrder: r.readingOrder,
 			source,
+			raw,
 		});
 	}
 	out.sort(
@@ -185,7 +193,9 @@ function expandOversizedItems(
 				kind: "header",
 				readingOrder: item.readingOrder + index / 1000,
 				source,
+				raw: source,
 				translated: undefined,
+				sentences: undefined,
 				error: undefined,
 				status: "pending",
 				__originalId: item.id,
@@ -222,10 +232,8 @@ function collapseExpandedItems(
 			return {
 				...original,
 				status: "done",
-				translated: chunks
-					.map((chunk) => chunk.translated?.trim() ?? "")
-					.filter(Boolean)
-					.join(" "),
+				translated: joinChunkTranslations(chunks),
+				sentences: mergedChunkSentences(chunks),
 				error: undefined,
 			};
 		}
@@ -242,14 +250,34 @@ function collapseExpandedItems(
 						? "skipped"
 						: "pending",
 			translated: running
-				? chunks
-						.map((chunk) => chunk.translated?.trim() ?? "")
-						.filter(Boolean)
-						.join(" ") || undefined
+				? joinChunkTranslations(chunks) || undefined
 				: undefined,
+			sentences: undefined,
 			error: failed?.error,
 		};
 	});
+}
+
+function currentTargetLang(): string {
+	return langsFromSettings(loadSettings().translate, i18n.language ?? "en")
+		.targetLang;
+}
+
+function joinChunkTranslations(
+	chunks: readonly { translated?: string }[],
+): string {
+	return joinTranslatedDisplays(
+		chunks.map((chunk) => chunk.translated?.trim() ?? ""),
+		currentTargetLang(),
+	);
+}
+
+/** Keep sentence pairs only when every chunk produced them. */
+function mergedChunkSentences(
+	chunks: readonly { sentences?: LayoutTranslateSentence[] }[],
+): LayoutTranslateSentence[] | undefined {
+	if (chunks.some((chunk) => !chunk.sentences?.length)) return undefined;
+	return chunks.flatMap((chunk) => chunk.sentences ?? []);
 }
 
 function mergeExpandedPass(
@@ -327,6 +355,7 @@ export async function runLayoutRegionTranslate(options: {
 				...item,
 				status: "pending" as const,
 				translated: undefined,
+				sentences: undefined,
 				error: undefined,
 			}));
 		if (failed.length === 0) break;

@@ -7,6 +7,10 @@
 import { Fragment, memo, useLayoutEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/core/utils";
 import { isLayoutTranslateHeadingKind } from "@/lib/pdf/layout/labels";
+import {
+	layoutTranslateSentenceNodes,
+	tintedSentenceIndexes,
+} from "@/lib/pdf/layout/layout-sentences";
 import type { LayoutTranslateItem } from "@/lib/pdf/layout/layout-translate";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
 import {
@@ -25,6 +29,11 @@ type LayoutTranslateOverlayProps = {
 	tone?: PdfPaperTone;
 	/** Raw page regions; used as collision blockers for safe overlay expansion. */
 	layoutRegions?: readonly PdfLayoutRegion[];
+	/**
+	 * English highlight quotes on this page. Matching sentences get a faint
+	 * background while the overlay is painted; nothing is written back.
+	 */
+	highlightQuotes?: readonly string[];
 };
 
 const LINE_HEIGHT = 1.25;
@@ -304,12 +313,16 @@ function applyParagraphMetrics(
 
 type ExactFitParagraphProps = {
 	text: string;
+	itemId: string;
+	sentences?: LayoutTranslateItem["sentences"];
 	initialFontSize: number;
 	boxWidthPx: number;
 	boxHeightPx: number;
 	isHeading: boolean;
 	/** Dark PDF paper: selection ink stays light, matching the glyphs. */
 	paperDark: boolean;
+	/** Sentence indexes whose translation should show a faint highlight. */
+	tintedSentences?: ReadonlySet<number>;
 };
 
 /**
@@ -320,13 +333,17 @@ type ExactFitParagraphProps = {
  */
 export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 	text,
+	itemId,
+	sentences,
 	initialFontSize,
 	boxWidthPx,
 	boxHeightPx,
 	isHeading,
 	paperDark,
+	tintedSentences,
 }: ExactFitParagraphProps) {
 	const ref = useRef<HTMLParagraphElement>(null);
+	const sentenceNodes = layoutTranslateSentenceNodes(text, sentences);
 
 	useLayoutEffect(() => {
 		const element = ref.current;
@@ -387,6 +404,7 @@ export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 				"pdf-translate-selection pointer-events-auto m-0 h-full w-full select-text overflow-hidden whitespace-pre-wrap",
 				isHeading && "font-bold",
 			)}
+			data-layout-item={itemId}
 			data-paper={paperDark ? "dark" : undefined}
 			style={{
 				fontSize: initialFontSize,
@@ -398,7 +416,25 @@ export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 				overflowWrap: "normal",
 			}}
 		>
-			{text}
+			{sentenceNodes
+				? sentenceNodes.nodes.map((node, index) => (
+						<Fragment key={node.index}>
+							{index > 0 ? sentenceNodes.gap : null}
+							<span
+								data-sentence={node.index}
+								className={
+									tintedSentences?.has(node.index)
+										? paperDark
+											? "rounded-[1px] bg-yellow-400/30"
+											: "rounded-[1px] bg-yellow-300/35"
+										: undefined
+								}
+							>
+								{node.text}
+							</span>
+						</Fragment>
+					))
+				: text}
 		</p>
 	);
 });
@@ -412,6 +448,7 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 	pageHeightPx,
 	tone = "white",
 	layoutRegions,
+	highlightQuotes,
 }: LayoutTranslateOverlayProps) {
 	const onPage = useMemo(
 		() =>
@@ -428,6 +465,15 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 				})),
 		[items, layoutRegions],
 	);
+	const tintByItem = useMemo(() => {
+		const map = new Map<string, ReadonlySet<number>>();
+		if (!highlightQuotes?.length) return map;
+		for (const item of items) {
+			const indexes = tintedSentenceIndexes(item.sentences, highlightQuotes);
+			if (indexes.length > 0) map.set(item.id, new Set(indexes));
+		}
+		return map;
+	}, [highlightQuotes, items]);
 	if (onPage.length === 0) return null;
 
 	return (
@@ -505,11 +551,14 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 							>
 								<LayoutTranslateParagraph
 									text={text}
+									itemId={item.id}
+									sentences={item.sentences}
 									initialFontSize={fontSize}
 									boxWidthPx={boxWidthPx}
 									boxHeightPx={boxHeightPx}
 									isHeading={isHeading}
 									paperDark={tone === "dark"}
+									tintedSentences={tintByItem.get(item.id)}
 								/>
 							</div>
 						</div>

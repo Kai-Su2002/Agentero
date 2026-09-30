@@ -1,5 +1,17 @@
 import type { PdfAskThread } from "@/lib/pdf/ask/types";
 
+const pairedAskTranslations = new Map<string, string>();
+
+/** Session-only translation context. Not written into the ask mark. */
+export function rememberPairedAskTranslation(
+	threadId: string,
+	translation: string,
+): void {
+	const text = translation.trim().slice(0, 1000);
+	if (text) pairedAskTranslations.set(threadId, text);
+	else pairedAskTranslations.delete(threadId);
+}
+
 /** Build a single-turn prompt for ACP (includes prior turns for multi-round). */
 export function buildPdfAskPrompt(
 	thread: PdfAskThread,
@@ -31,6 +43,10 @@ export function buildPdfAskPrompt(
 	}
 	if (quote) {
 		parts.push("Quoted text from the PDF:", `> ${quote}`);
+	}
+	const translation = pairedAskTranslations.get(thread.id);
+	if (translation) {
+		parts.push("Translation of the quoted sentences:", translation);
 	}
 	if (history) {
 		parts.push("Earlier turns in this selection thread:", history);

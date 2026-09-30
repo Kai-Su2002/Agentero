@@ -18,6 +18,7 @@ import {
 	persistLayoutTranslateSidecarBestEffort,
 	toLayoutTranslateItems,
 	translateServiceKey,
+	writeLayoutTranslateSidecar,
 } from "@/lib/pdf/layout/layout-translate";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
 import { DEFAULT_TRANSLATE_SETTINGS } from "@/lib/translate/defaults";
@@ -83,6 +84,20 @@ describe("listTranslatableLayoutRegions", () => {
 		]);
 		expect(list.map((r) => r.id)).toEqual(["abs", "t2"]);
 		expect(list[0]?.source).toBe("This is the abstract.");
+		expect(list[0]?.raw).toBe("This is the abstract.");
+	});
+
+	it("keeps the text-layer hyphen in raw and heals it in source", () => {
+		const list = listTranslatableLayoutRegions([
+			region({
+				id: "hyphen",
+				kind: "text",
+				pageIndex: 0,
+				text: "A repre- sentation helps.",
+			}),
+		]);
+		expect(list[0]?.raw).toBe("A repre- sentation helps.");
+		expect(list[0]?.source).toBe("A representation helps.");
 	});
 
 	it("prefers text over title for source", () => {
@@ -347,6 +362,21 @@ describe("groupLayoutTranslateItemsByPage", () => {
 		expect(after.get(1)).not.toBe(before.get(1));
 		expect(after.get(1)?.map((it) => it.status)).toEqual(["done"]);
 	});
+
+	it("re-buckets a page when only sentence pairs change", () => {
+		const done = { ...translateItem("a", 0, "done"), translated: "甲" };
+		const before = groupLayoutTranslateItemsByPage([done]);
+		const after = groupLayoutTranslateItemsByPage(
+			[
+				{
+					...done,
+					sentences: [{ quote: "A.", source: "A.", translated: "甲" }],
+				},
+			],
+			before,
+		);
+		expect(after.get(0)).not.toBe(before.get(0));
+	});
 });
 
 describe("layout translate sidecar cache", () => {
@@ -372,7 +402,7 @@ describe("layout translate sidecar cache", () => {
 	it("applies cached translations only when key and source text match", () => {
 		const sidecar = parseLayoutTranslateSidecar(
 			{
-				schemaVersion: 1,
+				schemaVersion: 2,
 				source: {
 					mode: "pdf-layout-translate",
 					generatedAt: "2026-08-10T00:00:00.000Z",
@@ -421,7 +451,7 @@ describe("layout translate sidecar cache", () => {
 	it("rejects caches for a different target language", () => {
 		const sidecar = parseLayoutTranslateSidecar(
 			{
-				schemaVersion: 1,
+				schemaVersion: 2,
 				source: {
 					mode: "pdf-layout-translate",
 					generatedAt: "2026-08-10T00:00:00.000Z",
@@ -451,6 +481,119 @@ describe("layout translate sidecar cache", () => {
 				{ ...item("a"), translated: "甲", status: "done" },
 			]),
 		).toBe(false);
+	});
+
+	it("rejects a schema 1 file", () => {
+		expect(
+			parseLayoutTranslateSidecar(
+				{
+					schemaVersion: 1,
+					source: {
+						mode: "pdf-layout-translate",
+						generatedAt: "2026-08-10T00:00:00.000Z",
+						providerId: "googleapi",
+						sourceLang: "auto",
+						targetLang: "zh-CN",
+						serviceKey: "googleapi",
+					},
+					items: [
+						{
+							id: "a",
+							pageIndex: 0,
+							bbox: { x: 0.1, y: 0.1, w: 0.5, h: 0.05 },
+							kind: "text",
+							readingOrder: 0,
+							source: "source a",
+							translated: "甲",
+						},
+					],
+				},
+				key,
+			),
+		).toBeNull();
+	});
+
+	it("keeps valid sentence pairs and drops a malformed entry", () => {
+		const sidecar = parseLayoutTranslateSidecar(
+			{
+				schemaVersion: 2,
+				source: {
+					mode: "pdf-layout-translate",
+					generatedAt: "2026-08-10T00:00:00.000Z",
+					providerId: "googleapi",
+					sourceLang: "auto",
+					targetLang: "zh-CN",
+					serviceKey: "googleapi",
+				},
+				items: [
+					{
+						id: "a",
+						pageIndex: 0,
+						bbox: { x: 0.1, y: 0.1, w: 0.5, h: 0.05 },
+						kind: "text",
+						readingOrder: 0,
+						source: "source a",
+						translated: "甲",
+						sentences: [
+							{
+								quote: "Hello.",
+								source: "Hello.",
+								translated: "你好。",
+								display: "你好。",
+							},
+							{ quote: "", source: "x", translated: "y" },
+							{
+								quote: "Go.",
+								source: "Go.",
+								translated: "走。",
+								display: "走吧。",
+							},
+						],
+					},
+				],
+			},
+			key,
+		);
+		expect(sidecar?.items[0]?.sentences).toEqual([
+			{ quote: "Hello.", source: "Hello.", translated: "你好。" },
+			{
+				quote: "Go.",
+				source: "Go.",
+				translated: "走。",
+				display: "走吧。",
+			},
+		]);
+		const applied = applyLayoutTranslateSidecar([item("a")], sidecar);
+		expect(applied[0]?.sentences).toEqual(sidecar?.items[0]?.sentences);
+	});
+
+	it("writes schema 2 and omits display when it equals the sentence", async () => {
+		const vault = await import("@/lib/vault");
+		vi.mocked(vault.writeVaultFile).mockReset();
+		await writeLayoutTranslateSidecar("/paper", key, [
+			{
+				...item("a", "Hello. Go."),
+				status: "done",
+				translated: "你好。走吧。",
+				sentences: [
+					{ quote: "Hello.", source: "Hello.", translated: "你好。" },
+					{
+						quote: "Go.",
+						source: "Go.",
+						translated: "走。",
+						display: "走吧。",
+					},
+				],
+			},
+		]);
+		const body = vi.mocked(vault.writeVaultFile).mock.calls[0]?.[1] as string;
+		const parsed = JSON.parse(body) as {
+			schemaVersion: number;
+			items: { sentences: { display?: string; quote: string }[] }[];
+		};
+		expect(parsed.schemaVersion).toBe(2);
+		expect(parsed.items[0]?.sentences[0]?.display).toBeUndefined();
+		expect(parsed.items[0]?.sentences[1]?.display).toBe("走吧。");
 	});
 });
 
