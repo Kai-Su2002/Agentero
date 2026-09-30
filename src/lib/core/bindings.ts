@@ -1428,6 +1428,13 @@ export type AppSettings_Deserialize = {
 	githubMirrorEnabled?: boolean,
 	/**  e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`. */
 	githubMirrorBaseUrl?: string,
+	/**
+	 *  EZProxy/WebVPN prefix for paywalled PDF fallback, e.g.
+	 *  `https://webvpn.example.edu/login?url=`. Empty disables the layer.
+	 */
+	institutionProxyPrefix?: string,
+	/**  Session cookie sent along with institution proxy requests. */
+	institutionProxyCookie?: string,
 	paperTreeLabelMode?: string,
 	paperTreeSortMode?: string,
 	/**
@@ -1522,6 +1529,13 @@ export type AppSettings_Serialize = {
 	githubMirrorEnabled: boolean,
 	/**  e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`. */
 	githubMirrorBaseUrl: string,
+	/**
+	 *  EZProxy/WebVPN prefix for paywalled PDF fallback, e.g.
+	 *  `https://webvpn.example.edu/login?url=`. Empty disables the layer.
+	 */
+	institutionProxyPrefix: string,
+	/**  Session cookie sent along with institution proxy requests. */
+	institutionProxyCookie: string,
 	paperTreeLabelMode: string,
 	paperTreeSortMode: string,
 	/**
