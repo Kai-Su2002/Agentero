@@ -1,8 +1,9 @@
 /**
  * Start the low-frequency config reminders (#658) in the main window.
  *
- * - `layout-local-model`: startup hint (once the user has finished onboarding
- *   and opened a vault), delayed so it does not collide with first-paint work.
+ * - `layout-local-model`: every app launch (once onboarding is done, whether
+ *   or not a vault is open), delayed so it does not collide with first-paint
+ *   work. Shown at most once per session until the user dismisses it.
  * - `network-proxy`: event hook — this hook registers `reportNetworkFailure`
  *   with the global notify funnel, which fires it on a network-ish failure.
  *
@@ -11,31 +12,32 @@
  */
 
 import { useEffect } from "react";
-import { useSettings, useVaultStore } from "@/hooks/use-app-stores";
+import { useSettings } from "@/hooks/use-app-stores";
 import { setNetworkFailureReporter } from "@/lib/core/notify";
 import {
 	maybeShowLayoutLocalModelReminder,
 	reportNetworkFailure,
 } from "@/lib/settings/reminders";
 
-/** Let boot / vault loading settle before the toast appears. */
+/** Let boot settle before the toast appears. */
 const STARTUP_DELAY_MS = 5000;
 
 export function useConfigReminders(): void {
 	const onboardingDone = useSettings((s) => s.onboardingDone);
-	const vaultPath = useVaultStore((s) => s.vaultPath);
 
 	useEffect(() => {
 		setNetworkFailureReporter(reportNetworkFailure);
 		return () => setNetworkFailureReporter(null);
 	}, []);
 
+	// Every app launch after onboarding; a vault is not required. The reminder
+	// module caps this at once per session and honors "don't remind again".
 	useEffect(() => {
-		if (!onboardingDone || !vaultPath) return;
+		if (!onboardingDone) return;
 		const timer = window.setTimeout(
 			maybeShowLayoutLocalModelReminder,
 			STARTUP_DELAY_MS,
 		);
 		return () => window.clearTimeout(timer);
-	}, [onboardingDone, vaultPath]);
+	}, [onboardingDone]);
 }
