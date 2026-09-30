@@ -25,6 +25,8 @@ export function parsePdfTranslateRecord(
 		createdAt: raw.createdAt,
 		page: Math.max(1, Math.floor(raw.page)),
 		rects: raw.rects as PdfTranslateRect[],
+		// Legacy results had a persistent reopen marker; keep that behavior.
+		pinned: raw.pinned === undefined || raw.pinned === true,
 	};
 	if (typeof raw.quote === "string") rec.quote = raw.quote;
 	if (typeof raw.updatedAt === "string") rec.updatedAt = raw.updatedAt;

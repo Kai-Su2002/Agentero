@@ -182,7 +182,6 @@ export function HtmlViewer({ srcUrl, title, className }: HtmlViewerProps) {
 									}
 									onOpenSettings={selection.openTranslateSettings}
 									onHide={selection.hideTranslate}
-									onDelete={selection.deleteTranslateCard}
 								/>
 							) : null}
 						</>,
