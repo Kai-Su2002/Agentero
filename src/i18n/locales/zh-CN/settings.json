@@ -552,10 +552,10 @@
 	"experimental": {
 		"title": "实验功能",
 		"jev": {
-			"section": "jEV",
+			"section": "Jev",
 			"apiKey": {
 				"label": "API key",
-				"placeholder": "jEV API key"
+				"placeholder": "Jev API key"
 			},
 			"baseUrl": {
 				"label": "接口地址"

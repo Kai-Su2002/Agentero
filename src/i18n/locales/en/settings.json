@@ -552,10 +552,10 @@
 	"experimental": {
 		"title": "Experimental features",
 		"jev": {
-			"section": "jEV",
+			"section": "Jev",
 			"apiKey": {
 				"label": "API key",
-				"placeholder": "jEV API key"
+				"placeholder": "Jev API key"
 			},
 			"baseUrl": {
 				"label": "Endpoint URL"
