@@ -128,7 +128,7 @@ const action = decideSync("file-tree.click", { node });
 
 | decision | routing | 触发点 |
 |---|---|---|
-| `pdf.selection.intent` | jEV + 规则兜底（0.75） | PDF 选区工具栏「智能操作」按钮（`selection.smart`），按 jEV 建议执行提问/翻译/高亮/加对话 |
+| `pdf.selection.intent` | jEV + 规则兜底（0.75） | 已注册，暂未接 UI（原 PDF 选区「智能操作」按钮已移除），可经 `decide` 命令调用 |
 | `paper.auto-tag` | 纯 jEV | 已注册；由后续论文入库流程调用 |
 | `file-tree.click` | 纯规则（前端本地） | 文件树点击 `selectFileNode` |
 
@@ -139,7 +139,7 @@ jEV 智能高亮的 HTTP 传输已统一到 `JevProvider::complete`：`features/
 
 - **不是所有判断都进决策层**：文件保存、标签页关闭、简单 UI 状态切换仍由 hook/store 直接处理。
 - **规则优先于 jEV**：能用规则确定的不要用 AI（jEV 有 token 成本与延迟）。
-- **用户可覆盖**：AI 只给默认建议；智能操作失败时保留原菜单，用户仍可手动选择。
+- **用户可覆盖**：AI 只给默认建议；UI 上应保留其他选项供用户手动选择。
 - **可解释**：`Outcome` 必带 `provider` 与 `confidence`，便于调试与 fallback。
 - **未决**：
   - `pdf.smart-highlight` 仍以领域批处理直接调用 `JevProvider::complete`，未统一为通用

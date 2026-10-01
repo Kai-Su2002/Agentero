@@ -1307,7 +1307,6 @@ function PdfViewerInner({
 		handleMenuAsk,
 		handleMenuAddToChat,
 		handleMenuTranslate,
-		handleMenuSmart,
 	} = usePdfSelectionActions({
 		selectionMenu,
 		setSelectionMenu,
@@ -1808,7 +1807,6 @@ function PdfViewerInner({
 						onAsk: handleMenuAsk,
 						onAddToChat: handleMenuAddToChat,
 						onTranslate: handleMenuTranslate,
-						onSmart: isRemotePaper || plainViewer ? undefined : handleMenuSmart,
 						showHighlight: !isRemotePaper && !plainViewer,
 						showTranslate: !isRemotePaper && !plainViewer,
 					}}

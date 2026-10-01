@@ -17,14 +17,11 @@ import type {
 import { type Dispatch, type SetStateAction, useCallback, useRef } from "react";
 import { useSelectionQuickChat } from "@/components/selection/use-selection-quick-chat";
 import type { SelectionMenuState } from "@/components/viewer/pdf/types";
-import { useDecision } from "@/hooks/use-decision";
 import { annotationPdfAnchors } from "@/lib/agent/selection-annotations";
 import {
 	openSelectionChat,
 	selectionChatStore,
 } from "@/lib/agent/selection-chat-store";
-import { errorText } from "@/lib/core/error";
-import { notifyError } from "@/lib/core/notify";
 import type { PdfAskAnchor } from "@/lib/pdf/ask/types";
 import {
 	DEFAULT_HIGHLIGHT_COLOR,
@@ -79,11 +76,6 @@ export type PdfSelectionActions = {
 	handleMenuAsk: () => void;
 	handleMenuAddToChat: () => void;
 	handleMenuTranslate: () => void;
-	/**
-	 * Ask the decision layer (`pdf.selection.intent`) which action the selection
-	 * most likely wants, then run it. Rules answer first; jEV refines.
-	 */
-	handleMenuSmart: () => void;
 };
 
 export function usePdfSelectionActions({
@@ -205,56 +197,11 @@ export function usePdfSelectionActions({
 		translateSelection(anchor);
 	}, [selectionCap, docId, setSelectionMenu, translateSelection]);
 
-	const { decide } = useDecision();
-
-	const handleMenuSmart = useCallback(() => {
-		const menu = selectionMenuRef.current;
-		if (!menu) return;
-		const quote = menu.anchor.quote?.trim() ?? "";
-		void (async () => {
-			let action = "ignore";
-			try {
-				const outcome = await decide("pdf.selection.intent", {
-					selectedText: quote,
-					source: "pdf",
-					page: menu.anchor.page,
-				});
-				if (typeof outcome.action === "string") action = outcome.action;
-			} catch (err) {
-				notifyError(errorText(err));
-				return;
-			}
-			switch (action) {
-				case "ask":
-					handleMenuAsk();
-					return;
-				case "translate":
-					handleMenuTranslate();
-					return;
-				case "highlight":
-					handleHighlight(DEFAULT_HIGHLIGHT_COLOR);
-					return;
-				case "addToChat":
-					handleMenuAddToChat();
-					return;
-				default:
-					return;
-			}
-		})();
-	}, [
-		decide,
-		handleMenuAsk,
-		handleMenuTranslate,
-		handleHighlight,
-		handleMenuAddToChat,
-	]);
-
 	return {
 		handleHighlight,
 		handleCommitSelectionNote,
 		handleMenuAsk,
 		handleMenuAddToChat,
 		handleMenuTranslate,
-		handleMenuSmart,
 	};
 }
