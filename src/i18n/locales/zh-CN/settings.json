@@ -554,6 +554,7 @@
 		"jev": {
 			"section": "Jev",
 			"getKey": "获取 API Key",
+			"smartHighlight": "智能高亮",
 			"apiKey": {
 				"label": "API key",
 				"placeholder": "Jev API key"

@@ -460,6 +460,7 @@ function PdfViewerInner({
 	const displayMode = useSettings((s) => s.translate.displayMode);
 	const dualPaneSource = useSettings((s) => s.translate.dualPaneSource);
 	const dualPaneTranslate = displayMode === "dualPane";
+	const smartHighlightEnabled = useSettings((s) => s.jev.smartHighlight);
 	const paperMeta = useMemo(() => {
 		if (paperMetaProp) return paperMetaProp;
 		if (!paperRelPath) return undefined;
@@ -1766,7 +1767,9 @@ function PdfViewerInner({
 					onImportToLibrary={handleImportToLibrary}
 					importBusy={importBusy}
 					smartHighlightBusy={smartHighlightBusy}
-					onSmartHighlight={handleSmartHighlight}
+					onSmartHighlight={
+						smartHighlightEnabled ? handleSmartHighlight : undefined
+					}
 				/>
 			)}
 

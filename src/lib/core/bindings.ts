@@ -2795,6 +2795,8 @@ export type InternalLinkSyntax = "wikilink" | "markdown";
 export type JevSettings = {
 	apiKey?: string,
 	baseUrl?: string,
+	/**  Whether the experimental smart-highlight toolbar action is enabled. */
+	smartHighlight?: boolean,
 };
 
 export type JevSuggestHighlightsArgs = {
