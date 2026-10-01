@@ -24,6 +24,9 @@ export const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = {
 /** Default TypeSafe jEV (System One) endpoint. */
 export const DEFAULT_JEV_BASE_URL = "https://api.typesafe.ai/v1/systemone";
 
+/** TypeSafe console page for creating a jEV API key. */
+export const JEV_API_KEY_URL = "https://console.typesafe.ai/keys";
+
 export const DEFAULT_JEV_SETTINGS: JevSettings = {
 	apiKey: "",
 	baseUrl: DEFAULT_JEV_BASE_URL,

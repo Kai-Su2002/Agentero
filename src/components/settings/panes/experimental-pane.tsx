@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { ExternalLink, Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { PageTitle } from "@/components/settings/settings-layout";
@@ -14,9 +14,10 @@ import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
 import { callApiResult } from "@/lib/core/ipc";
 import { notifyError } from "@/lib/core/notify";
+import { openExternalUrl } from "@/lib/core/open-external";
 import { cn } from "@/lib/core/utils";
 import { saveSettingsAsync } from "@/lib/settings";
-import { DEFAULT_JEV_BASE_URL } from "@/lib/settings/defaults";
+import { DEFAULT_JEV_BASE_URL, JEV_API_KEY_URL } from "@/lib/settings/defaults";
 import type { AppSettings, JevSettings } from "@/lib/settings/types";
 
 type ProbeStatus = "idle" | "probing" | "ok" | "failed" | "unconfigured";
@@ -116,9 +117,6 @@ export function ExperimentalPane({
 			<PageTitle title={t("experimental.title")} />
 
 			<div>
-				<h3 className="mb-2 px-0.5 font-medium text-sm">
-					{t("experimental.jev.section")}
-				</h3>
 				<div className="rounded-lg border bg-card px-3 py-2.5">
 					<div className="mb-2 flex items-center justify-between gap-2">
 						<div className="flex min-w-0 items-center gap-1.5">
@@ -142,6 +140,16 @@ export function ExperimentalPane({
 							<span className="truncate font-medium text-sm">
 								{t("experimental.jev.section")}
 							</span>
+							<Button
+								type="button"
+								variant="link"
+								size="xs"
+								className="-ml-1.5 h-auto shrink-0 px-1.5 text-primary"
+								onClick={() => openExternalUrl(JEV_API_KEY_URL)}
+							>
+								<ExternalLink data-icon="inline-start" className="size-3" />
+								{t("experimental.jev.getKey")}
+							</Button>
 						</div>
 						<Button
 							type="button"

@@ -553,6 +553,7 @@
 		"title": "Experimental features",
 		"jev": {
 			"section": "Jev",
+			"getKey": "Get an API key",
 			"apiKey": {
 				"label": "API key",
 				"placeholder": "Jev API key"

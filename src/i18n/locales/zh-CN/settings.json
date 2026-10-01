@@ -553,6 +553,7 @@
 		"title": "实验功能",
 		"jev": {
 			"section": "Jev",
+			"getKey": "获取 API Key",
 			"apiKey": {
 				"label": "API key",
 				"placeholder": "Jev API key"
