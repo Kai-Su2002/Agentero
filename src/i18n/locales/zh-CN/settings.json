@@ -552,7 +552,7 @@
 	"experimental": {
 		"title": "实验功能",
 		"jev": {
-			"section": "TypeSafe jEV 智能高亮",
+			"section": "jEV",
 			"apiKey": {
 				"label": "API key",
 				"placeholder": "jEV API key"

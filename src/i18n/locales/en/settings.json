@@ -552,7 +552,7 @@
 	"experimental": {
 		"title": "Experimental features",
 		"jev": {
-			"section": "TypeSafe jEV smart highlights",
+			"section": "jEV",
 			"apiKey": {
 				"label": "API key",
 				"placeholder": "jEV API key"
