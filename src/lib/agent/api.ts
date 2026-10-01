@@ -32,6 +32,7 @@ export type AgentTemplate =
 	| "kimi-code"
 	| "zcode"
 	| "minimax-code"
+	| "mimo-code"
 	| "custom";
 
 export type AgentDescriptor = {
