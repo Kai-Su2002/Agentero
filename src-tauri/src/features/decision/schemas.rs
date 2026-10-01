@@ -46,7 +46,7 @@ pub fn pdf_selection_intent() -> DecisionSchema {
                         "instructions": format!(
                             "The user selected the following text in a PDF: \"{selected}\". What is their most likely intent?"
                         ),
-                        "options": {
+                        "criteria": {
                             "ask": "Ask a question about this content",
                             "translate": "Translate it",
                             "highlight": "Highlight it",
@@ -80,7 +80,7 @@ pub fn paper_auto_tag() -> DecisionSchema {
                     "primary-tag": {
                         "type": "choice",
                         "instructions": "What is the primary research area of this paper?",
-                        "options": {
+                        "criteria": {
                             "nlp": "Natural language processing",
                             "cv": "Computer vision",
                             "rl": "Reinforcement learning",
