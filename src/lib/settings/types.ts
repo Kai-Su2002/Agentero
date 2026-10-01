@@ -318,6 +318,8 @@ export type JevSettings = {
 	apiKey: string;
 	/** jEV base URL, e.g. `https://api.typesafe.ai/v1/systemone`. */
 	baseUrl: string;
+	/** Enable the experimental smart-highlight action in the PDF toolbar. */
+	smartHighlight: boolean;
 };
 
 /**

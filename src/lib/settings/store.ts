@@ -520,6 +520,9 @@ function normalizeJevSettings(raw: unknown): JevSettings {
 	if (typeof partial.apiKey === "string") {
 		base.apiKey = partial.apiKey.trim();
 	}
+	if (typeof partial.smartHighlight === "boolean") {
+		base.smartHighlight = partial.smartHighlight;
+	}
 	if (typeof partial.baseUrl === "string" && partial.baseUrl.trim()) {
 		base.baseUrl = partial.baseUrl.trim().replace(/\/+$/, "");
 	} else {

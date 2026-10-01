@@ -30,6 +30,7 @@ export const JEV_API_KEY_URL = "https://console.typesafe.ai/keys";
 export const DEFAULT_JEV_SETTINGS: JevSettings = {
 	apiKey: "",
 	baseUrl: DEFAULT_JEV_BASE_URL,
+	smartHighlight: false,
 };
 
 /** Default Translator Runtime endpoint (overridable in Settings). */

@@ -1,10 +1,15 @@
 import { ExternalLink, Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { PageTitle } from "@/components/settings/settings-layout";
+import {
+	PageTitle,
+	SettingsGroup,
+	SettingsRow,
+} from "@/components/settings/settings-layout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
 	Tooltip,
 	TooltipContent,
@@ -83,6 +88,7 @@ export function ExperimentalPane({
 			jev: {
 				apiKey: nextApiKey,
 				baseUrl: nextBaseUrl,
+				smartHighlight: jev.smartHighlight,
 			},
 		};
 
@@ -115,6 +121,21 @@ export function ExperimentalPane({
 	return (
 		<div className="space-y-6">
 			<PageTitle title={t("experimental.title")} />
+
+			<SettingsGroup>
+				<SettingsRow
+					label={t("experimental.jev.smartHighlight")}
+					htmlFor="jev-smart-highlight"
+				>
+					<Switch
+						id="jev-smart-highlight"
+						checked={jev.smartHighlight}
+						onCheckedChange={(v) =>
+							patch({ jev: { ...jev, smartHighlight: v } })
+						}
+					/>
+				</SettingsRow>
+			</SettingsGroup>
 
 			<div>
 				<div className="rounded-lg border bg-card px-3 py-2.5">

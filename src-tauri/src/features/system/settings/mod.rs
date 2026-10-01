@@ -218,6 +218,9 @@ pub struct JevSettings {
     pub api_key: String,
     #[serde(default = "default_jev_base_url")]
     pub base_url: String,
+    /// Whether the experimental smart-highlight toolbar action is enabled.
+    #[serde(default)]
+    pub smart_highlight: bool,
 }
 
 /// Embedding endpoint: the built-in provider, or a custom OpenAI-compatible
@@ -1947,6 +1950,7 @@ mod tests {
             jev: JevSettings {
                 api_key: "sk-jev-secret".into(),
                 base_url: "https://jev.test/v1".into(),
+                smart_highlight: false,
             },
             ..AppSettings::default()
         });
@@ -1960,6 +1964,7 @@ mod tests {
             jev: JevSettings {
                 api_key: "sk-jev-secret".into(),
                 base_url: "https://jev.test/v1".into(),
+                smart_highlight: false,
             },
             ..AppSettings::default()
         });
