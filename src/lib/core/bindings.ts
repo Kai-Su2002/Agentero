@@ -604,6 +604,8 @@ export const commands = {
 	jobJevSmartHighlightsEnqueue: (args: JobEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_jev_smart_highlights_enqueue", { args })),
 	jevSuggestHighlights: (args: JevSuggestHighlightsArgs) => typedError<ApiResult<JevSuggestHighlightsResult>, string>(__TAURI_INVOKE("jev_suggest_highlights", { args })),
 	jevProbeHealth: () => typedError<ApiResult<null>, string>(__TAURI_INVOKE("jev_probe_health")),
+	/**  Run one registered decision through the engine (rules + jEV + fallback). */
+	decide: (args: DecideArgs) => typedError<ApiResult<DecisionOutcome>, string>(__TAURI_INVOKE("decide", { args })),
 };
 
 /** Events */
@@ -2258,6 +2260,31 @@ export type CreateVaultResult = {
 	updated: string[],
 	/**  Relative path suggested for first open (e.g. `AGENTS.md`). */
 	openPath: string,
+};
+
+export type DecideArgs = {
+	/**  Registered decision id, e.g. `pdf.selection.intent`. */
+	decisionId: string,
+	/**  Decision-specific state. */
+	state: Json,
+};
+
+/**
+ *  A decision result: the winning provider's `action` plus provenance.
+ * 
+ *  `action` is whatever the provider produced. Rule/jEV string choices arrive
+ *  as JSON strings (`"ignore"`), richer payloads as objects; consumers switch
+ *  on the shape they registered for.
+ */
+export type DecisionOutcome = {
+	action: Json,
+	/**
+	 *  Name of the provider that produced the action (`rule` / `jev` /
+	 *  `default` / `none`).
+	 */
+	provider: string,
+	/**  Confidence in `[0, 1]`, only present for probabilistic providers. */
+	confidence: number | null,
 };
 
 export type DepPolicy = "allSettled" | "allSucceeded";

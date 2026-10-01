@@ -233,6 +233,7 @@ fn export_typescript_bindings() {
             crate::features::jobs::commands::job_jev_smart_highlights_enqueue,
             crate::features::jev::commands::jev_suggest_highlights,
             crate::features::jev::commands::jev_probe_health,
+            crate::features::decision::commands::decide,
         ])
         // Desktop event surface (see `app::events_contract`): emit sites keep
         // using `app.emit("<literal>", payload)`; the wrappers/mirrors there

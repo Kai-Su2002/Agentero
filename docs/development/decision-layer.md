@@ -1,7 +1,12 @@
 # 通用决策层（Decision Layer）设计草案
 
-> 状态：设计草案 / 待实现  
+> 状态：**已落地** —— 实现说明见 [../backend/decision.md](../backend/decision.md)，此处保留为设计记录。
 > 相关功能：jEV 智能高亮、PDF 选区动作、文件树点击、论文自动标签等
+>
+> 与实现的差异：`DecisionProvider::decide` 接收 `ProviderCall`（携带 state + 规则链 + 本
+> provider 的 `ProviderConfig`），而非裸 `DecisionRequest`；provider config 用
+> `FnProviderConfig` 闭包；纯前端规则另有同步的 `decideSync` 本地注册表；
+> `pdf.smart-highlight` 的批处理仍走 `JevProvider::complete`，暂未统一为 `decide_batch`。
 
 ## 1. 背景与问题
 

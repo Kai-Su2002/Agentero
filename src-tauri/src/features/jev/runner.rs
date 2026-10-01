@@ -1,5 +1,6 @@
 //! JobCenter runner for jEV smart highlights.
 
+use crate::core::decision::JevProvider;
 use crate::core::error::AppError;
 use crate::core::fs::{resolve_paper_dir, resolve_vault};
 use crate::features::jev::service::{
@@ -7,7 +8,6 @@ use crate::features::jev::service::{
 };
 use crate::features::jobs::{JobCenter, RunOutcome, StartedJob};
 use crate::features::paper::catalog::probe_paper_caps;
-use crate::features::system::settings::AppSettingsStore;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -40,10 +40,7 @@ pub fn jev_smart_highlights_runner(
                         })
                         .unwrap_or_else(|| "Untitled paper".to_string());
 
-                    let store = app.state::<AppSettingsStore>();
-                    let (api_key, base_url) = store
-                        .jev_config()
-                        .ok_or_else(|| AppError::message("jEV API key is not configured"))?;
+                    let provider = app.state::<Arc<JevProvider>>().inner().clone();
 
                     let progress_center = center.clone();
                     let progress_job_id = job_id.clone();
@@ -69,10 +66,9 @@ pub fn jev_smart_highlights_runner(
                     };
 
                     let highlights = jev_suggest_highlights_with_progress(
+                        &provider,
                         &pdf_path,
                         &title,
-                        &api_key,
-                        &base_url,
                         &started.cancel_token,
                         on_progress,
                     )

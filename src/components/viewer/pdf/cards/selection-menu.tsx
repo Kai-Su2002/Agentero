@@ -1,4 +1,4 @@
-import { Languages } from "lucide-react";
+import { Languages, Sparkles } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import {
@@ -26,6 +26,8 @@ type SelectionMenuProps = {
 	/** Open an optional inline comment before adding the quote to chat. */
 	onAddToChat: () => void;
 	onTranslate: () => void;
+	/** Ask the decision layer to pick the most likely action for this selection. */
+	onSmart?: () => void;
 	/** Show the highlight color stack (needs marks/ to persist into). */
 	showHighlight?: boolean;
 	/** Show the translate action (ephemeral cards on surfaces without marks/). */
@@ -50,6 +52,7 @@ export function SelectionMenu({
 	onAsk,
 	onAddToChat,
 	onTranslate,
+	onSmart,
 	showHighlight = true,
 	showTranslate = true,
 }: SelectionMenuProps) {
@@ -120,6 +123,23 @@ export function SelectionMenu({
 						<TooltipContent side="top">
 							{t("selection.translate")}
 						</TooltipContent>
+					</Tooltip>
+				) : null}
+				{onSmart ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-sm"
+								className="size-7"
+								aria-label={t("selection.smart")}
+								onClick={onSmart}
+							>
+								<Sparkles className="size-3.5" />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent side="top">{t("selection.smart")}</TooltipContent>
 					</Tooltip>
 				) : null}
 				<button

@@ -228,6 +228,7 @@ pub fn attach_handlers(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<ta
             crate::features::jobs::commands::job_jev_smart_highlights_enqueue,
             crate::features::jev::commands::jev_suggest_highlights,
             crate::features::jev::commands::jev_probe_health,
+            crate::features::decision::commands::decide,
         ])
     }
     #[cfg(target_os = "ios")]

@@ -1,5 +1,10 @@
 //! jEV smart-highlight service.
+//!
+//! Domain logic (sentence extraction, question building, geometry) stays here;
+//! every HTTP call routes through the shared [`JevProvider`] so credentials and
+//! error handling have a single owner.
 
+use crate::core::decision::{JevProvider, JEV_MODEL};
 use crate::core::error::AppError;
 use crate::features::pdf::locate::{extract_text_in_pdf, NormRect};
 use futures_util::stream::{self, StreamExt};
@@ -8,9 +13,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
-const JEV_MODEL: &str = "jev-latest";
 const BATCH_SIZE: usize = 32;
 const JEV_CONCURRENCY: usize = 16;
 const MIN_SENTENCE_LEN: usize = 40;
@@ -186,47 +191,8 @@ fn decide_highlight(scores: &HashMap<String, f64>) -> Option<HighlightDecision> 
     Some(candidates[0].clone())
 }
 
-async fn call_jev(
-    client: &reqwest::Client,
-    api_key: &str,
-    base_url: &str,
-    request: Value,
-) -> Result<Value, AppError> {
-    if api_key.is_empty() {
-        return Err(AppError::message("jEV API key is not configured"));
-    }
-    let resp = client
-        .post(base_url)
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("Content-Type", "application/json")
-        .json(&request)
-        .send()
-        .await
-        .map_err(|e| AppError::message(format!("jEV request failed: {e}")))?;
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp
-            .text()
-            .await
-            .unwrap_or_else(|_| "<could not read body>".to_string());
-        return Err(AppError::message(format!(
-            "jEV API error {}: {}",
-            status, body
-        )));
-    }
-
-    resp.json::<Value>()
-        .await
-        .map_err(|e| AppError::message(format!("jEV response decode failed: {e}")))
-}
-
 /// Lightweight health probe: send one tiny `score` question to verify key/endpoint.
-pub async fn jev_probe_health(api_key: &str, base_url: &str) -> Result<(), AppError> {
-    if api_key.is_empty() {
-        return Err(AppError::message("jEV API key is not configured"));
-    }
-    let client = reqwest::Client::new();
+pub async fn jev_probe_health(provider: &JevProvider) -> Result<(), AppError> {
     let request = serde_json::json!({
         "state": { "paper_title": "probe" },
         "model": JEV_MODEL,
@@ -238,16 +204,13 @@ pub async fn jev_probe_health(api_key: &str, base_url: &str) -> Result<(), AppEr
             }
         }
     });
-    call_jev(&client, api_key, base_url, request)
-        .await
-        .map(|_| ())
+    provider.complete(request).await.map(|_| ())
 }
 
 async fn jev_suggest_highlights_impl<F: FnMut(usize, usize) + Send>(
+    provider: Arc<JevProvider>,
     pdf_path: &Path,
     title: &str,
-    api_key: &str,
-    base_url: &str,
     cancel_token: &CancellationToken,
     on_progress: F,
 ) -> Result<Vec<SuggestedHighlight>, AppError> {
@@ -259,7 +222,6 @@ async fn jev_suggest_highlights_impl<F: FnMut(usize, usize) + Send>(
     let total_batches = sentences.chunks(BATCH_SIZE).len();
     let on_progress = std::sync::Arc::new(std::sync::Mutex::new(on_progress));
     let completed_batches = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
-    let client = std::sync::Arc::new(reqwest::Client::new());
 
     // Phase 1: score all sentences in concurrent batches.
     let batches: Vec<(usize, Vec<Sentence>)> = sentences
@@ -270,12 +232,10 @@ async fn jev_suggest_highlights_impl<F: FnMut(usize, usize) + Send>(
 
     let scored_batches: Vec<(usize, Vec<(Sentence, HighlightDecision)>)> = stream::iter(batches)
         .map(|(batch_index, chunk)| {
-            let api_key = api_key.to_string();
-            let base_url = base_url.to_string();
             let title = title.to_string();
             let on_progress = on_progress.clone();
             let completed_batches = completed_batches.clone();
-            let client = client.clone();
+            let provider = provider.clone();
             async move {
                 if cancel_token.is_cancelled() {
                     return Err(AppError::message("jEV smart highlight cancelled"));
@@ -295,7 +255,7 @@ async fn jev_suggest_highlights_impl<F: FnMut(usize, usize) + Send>(
                     "questions": questions,
                 });
 
-                let resp = call_jev(&client, &api_key, &base_url, request).await?;
+                let resp = provider.complete(request).await?;
                 let answers = resp
                     .get("answers")
                     .and_then(|a| a.as_object())
@@ -375,31 +335,21 @@ async fn jev_suggest_highlights_impl<F: FnMut(usize, usize) + Send>(
 
 /// Extract highlights for one paper by calling jEV; sentence geometry comes from the initial PDF text extraction.
 pub async fn jev_suggest_highlights_for_paper(
+    provider: &Arc<JevProvider>,
     pdf_path: &Path,
     title: &str,
-    api_key: &str,
-    base_url: &str,
 ) -> Result<Vec<SuggestedHighlight>, AppError> {
     let cancel_token = CancellationToken::new();
-    jev_suggest_highlights_impl(pdf_path, title, api_key, base_url, &cancel_token, |_, _| {}).await
+    jev_suggest_highlights_impl(provider.clone(), pdf_path, title, &cancel_token, |_, _| {}).await
 }
 
 /// Same as [`jev_suggest_highlights_for_paper`] but with cancellation and per-batch progress.
 pub async fn jev_suggest_highlights_with_progress<F: FnMut(usize, usize) + Send>(
+    provider: &Arc<JevProvider>,
     pdf_path: &Path,
     title: &str,
-    api_key: &str,
-    base_url: &str,
     cancel_token: &CancellationToken,
     on_progress: F,
 ) -> Result<Vec<SuggestedHighlight>, AppError> {
-    jev_suggest_highlights_impl(
-        pdf_path,
-        title,
-        api_key,
-        base_url,
-        cancel_token,
-        on_progress,
-    )
-    .await
+    jev_suggest_highlights_impl(provider.clone(), pdf_path, title, cancel_token, on_progress).await
 }
