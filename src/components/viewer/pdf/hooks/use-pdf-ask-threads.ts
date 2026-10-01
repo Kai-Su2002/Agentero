@@ -41,7 +41,10 @@ import {
 	deletePdfAskThread,
 	writePdfAskThread,
 } from "@/lib/pdf/ask";
-import { buildPdfAskPrompt } from "@/lib/pdf/ask/prompt";
+import {
+	buildPdfAskPrompt,
+	rememberPairedAskTranslation,
+} from "@/lib/pdf/ask/prompt";
 import {
 	cancelAskRun,
 	dispatchAskTurn,
@@ -85,7 +88,7 @@ export type PdfAskThreads = {
 	/** Open (or re-open) a thread's conversation card. */
 	openThread: (thread: PdfAskThread) => void;
 	/** Selection-menu action: create an empty thread and open its card. */
-	startFromAnchor: (anchor: PdfAskAnchor) => void;
+	startFromAnchor: (anchor: PdfAskAnchor, translation?: string) => void;
 	/**
 	 * Resolve the configured PDF-ask agent (default seat + model), reporting a
 	 * missing agent through the ask error chrome. Also used by visual marks.
@@ -211,8 +214,11 @@ export function usePdfAskThreads({
 	);
 
 	const startFromAnchor = useCallback(
-		(anchor: PdfAskAnchor) => {
+		(anchor: PdfAskAnchor, translation?: string) => {
 			const thread = createThreadFromAnchor(anchor);
+			if (translation?.trim()) {
+				rememberPairedAskTranslation(thread.id, translation);
+			}
 			openThread(thread);
 		},
 		[createThreadFromAnchor, openThread],

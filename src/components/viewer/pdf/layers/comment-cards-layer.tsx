@@ -658,6 +658,8 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 	onActiveChangeRef.current = onActiveChange;
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
+	const aliveRef = useRef(true);
+	const closingRef = useRef(false);
 	const { isBlockedByIme, compositionProps } = useImeGuard();
 
 	const editing = hovered || focused;
@@ -681,13 +683,14 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 	);
 
 	const enterEdit = useCallback(() => {
-		if (committedRef.current) return;
+		if (committedRef.current || closingRef.current) return;
 		setHovered(true);
 		setFocused(true);
 		// Mark sticky before focus so EmbedPDF clearing the selection does not
 		// unmount this chip mid-hover.
 		onActiveChangeRef.current?.(true);
 		requestAnimationFrame(() => {
+			if (committedRef.current || closingRef.current) return;
 			const el = textareaRef.current;
 			if (!el) return;
 			el.focus();
@@ -709,15 +712,44 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 		const trimmed = text.trim();
 		if (!trimmed) return;
 		committedRef.current = true;
+		closingRef.current = true;
 		onActiveChangeRef.current?.(false);
 		onCommitRef.current(trimmed);
 	}, []);
 
 	useEffect(() => {
 		return () => {
+			aliveRef.current = false;
 			onActiveChangeRef.current?.(false);
 		};
 	}, []);
+
+	// Clicking outside the note (e.g. anywhere on the PDF page) commits typed
+	// text or drops an empty draft. Chrome elements (like the selection toolbar)
+	// do not trigger dismissal.
+	useEffect(() => {
+		const onPointerDown = (event: PointerEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node) || rootRef.current?.contains(target)) {
+				return;
+			}
+			if ((target as Element).closest?.("[data-pdf-chrome]")) {
+				return;
+			}
+			const text = (textareaRef.current?.value ?? draftTextRef.current).trim();
+			closingRef.current = true;
+			if (text) {
+				commit(text);
+			} else {
+				onDismissRef.current?.();
+			}
+			textareaRef.current?.blur();
+		};
+		document.addEventListener("pointerdown", onPointerDown, true);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown, true);
+		};
+	}, [commit]);
 
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: hosts a textarea; native <button> cannot wrap it
@@ -726,6 +758,7 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 			role="group"
 			aria-label={t("selection.note")}
 			data-pdf-chrome
+			data-selection-comment=""
 			className={cn(
 				COMMENT_DRAFT_SURFACE_CLASS,
 				"transition-[width,box-shadow,background-color] duration-200 ease-out motion-reduce:transition-none",
@@ -798,6 +831,7 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 						autosizeTextarea(e.currentTarget);
 					}}
 					onBlur={(e) => {
+						if (!aliveRef.current || closingRef.current) return;
 						const next = e.relatedTarget as Node | null;
 						if (next && rootRef.current?.contains(next)) return;
 						const text = draftTextRef.current;
@@ -886,7 +920,8 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 	const svgWidth = pageWidthPx + COMMENT_CARD_GAP_PX + COMMENT_CARD_WIDTH_PX;
 
 	return (
-		<div className="pointer-events-none absolute inset-0 z-[5] overflow-visible">
+		// Above translated glyphs (also z-6, mounted earlier) so the rail stays visible.
+		<div className="pointer-events-none absolute inset-0 z-[6] overflow-visible">
 			{connectorD ? (
 				// Decorative hover leader; announced via the card / hit-target labels.
 				// biome-ignore lint/a11y/noSvgWithoutTitle: purely visual connector

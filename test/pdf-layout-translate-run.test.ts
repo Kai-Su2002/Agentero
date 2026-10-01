@@ -61,6 +61,17 @@ describe("runLayoutRegionTranslate paragraph chains", () => {
 		expect(out.map((it) => it.status)).toEqual(["done", "done"]);
 		expect(out[0]?.translated).toBe("智能体查询环境。");
 		expect(out[1]?.translated).toBe("随后它更新自己的策略。");
+		const quote =
+			"the agent queries the environment and then updates its policy.";
+		expect(out[0]?.sentences?.[0]).toMatchObject({
+			quote,
+			translated: "智能体查询环境。随后它更新自己的策略。",
+			display: "智能体查询环境。",
+		});
+		expect(out[1]?.sentences?.[0]).toMatchObject({
+			quote,
+			display: "随后它更新自己的策略。",
+		});
 	});
 
 	it("skips chains already cached and keeps independent paragraphs separate", async () => {
@@ -99,5 +110,48 @@ describe("runLayoutRegionTranslate paragraph chains", () => {
 
 		expect(runTranslate).toHaveBeenCalledTimes(2);
 		expect(out[0]?.translated).toBe("参见 https://example.com/x 获取细节。");
+		expect(out[0]?.sentences?.[0]?.quote).toBe(
+			"See https://example.com/x for details.",
+		);
+	});
+
+	it("numbers each sentence and stores the pair on the block", async () => {
+		runTranslate.mockResolvedValue("[[1]] 第一句。\n\n[[2]] 第二句。");
+		const items = [item("a", "First sentence. Second sentence.", 0)];
+
+		const out = await runLayoutRegionTranslate({ items, onUpdate: () => {} });
+
+		const payload = runTranslate.mock.calls[0]?.[0] as { text: string };
+		expect(payload.text).toContain("[[1]] First sentence.");
+		expect(payload.text).toContain("[[2]] Second sentence.");
+		expect(out[0]?.status).toBe("done");
+		expect(out[0]?.translated).toBe("第一句。第二句。");
+		expect(out[0]?.sentences).toEqual([
+			{
+				quote: "First sentence.",
+				source: "First sentence.",
+				translated: "第一句。",
+			},
+			{
+				quote: "Second sentence.",
+				source: "Second sentence.",
+				translated: "第二句。",
+			},
+		]);
+	});
+
+	it("retries each sentence when markers are merged and skips pairs if one fails", async () => {
+		runTranslate
+			.mockResolvedValueOnce("第一句第二句。")
+			.mockResolvedValueOnce("第一句。")
+			.mockRejectedValueOnce(new Error("nope"));
+		const items = [item("a", "First sentence. Second sentence.", 0)];
+
+		const out = await runLayoutRegionTranslate({ items, onUpdate: () => {} });
+
+		expect(runTranslate).toHaveBeenCalledTimes(3);
+		expect(out[0]?.status).toBe("error");
+		expect(out[0]?.sentences).toBeUndefined();
+		expect(out[0]?.translated).toBe("第一句。");
 	});
 });

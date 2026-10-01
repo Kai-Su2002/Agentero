@@ -4,10 +4,19 @@
  * body size, then re-fits so the translation fills the block without huge gaps.
  */
 
-import { memo, useLayoutEffect, useMemo, useRef } from "react";
+import { Fragment, memo, useLayoutEffect, useMemo, useRef } from "react";
 import { cn } from "@/lib/core/utils";
+import {
+	type HighlightColor,
+	highlightFill,
+} from "@/lib/pdf/highlight/palette";
+import { sentenceIndexesForHighlightTint } from "@/lib/pdf/highlight/sentence-tint";
+import type { HighlightQuoteTint } from "@/lib/pdf/highlight/translated-geometry";
+import type { PdfHighlightRect } from "@/lib/pdf/highlight/types";
 import { isLayoutTranslateHeadingKind } from "@/lib/pdf/layout/labels";
+import { layoutTranslateSentenceNodes } from "@/lib/pdf/layout/layout-sentences";
 import type { LayoutTranslateItem } from "@/lib/pdf/layout/layout-translate";
+import { isLayoutTranslateItemPainted } from "@/lib/pdf/layout/layout-translate-reliable";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
 import {
 	PDF_PAGE_RASTER_DARK_CLASS,
@@ -25,6 +34,17 @@ type LayoutTranslateOverlayProps = {
 	tone?: PdfPaperTone;
 	/** Raw page regions; used as collision blockers for safe overlay expansion. */
 	layoutRegions?: readonly PdfLayoutRegion[];
+	/**
+	 * English highlights on this page that have no translated boxes. A sentence
+	 * is filled when its English glyph boxes overlap the highlight. Nothing is
+	 * written back.
+	 */
+	highlightQuotes?: readonly HighlightQuoteTint[];
+	/** English glyph boxes per sentence, keyed by layout item id. */
+	sentenceRectsByItemId?: ReadonlyMap<
+		string,
+		readonly (readonly PdfHighlightRect[])[]
+	>;
 };
 
 const LINE_HEIGHT = 1.25;
@@ -304,10 +324,16 @@ function applyParagraphMetrics(
 
 type ExactFitParagraphProps = {
 	text: string;
+	itemId: string;
+	sentences?: LayoutTranslateItem["sentences"];
 	initialFontSize: number;
 	boxWidthPx: number;
 	boxHeightPx: number;
 	isHeading: boolean;
+	/** Dark PDF paper: selection ink stays light, matching the glyphs. */
+	paperDark: boolean;
+	/** Sentence indexes whose translation should show the highlight color. */
+	tintedSentences?: ReadonlyMap<number, HighlightColor>;
 };
 
 /**
@@ -318,12 +344,17 @@ type ExactFitParagraphProps = {
  */
 export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 	text,
+	itemId,
+	sentences,
 	initialFontSize,
 	boxWidthPx,
 	boxHeightPx,
 	isHeading,
+	paperDark,
+	tintedSentences,
 }: ExactFitParagraphProps) {
 	const ref = useRef<HTMLParagraphElement>(null);
+	const sentenceNodes = layoutTranslateSentenceNodes(text, sentences);
 
 	useLayoutEffect(() => {
 		const element = ref.current;
@@ -381,9 +412,11 @@ export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 		<p
 			ref={ref}
 			className={cn(
-				"m-0 h-full w-full select-text overflow-hidden whitespace-pre-wrap",
+				"pdf-translate-selection pointer-events-auto m-0 h-full w-full select-text overflow-hidden whitespace-pre-wrap",
 				isHeading && "font-bold",
 			)}
+			data-layout-item={itemId}
+			data-paper={paperDark ? "dark" : undefined}
 			style={{
 				fontSize: initialFontSize,
 				lineHeight: LINE_HEIGHT,
@@ -394,7 +427,30 @@ export const LayoutTranslateParagraph = memo(function LayoutTranslateParagraph({
 				overflowWrap: "normal",
 			}}
 		>
-			{text}
+			{sentenceNodes
+				? sentenceNodes.nodes.map((node, index) => (
+						<Fragment key={node.index}>
+							{index > 0 ? sentenceNodes.gap : null}
+							<span
+								data-sentence={node.index}
+								className={
+									tintedSentences?.has(node.index) ? "rounded-[1px]" : undefined
+								}
+								style={
+									tintedSentences?.has(node.index)
+										? {
+												backgroundColor: highlightFill(
+													tintedSentences.get(node.index) ?? "yellow",
+												),
+											}
+										: undefined
+								}
+							>
+								{node.text}
+							</span>
+						</Fragment>
+					))
+				: text}
 		</p>
 	);
 });
@@ -408,22 +464,37 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 	pageHeightPx,
 	tone = "white",
 	layoutRegions,
+	highlightQuotes,
+	sentenceRectsByItemId,
 }: LayoutTranslateOverlayProps) {
 	const onPage = useMemo(
 		() =>
-			items
-				.filter(
-					(it) =>
-						it.status === "done" ||
-						it.status === "running" ||
-						(it.status === "error" && it.translated),
-				)
-				.map((item) => ({
-					...item,
-					bbox: expandLayoutTranslateBbox(item, layoutRegions),
-				})),
+			items.filter(isLayoutTranslateItemPainted).map((item) => ({
+				...item,
+				bbox: expandLayoutTranslateBbox(item, layoutRegions),
+			})),
 		[items, layoutRegions],
 	);
+	const tintByItem = useMemo(() => {
+		const map = new Map<string, ReadonlyMap<number, HighlightColor>>();
+		if (!highlightQuotes?.length) return map;
+		for (const item of onPage) {
+			if (!item.sentences?.length) continue;
+			const colors = new Map<number, HighlightColor>();
+			for (const tint of highlightQuotes) {
+				for (const index of sentenceIndexesForHighlightTint({
+					sentences: item.sentences,
+					quote: tint.quote,
+					sentenceRects: sentenceRectsByItemId?.get(item.id),
+					highlightRects: tint.rects,
+				})) {
+					if (!colors.has(index)) colors.set(index, tint.color);
+				}
+			}
+			if (colors.size > 0) map.set(item.id, colors);
+		}
+		return map;
+	}, [highlightQuotes, onPage, sentenceRectsByItemId]);
 	if (onPage.length === 0) return null;
 
 	return (
@@ -442,43 +513,77 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 				);
 				const boxWidthPx = item.bbox.w * pageWidthPx;
 				const boxHeightPx = item.bbox.h * pageHeightPx;
+				const boxStyle = {
+					left: `${item.bbox.x * 100}%`,
+					top: `${item.bbox.y * 100}%`,
+					width: `${item.bbox.w * 100}%`,
+					height: `${item.bbox.h * 100}%`,
+				};
 				return (
-					<div
-						key={`layout-tr-${item.id}`}
-						className={cn(
-							"pointer-events-none absolute z-[3] overflow-hidden rounded-[1px]",
-							// Blocks are opaque paper: paint the active tone, and invert in
-							// dark mode exactly like the page rasters so they still match.
-							PDF_PAPER_BLOCK_CLASS[tone],
-							"text-zinc-900",
-							tone === "dark" && PDF_PAGE_RASTER_DARK_CLASS,
-							item.status === "running" && "opacity-90",
-						)}
-						style={{
-							left: `${item.bbox.x * 100}%`,
-							top: `${item.bbox.y * 100}%`,
-							width: `${item.bbox.w * 100}%`,
-							height: `${item.bbox.h * 100}%`,
-							padding: "1px 2px",
-							fontSize,
-							lineHeight: LINE_HEIGHT,
-							// Serif stack closer to paper body than UI sans.
-							fontFamily:
-								'ui-serif, "Times New Roman", Times, "Noto Serif SC", "Songti SC", "Source Han Serif SC", serif',
-							// Titles / section headers: bold; body justified.
-							fontWeight: isHeading ? 700 : 400,
-							textAlign: isHeading ? "left" : "justify",
-						}}
-						aria-hidden="true"
-					>
-						<LayoutTranslateParagraph
-							text={text}
-							initialFontSize={fontSize}
-							boxWidthPx={boxWidthPx}
-							boxHeightPx={boxHeightPx}
-							isHeading={isHeading}
-						/>
-					</div>
+					<Fragment key={`layout-tr-${item.id}`}>
+						{/*
+						 * Paper and glyphs are separate layers. The PDF selection
+						 * tint is z-index 5 and uses multiply: an opaque block above
+						 * it hides the highlight, but glyphs under it get washed out
+						 * (WebKit). Paper stays at z-3, under the tint. Glyphs are
+						 * z-6, above the tint, so the translation stays readable.
+						 */}
+						<div
+							aria-hidden="true"
+							className={cn(
+								"pointer-events-none absolute z-[3] overflow-hidden rounded-[1px]",
+								item.status === "running" && "opacity-90",
+							)}
+							style={boxStyle}
+						>
+							{/*
+							 * Paper tone lives on this layer only. A filter on the
+							 * text itself hides ::selection (WebKit), so dark mode
+							 * inverts the paper and sets the glyphs explicitly.
+							 */}
+							<div
+								className={cn(
+									"absolute inset-0",
+									PDF_PAPER_BLOCK_CLASS[tone],
+									tone === "dark" && PDF_PAGE_RASTER_DARK_CLASS,
+								)}
+							/>
+						</div>
+						<div
+							className={cn(
+								"pointer-events-none absolute z-[6] overflow-hidden rounded-[1px]",
+								item.status === "running" && "opacity-90",
+							)}
+							style={{ ...boxStyle, padding: "1px 2px" }}
+						>
+							<div
+								className={cn(
+									"h-full w-full",
+									tone === "dark" ? "text-zinc-100" : "text-zinc-900",
+								)}
+								style={{
+									fontSize,
+									lineHeight: LINE_HEIGHT,
+									fontFamily:
+										'ui-serif, "Times New Roman", Times, "Noto Serif SC", "Songti SC", "Source Han Serif SC", serif',
+									fontWeight: isHeading ? 700 : 400,
+									textAlign: isHeading ? "left" : "justify",
+								}}
+							>
+								<LayoutTranslateParagraph
+									text={text}
+									itemId={item.id}
+									sentences={item.sentences}
+									initialFontSize={fontSize}
+									boxWidthPx={boxWidthPx}
+									boxHeightPx={boxHeightPx}
+									isHeading={isHeading}
+									paperDark={tone === "dark"}
+									tintedSentences={tintByItem.get(item.id)}
+								/>
+							</div>
+						</div>
+					</Fragment>
 				);
 			})}
 		</>

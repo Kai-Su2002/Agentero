@@ -43,6 +43,17 @@ export function nativeSelectionBelongsToHost(
 	return Boolean(el && host.contains(el));
 }
 
+/** Drop a DOM selection that lives inside the PDF host. Leave selections elsewhere. */
+export function clearDomSelectionInside(host: HTMLElement | null): void {
+	if (!host) return;
+	const selection = window.getSelection();
+	if (!selection || selection.rangeCount === 0) return;
+	const node = selection.anchorNode;
+	if (!node) return;
+	const el = node instanceof Element ? node : node.parentElement;
+	if (el && host.contains(el)) selection.removeAllRanges();
+}
+
 export function hasNativeSelectionOutsideHost(
 	host: HTMLElement | null,
 ): boolean {

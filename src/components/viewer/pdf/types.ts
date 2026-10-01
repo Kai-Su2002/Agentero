@@ -16,6 +16,7 @@ import type {
 import type { CrossrefKind } from "@/lib/pdf/citation-dest-keys";
 import type { HighlightColor } from "@/lib/pdf/highlight/palette";
 import type { PdfHighlight } from "@/lib/pdf/highlight/types";
+import type { VisibleSelectionPage } from "@/lib/pdf/layout/visible-selection-rects";
 import type { PdfViewerHandle } from "@/lib/workspace/viewer/pdf-viewer-registry";
 
 export type { PdfViewerHandle };
@@ -125,6 +126,20 @@ export type SelectionMenuState = {
 	screen: ScreenPoint;
 	anchor: PdfAskAnchor;
 	pages: FormattedSelection[];
+	/**
+	 * Visible text to put on the clipboard. Set when the selection is on a
+	 * translation span, so copy does not replace it with the English quote.
+	 */
+	copyText?: string;
+	/** The anchor quote is English recovered from the translation selection. */
+	fromTranslation?: boolean;
+	/** Sentence translations passed to chat as context, not stored on the mark. */
+	pairedTranslation?: string;
+	/**
+	 * Translation the reader selected, in page fractions. The toolbar tracks
+	 * these. `pages` stays the English glyph boxes stored on the annotation.
+	 */
+	visiblePages?: VisibleSelectionPage[];
 };
 
 /**
@@ -140,6 +155,11 @@ export type SelectionCommentDraft = {
 	quote: string;
 	/** EmbedPDF selection pages snapped when the chip was armed. */
 	pages: FormattedSelection[];
+	/**
+	 * Translation boxes to keep painted while the chip is open. Omitted for an
+	 * English text-layer selection, which EmbedPDF already tints.
+	 */
+	visiblePages?: VisibleSelectionPage[];
 };
 
 export type CitationPreviewState = {
@@ -195,6 +215,11 @@ export type PageAnnotationComment = {
 	anchorY: number;
 	/** Normalized rects covering the highlighted text / visual region. */
 	rects: PdfAskNormalizedRect[];
+	/**
+	 * Translated selection, when the note was made on the overlay. The page
+	 * uses these instead of `rects` while that translation is showing.
+	 */
+	translatedRects?: PdfAskNormalizedRect[];
 	quote: string;
 	comment: string;
 	color: HighlightColor;

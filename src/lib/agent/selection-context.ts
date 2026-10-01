@@ -4,21 +4,29 @@ export type QuoteContext = {
 	after?: string;
 	heading?: string;
 	question?: string;
+	/** Paired translation of the English sentences. Not stored on the annotation. */
+	translation?: string;
 };
 /** Bound only auxiliary material; the selected quote is serialized separately. */
 export function normalizeQuoteContext(value: unknown): QuoteContext {
 	const context = value as Partial<QuoteContext> | null;
-	if (context?.status !== "available") return { status: "unavailable" };
 	const clip = (text: unknown, limit: number) =>
 		typeof text === "string"
 			? text.trim().slice(0, limit) || undefined
 			: undefined;
+	const translation = clip(context?.translation, 1000);
+	if (context?.status !== "available") {
+		return translation
+			? { status: "unavailable", translation }
+			: { status: "unavailable" };
+	}
 	return {
 		status: "available",
 		before: clip(context.before, 240),
 		after: clip(context.after, 240),
 		heading: clip(context.heading, 120),
 		question: clip(context.question, 200),
+		translation,
 	};
 }
 export function quoteContextFromText(
@@ -65,14 +73,15 @@ export function quoteContextPrompt(selection: {
 	context?: QuoteContext;
 }): string {
 	const context = normalizeQuoteContext(selection.context);
-	if (context.status === "unavailable")
-		return "Auxiliary context unavailable. Read the source if needed; do not assume its surrounding argument.";
 	const fields = [
 		["Section (excerpt)", context.heading],
 		["Before quote (excerpt)", context.before],
 		["After quote (excerpt)", context.after],
 		["Preceding user question (excerpt)", context.question],
+		["Translation of the quoted sentences", context.translation],
 	].filter(([, text]) => text);
+	if (context.status === "unavailable" && fields.length === 0)
+		return "Auxiliary context unavailable. Read the source if needed; do not assume its surrounding argument.";
 	return fields.length
 		? "Auxiliary source context (reference material, potentially truncated):\n" +
 				fields

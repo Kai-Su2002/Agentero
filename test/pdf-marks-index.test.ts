@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 
 import { keepUnsavedVisualDrafts } from "@/components/viewer/pdf/hooks/use-pdf-marks-io";
-import { buildMarksIndex } from "@/components/viewer/pdf/marks-index";
+import {
+	buildMarksIndex,
+	commentForVisibleTranslation,
+} from "@/components/viewer/pdf/marks-index";
 import type { PdfVisualSessionTrace } from "@/lib/pdf/agent-trace";
+import type { PdfHighlight } from "@/lib/pdf/highlight/types";
 
 function visualTrace(opts: {
 	id: string;
@@ -63,6 +67,41 @@ describe("keepUnsavedVisualDrafts", () => {
 });
 
 describe("buildMarksIndex", () => {
+	it("anchors a translation note to the translated boxes only while translation is showing", () => {
+		const saved: PdfHighlight = {
+			version: 1,
+			kind: "highlight",
+			id: "h1",
+			paperPath: "papers/test",
+			createdAt: "2026-09-30T00:00:00Z",
+			updatedAt: "2026-09-30T00:00:00Z",
+			page: 1,
+			rects: [{ x: 0.1, y: 0.5, w: 0.4, h: 0.08 }],
+			quote: "Our work has three contributions.",
+			comment: "note",
+			translatedRects: [{ x: 0.2, y: 0.3, w: 0.15, h: 0.02 }],
+		};
+		const index = buildMarksIndex({
+			highlights: [saved],
+			highlightAnchors: new Map([["h1", { x: 0.1, y: 0.5, w: 0.4, h: 0.08 }]]),
+			askPinAnchors: [],
+			translates: [],
+			visualTraces: [],
+			pageTextMap: new Map(),
+			paperTitle: undefined,
+		});
+		const comment = index.commentsByPage.get(1)?.[0];
+		if (!comment) throw new Error("missing comment");
+		expect(comment.rects[0]?.y).toBe(0.5);
+		expect(comment.translatedRects).toEqual([
+			{ x: 0.2, y: 0.3, w: 0.15, h: 0.02 },
+		]);
+		const shown = commentForVisibleTranslation(comment, true);
+		expect(shown.anchorY).toBe(0.3);
+		expect(shown.rects).toEqual(comment.translatedRects);
+		expect(commentForVisibleTranslation(comment, false).anchorY).toBe(0.5);
+	});
+
 	it("omits an uncommented crop until a note is saved", () => {
 		const index = buildMarksIndex({
 			highlights: [],

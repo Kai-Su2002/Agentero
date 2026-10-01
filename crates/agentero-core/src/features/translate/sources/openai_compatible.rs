@@ -21,10 +21,9 @@ struct OpenAiRequest<'a> {
 /// `src/lib/translate/prompt.ts`; keep both in sync.
 const OPENAI_TRANSLATE_SYSTEM: &str = "You are a professional academic translator. You render research-paper prose into fluent, idiomatic target-language text and output only the translation.";
 
-/// Numbered batch payload ([[1]] …, [[2]] …): ask the model to keep the
-/// markers and paragraph count so the caller can split the result back.
+/// Numbered batch payload ([[1]] …, [[2]] …): one marker is one sentence.
 /// Appended by the Host on both the default and the custom-prompt path.
-const NUMBERED_BATCH_RULE: &str = "The text contains several paragraphs, each prefixed with a [[n]] marker. Translate every paragraph and keep the same [[n]] markers, in the same order, with the same number of paragraphs. Do not merge paragraphs.";
+const NUMBERED_BATCH_RULE: &str = "The text contains numbered segments, each prefixed with a [[n]] marker. Each marker is one sentence. Keep every [[n]] marker, in the same order, with the same numbers. Do not move content across markers, do not merge markers, and do not drop markers. Within a single marker you may reorder clauses and split one source sentence into more than one target sentence.";
 
 /// Literal word-for-word output at 0.0 reads badly for paper prose; a small
 /// amount of sampling lets the model restructure sentences.
@@ -219,7 +218,7 @@ mod tests {
         let (_, user) =
             openai_translate_messages("[[1]] a\n\n[[2]] b", "en", "zh-CN", Some("Custom."));
         assert!(user.contains("[[n]] marker"));
-        assert!(user.contains("Do not merge paragraphs."));
+        assert!(user.contains("do not merge markers"));
         assert!(user.ends_with("Text:\n[[1]] a\n\n[[2]] b"));
     }
 }

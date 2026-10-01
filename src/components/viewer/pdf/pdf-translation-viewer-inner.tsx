@@ -49,6 +49,9 @@ const EMPTY_MARKS: PdfPageMarksSlice = {
 	activeCardId: null,
 	hoveredCommentId: null,
 	selectionCommentDraft: null,
+	translateHighlightsByPage: EMPTY_PAGE_MAP,
+	highlightQuotesByPage: EMPTY_PAGE_MAP,
+	translatedHighlightsByPage: EMPTY_PAGE_MAP,
 };
 
 const NOOP = () => undefined;

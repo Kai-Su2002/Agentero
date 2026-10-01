@@ -56,6 +56,7 @@ import {
 	type HighlightColor,
 } from "@/lib/pdf/highlight/palette";
 import type { PdfHighlight } from "@/lib/pdf/highlight/types";
+import type { VisibleSelectionPage } from "@/lib/pdf/layout/visible-selection-rects";
 import type { NormalizedRect } from "@/lib/pdf/selection";
 import { marksDir } from "@/lib/pdf/selection";
 import { isRecentSelfWrite } from "@/lib/pdf/selection/marks-io";
@@ -107,6 +108,11 @@ export type PdfHighlights = {
 		pages: FormattedSelection[],
 		color: HighlightColor,
 		quote: string,
+		/**
+		 * Translated selection, in page fractions. Stored beside the English
+		 * glyph boxes and painted only while the translation overlay is on.
+		 */
+		translatedPages?: readonly VisibleSelectionPage[],
 	) => { pageIndex: number; id: string }[];
 	/** Write a 批注 comment onto an existing highlight (empty clears it). */
 	updateHighlightComment: (
@@ -338,12 +344,26 @@ export function usePdfHighlights({
 	}, [annotationCap, docId, paperAbsPath, totalPages, rebuildHighlights]);
 
 	const createHighlights = useCallback(
-		(pages: FormattedSelection[], color: HighlightColor, quote: string) => {
+		(
+			pages: FormattedSelection[],
+			color: HighlightColor,
+			quote: string,
+			translatedPages?: readonly VisibleSelectionPage[],
+		) => {
 			const scope = annotationCap?.forDocument(docId);
 			if (!scope) return [] as { pageIndex: number; id: string }[];
 			const created: { pageIndex: number; id: string }[] = [];
 			for (const page of pages) {
 				const id = crypto.randomUUID();
+				const translatedRects = translatedPages?.find(
+					(item) => item.pageIndex === page.pageIndex,
+				)?.rects;
+				const custom: HighlightCustom = {
+					app: "agentero",
+					paletteKey: color,
+					quote,
+				};
+				if (translatedRects?.length) custom.translatedRects = translatedRects;
 				const obj: PdfHighlightAnnoObject = {
 					type: PdfAnnotationSubtype.HIGHLIGHT,
 					id,
@@ -353,7 +373,7 @@ export function usePdfHighlights({
 					strokeColor: HIGHLIGHT_HEX[color],
 					opacity: HIGHLIGHT_OPACITY,
 					created: new Date(),
-					custom: { app: "agentero", paletteKey: color, quote },
+					custom,
 				};
 				scope.createAnnotation(page.pageIndex, obj);
 				created.push({ pageIndex: page.pageIndex, id });

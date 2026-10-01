@@ -80,6 +80,9 @@ export function buildMarksIndex({
 			comment,
 			color: normalizeHighlightColor(highlight.color),
 			kind: "highlight",
+			...(highlight.translatedRects?.length
+				? { translatedRects: highlight.translatedRects }
+				: {}),
 			linkAlias:
 				annotationWikilinkAlias(
 					paperTitle,
@@ -176,4 +179,20 @@ export function buildMarksIndex({
 		}
 	}
 	return { pinsByPage: pins, commentsByPage: comments };
+}
+
+/**
+ * While a translation is showing, a note that recorded the translated
+ * selection anchors to those boxes. English glyph boxes stay in place for the
+ * original page.
+ */
+export function commentForVisibleTranslation(
+	comment: PageAnnotationComment,
+	translationVisible: boolean,
+): PageAnnotationComment {
+	const rects = comment.translatedRects;
+	if (!translationVisible || !rects?.length) return comment;
+	let anchorY = rects[0]?.y ?? comment.anchorY;
+	for (const rect of rects) anchorY = Math.min(anchorY, rect.y);
+	return { ...comment, rects, anchorY };
 }

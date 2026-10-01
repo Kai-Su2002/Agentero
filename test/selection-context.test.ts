@@ -52,3 +52,19 @@ it("fails explicitly for missing or ambiguous source matches", () => {
 		]),
 	).toContain("Auxiliary context unavailable");
 });
+it("keeps a paired translation when the surrounding source is unavailable", () => {
+	const prompt = selectionsPromptBlock([
+		{
+			id: "one",
+			text: "First sentence.",
+			sourcePath: "paper",
+			origin: "pdf",
+			page: 1,
+			pinned: true,
+			context: { status: "unavailable", translation: "第一句。" },
+		},
+	]);
+	expect(prompt).toContain("Translation of the quoted sentences");
+	expect(prompt).toContain("第一句。");
+	expect(prompt).not.toContain("Auxiliary context unavailable");
+});

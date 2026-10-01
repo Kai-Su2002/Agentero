@@ -1,4 +1,7 @@
-import { quoteContextFromText } from "@/lib/agent/selection-context";
+import {
+	normalizeQuoteContext,
+	quoteContextFromText,
+} from "@/lib/agent/selection-context";
 import { layoutAnalysisStore } from "@/lib/pdf/layout/store";
 /**
  * Selection actions (highlight / note / copy / ask / add-to-chat / translate).
@@ -10,11 +13,8 @@ import { layoutAnalysisStore } from "@/lib/pdf/layout/store";
  * real work belongs to its own cluster.
  */
 
-import type {
-	FormattedSelection,
-	useSelectionCapability,
-} from "@embedpdf/plugin-selection/react";
-import { type Dispatch, type SetStateAction, useCallback, useRef } from "react";
+import type { FormattedSelection } from "@embedpdf/plugin-selection/react";
+import { useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useSelectionQuickChat } from "@/components/selection/use-selection-quick-chat";
 import type { SelectionMenuState } from "@/components/viewer/pdf/types";
@@ -29,21 +29,18 @@ import {
 	DEFAULT_HIGHLIGHT_COLOR,
 	type HighlightColor,
 } from "@/lib/pdf/highlight/palette";
-
-type SelectionCapabilityProvides = ReturnType<
-	typeof useSelectionCapability
->["provides"];
+import type { VisibleSelectionPage } from "@/lib/pdf/layout/visible-selection-rects";
 
 export type UsePdfSelectionActionsOptions = {
 	/** Placed menu; every action no-ops when null. */
 	selectionMenu: SelectionMenuState | null;
-	setSelectionMenu: Dispatch<SetStateAction<SelectionMenuState | null>>;
 	closeSelectionMenu: () => void;
 	/** Highlights cluster writer. */
 	createHighlights: (
 		pages: FormattedSelection[],
 		color: HighlightColor,
 		quote: string,
+		translatedPages?: readonly VisibleSelectionPage[],
 	) => { pageIndex: number; id: string }[];
 	/** Write the note body onto a freshly created highlight. */
 	updateHighlightComment: (
@@ -51,11 +48,9 @@ export type UsePdfSelectionActionsOptions = {
 		id: string,
 		comment: string,
 	) => void;
-	/** EmbedPDF capability; owned by `PdfViewerInner` (plugin context). */
-	selectionCap: SelectionCapabilityProvides;
 	docId: string;
 	/** Ask cluster entry (creates an empty thread from the anchor). */
-	startFromAnchor: (anchor: PdfAskAnchor) => void;
+	startFromAnchor: (anchor: PdfAskAnchor, translation?: string) => void;
 	/** Translate cluster entry (creates the record and starts the run). */
 	translateSelection: (anchor: PdfAskAnchor) => void;
 	paperRelPath: string | null;
@@ -72,6 +67,7 @@ export type PdfSelectionActions = {
 		draft: {
 			pages: FormattedSelection[];
 			quote: string;
+			visiblePages?: readonly VisibleSelectionPage[];
 		},
 		comment: string,
 	) => void;
@@ -84,11 +80,9 @@ export type PdfSelectionActions = {
 
 export function usePdfSelectionActions({
 	selectionMenu,
-	setSelectionMenu,
 	closeSelectionMenu,
 	createHighlights,
 	updateHighlightComment,
-	selectionCap,
 	docId,
 	startFromAnchor,
 	translateSelection,
@@ -106,7 +100,12 @@ export function usePdfSelectionActions({
 		(color: HighlightColor) => {
 			const menu = selectionMenuRef.current;
 			if (!menu) return;
-			createHighlights(menu.pages, color, menu.anchor.quote ?? "");
+			createHighlights(
+				menu.pages,
+				color,
+				menu.anchor.quote ?? "",
+				menu.visiblePages,
+			);
 			closeSelectionMenu();
 		},
 		[createHighlights, closeSelectionMenu],
@@ -114,7 +113,11 @@ export function usePdfSelectionActions({
 
 	const handleCommitSelectionNote = useCallback(
 		(
-			draft: { pages: FormattedSelection[]; quote: string },
+			draft: {
+				pages: FormattedSelection[];
+				quote: string;
+				visiblePages?: readonly VisibleSelectionPage[];
+			},
 			comment: string,
 		) => {
 			const trimmed = comment.trim();
@@ -123,30 +126,24 @@ export function usePdfSelectionActions({
 				draft.pages,
 				DEFAULT_HIGHLIGHT_COLOR,
 				draft.quote,
+				draft.visiblePages,
 			);
 			const first = created[0];
-			setSelectionMenu(null);
-			selectionCap?.clear(docId);
+			closeSelectionMenu();
 			if (!first) return;
 			updateHighlightComment(first.pageIndex, first.id, trimmed);
 		},
-		[
-			createHighlights,
-			updateHighlightComment,
-			selectionCap,
-			docId,
-			setSelectionMenu,
-		],
+		[createHighlights, updateHighlightComment, closeSelectionMenu],
 	);
 
 	const handleMenuAsk = useCallback(() => {
 		const menu = selectionMenuRef.current;
 		if (!menu) return;
 		const anchor = menu.anchor;
-		setSelectionMenu(null);
-		selectionCap?.clear(docId);
-		startFromAnchor(anchor);
-	}, [startFromAnchor, selectionCap, docId, setSelectionMenu]);
+		const translation = menu.pairedTranslation;
+		closeSelectionMenu();
+		startFromAnchor(anchor, translation);
+	}, [startFromAnchor, closeSelectionMenu]);
 
 	// ⌘K Quick chat — only while this viewer's selection toolbar is armed.
 	useSelectionQuickChat(() => selectionMenuRef.current != null, handleMenuAsk);
@@ -156,8 +153,8 @@ export function usePdfSelectionActions({
 		if (!menu) return;
 		const anchor = menu.anchor;
 		const quote = anchor.quote?.trim();
-		setSelectionMenu(null);
-		selectionCap?.clear(docId);
+		const paired = menu.pairedTranslation;
+		closeSelectionMenu();
 		if (!quote) return;
 		const regions =
 			layoutAnalysisStore.getState().byDocument[docId]?.regions ?? [];
@@ -165,10 +162,13 @@ export function usePdfSelectionActions({
 			(region) =>
 				region.pageIndex === anchor.page - 1 && region.text?.includes(quote),
 		);
-		const context =
+		const regionContext =
 			matches.length === 1
-				? quoteContextFromText(matches[0].text ?? "", quote)
+				? quoteContextFromText(matches[0]?.text ?? "", quote)
 				: { status: "unavailable" as const };
+		const context = paired
+			? normalizeQuoteContext({ ...regionContext, translation: paired })
+			: regionContext;
 		// Keep a draft after clear: typing a comment must not depend on live selection.
 		// Keep page geometry so the next Agent turn can write a conversation card pin.
 		openSelectionChat(
@@ -191,21 +191,20 @@ export function usePdfSelectionActions({
 				page: menu.anchor.page,
 				rect: { ...rect },
 			});
-	}, [selectionCap, docId, paperRelPath, paperAbsPath, setSelectionMenu]);
+	}, [closeSelectionMenu, docId, paperRelPath, paperAbsPath]);
 
 	const handleMenuTranslate = useCallback(() => {
 		const menu = selectionMenuRef.current;
-		if (!menu) return;
+		if (!menu || menu.fromTranslation) return;
 		const anchor = menu.anchor;
-		setSelectionMenu(null);
-		selectionCap?.clear(docId);
+		closeSelectionMenu();
 		translateSelection(anchor);
-	}, [selectionCap, docId, setSelectionMenu, translateSelection]);
+	}, [closeSelectionMenu, translateSelection]);
 
 	const handleMenuCopy = useCallback(async () => {
 		const menu = selectionMenuRef.current;
 		if (!menu) return false;
-		const quote = menu.anchor.quote?.trim();
+		const quote = (menu.copyText ?? menu.anchor.quote)?.trim();
 		if (!quote) return false;
 		// Leave the toolbar and the PDFium selection in place. The button
 		// swaps to a check; do not toast success or clear the selection.
