@@ -16,6 +16,7 @@ import type { PdfHighlightRect } from "@/lib/pdf/highlight/types";
 import { isLayoutTranslateHeadingKind } from "@/lib/pdf/layout/labels";
 import { layoutTranslateSentenceNodes } from "@/lib/pdf/layout/layout-sentences";
 import type { LayoutTranslateItem } from "@/lib/pdf/layout/layout-translate";
+import { isLayoutTranslateItemPainted } from "@/lib/pdf/layout/layout-translate-reliable";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
 import {
 	PDF_PAGE_RASTER_DARK_CLASS,
@@ -468,23 +469,16 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 }: LayoutTranslateOverlayProps) {
 	const onPage = useMemo(
 		() =>
-			items
-				.filter(
-					(it) =>
-						it.status === "done" ||
-						it.status === "running" ||
-						(it.status === "error" && it.translated),
-				)
-				.map((item) => ({
-					...item,
-					bbox: expandLayoutTranslateBbox(item, layoutRegions),
-				})),
+			items.filter(isLayoutTranslateItemPainted).map((item) => ({
+				...item,
+				bbox: expandLayoutTranslateBbox(item, layoutRegions),
+			})),
 		[items, layoutRegions],
 	);
 	const tintByItem = useMemo(() => {
 		const map = new Map<string, ReadonlyMap<number, HighlightColor>>();
 		if (!highlightQuotes?.length) return map;
-		for (const item of items) {
+		for (const item of onPage) {
 			if (!item.sentences?.length) continue;
 			const colors = new Map<number, HighlightColor>();
 			for (const tint of highlightQuotes) {
@@ -500,7 +494,7 @@ export const LayoutTranslateOverlay = memo(function LayoutTranslateOverlay({
 			if (colors.size > 0) map.set(item.id, colors);
 		}
 		return map;
-	}, [highlightQuotes, items, sentenceRectsByItemId]);
+	}, [highlightQuotes, onPage, sentenceRectsByItemId]);
 	if (onPage.length === 0) return null;
 
 	return (

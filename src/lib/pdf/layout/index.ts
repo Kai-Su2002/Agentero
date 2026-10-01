@@ -88,6 +88,7 @@ export {
 	currentLayoutTranslateCacheKey,
 	groupLayoutTranslateItemsByPage,
 	hasPendingLayoutTranslateItems,
+	isLayoutTranslateItemPainted,
 	LAYOUT_TRANSLATE_CONCURRENCY,
 	LAYOUT_TRANSLATE_MAX_CHARS,
 	LAYOUT_TRANSLATE_SIDECAR_FILE,

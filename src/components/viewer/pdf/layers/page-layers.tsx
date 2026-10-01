@@ -80,6 +80,7 @@ import {
 } from "@/lib/pdf/highlight/palette";
 import {
 	isLayoutRegionActivation,
+	isLayoutTranslateItemPainted,
 	LAYOUT_HINT_MIN_REGION_H_PX,
 	LAYOUT_HINT_MIN_REGION_W_PX,
 	type LayoutTranslateItem,
@@ -659,7 +660,8 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 		marks.translateHighlightsByPage.get(pageNumber) ?? [];
 	const layoutTranslateOnPage =
 		layout.layoutTranslateItemsByPage.get(pageIndex);
-	const translationVisible = (layoutTranslateOnPage?.length ?? 0) > 0;
+	const translationVisible =
+		layoutTranslateOnPage?.some(isLayoutTranslateItemPainted) ?? false;
 	const shownComments = translationVisible
 		? comments.map((comment) => commentForVisibleTranslation(comment, true))
 		: comments;
@@ -820,7 +822,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 	);
 
 	const translateOverlay =
-		layoutTranslateOnPage && layoutTranslateOnPage.length > 0 ? (
+		translationVisible && layoutTranslateOnPage ? (
 			<LayoutTranslateOverlay
 				items={layoutTranslateOnPage}
 				pageWidthPx={width}

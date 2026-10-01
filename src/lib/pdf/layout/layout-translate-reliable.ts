@@ -67,6 +67,22 @@ export type {
  */
 export const LAYOUT_TRANSLATE_MAX_CHARS = 2200;
 
+/**
+ * Whether this item produces painted overlay content.
+ *
+ * LayoutTranslateOverlay paints done, running, or partially translated error
+ * items. Pending items and clean failures leave the page's original PDF visible.
+ */
+export function isLayoutTranslateItemPainted(
+	item: Pick<LayoutTranslateItem, "status" | "translated">,
+): boolean {
+	return (
+		item.status === "done" ||
+		item.status === "running" ||
+		(item.status === "error" && Boolean(item.translated))
+	);
+}
+
 /** A finished job can now explicitly report that some blocks still need work. */
 export type LayoutTranslateJobStatus =
 	| "idle"
