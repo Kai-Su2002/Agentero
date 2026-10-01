@@ -23,6 +23,8 @@ import {
 import {
 	clampEditorLineHeight,
 	DEFAULT_EMBEDDING_SETTINGS,
+	DEFAULT_JEV_BASE_URL,
+	DEFAULT_JEV_SETTINGS,
 	DEFAULT_PDF_ASK_SETTINGS,
 	DEFAULT_SETTINGS,
 	DEFAULT_TRANSLATOR_BASE_URL,
@@ -37,6 +39,7 @@ import {
 	type EmbeddingSource,
 	isConfigReminderId,
 	isPaperNoteMode,
+	type JevSettings,
 	LIBRARY_COLUMN_KEYS,
 	type LibraryColumnKey,
 	type LibraryColumnPref,
@@ -47,9 +50,13 @@ import {
 	isCommercialTranslateProvider,
 	isTranslateProviderId,
 } from "@/lib/translate/services";
-import type {
-	TranslateSettings,
-	TranslateTargetLang,
+import {
+	DUAL_PANE_SOURCES,
+	type DualPaneSource,
+	TRANSLATION_DISPLAY_MODES,
+	type TranslateSettings,
+	type TranslateTargetLang,
+	type TranslationDisplayMode,
 } from "@/lib/translate/types";
 import { isKnownUiTheme } from "@/lib/ui/theme";
 
@@ -80,6 +87,7 @@ let cache: AppSettings = {
 	pdfAsk: { ...DEFAULT_PDF_ASK_SETTINGS },
 	embedding: { ...DEFAULT_EMBEDDING_SETTINGS },
 	dismissedReminders: [],
+	jev: { ...DEFAULT_JEV_SETTINGS },
 };
 let loaded = false;
 let loadPromise: Promise<AppSettings> | null = null;
@@ -93,6 +101,7 @@ function cloneSettings(s: AppSettings): AppSettings {
 		translate: { ...s.translate },
 		layout: { ...s.layout, providerConfigs: { ...s.layout.providerConfigs } },
 		dismissedReminders: [...s.dismissedReminders],
+		jev: { ...s.jev },
 	};
 }
 
@@ -498,7 +507,25 @@ function normalizePartial(
 	);
 	merged.translate = normalizeTranslateSettings(parsed.translate);
 	merged.layout = normalizeLayoutSettings(parsed.layout);
+	merged.jev = normalizeJevSettings(
+		(parsed as { jev?: Partial<JevSettings> }).jev,
+	);
 	return merged;
+}
+
+function normalizeJevSettings(raw: unknown): JevSettings {
+	const base = { ...DEFAULT_JEV_SETTINGS };
+	if (!raw || typeof raw !== "object") return base;
+	const partial = raw as Partial<JevSettings>;
+	if (typeof partial.apiKey === "string") {
+		base.apiKey = partial.apiKey.trim();
+	}
+	if (typeof partial.baseUrl === "string" && partial.baseUrl.trim()) {
+		base.baseUrl = partial.baseUrl.trim().replace(/\/+$/, "");
+	} else {
+		base.baseUrl = DEFAULT_JEV_BASE_URL;
+	}
+	return base;
 }
 
 function isTranslateTargetLang(v: unknown): v is TranslateTargetLang {
@@ -640,8 +667,26 @@ function normalizeTranslateSettings(
 	if (typeof raw.autoTranslateSelection === "boolean") {
 		base.autoTranslateSelection = raw.autoTranslateSelection;
 	}
-	if (typeof raw.dualPaneTranslate === "boolean") {
-		base.dualPaneTranslate = raw.dualPaneTranslate;
+	// Migrate legacy dualPaneTranslate boolean to the new displayMode pair.
+	const legacyDualPane = (raw as { dualPaneTranslate?: boolean })
+		.dualPaneTranslate;
+	if (typeof legacyDualPane === "boolean") {
+		base.displayMode = legacyDualPane ? "dualPane" : "overlay";
+		base.dualPaneSource = "pdf";
+	}
+	if (
+		raw.displayMode &&
+		TRANSLATION_DISPLAY_MODES.includes(
+			raw.displayMode as TranslationDisplayMode,
+		)
+	) {
+		base.displayMode = raw.displayMode as TranslationDisplayMode;
+	}
+	if (
+		raw.dualPaneSource &&
+		DUAL_PANE_SOURCES.includes(raw.dualPaneSource as DualPaneSource)
+	) {
+		base.dualPaneSource = raw.dualPaneSource as DualPaneSource;
 	}
 	if (typeof raw.agentId === "string") {
 		base.agentId = raw.agentId.trim();

@@ -236,6 +236,7 @@
 		"parseRefs": "Parse references",
 		"openLayoutSettings": "Open analysis settings",
 		"latexCompile": "Compile LaTeX",
+		"jevSmartHighlights": "jEV smart highlights",
 		"downloadBytes": "{{phase}} · {{downloaded}} / {{total}}",
 		"downloadBytesUnknown": "{{phase}} · {{downloaded}}",
 		"batchProgress": "{{phase}} · {{current}} / {{total}}",

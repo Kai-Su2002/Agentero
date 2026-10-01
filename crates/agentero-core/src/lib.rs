@@ -10,6 +10,7 @@
 pub mod app_handle;
 pub mod blocking;
 pub mod cancel;
+pub mod decision;
 pub mod error;
 pub mod features;
 pub mod frontmatter;

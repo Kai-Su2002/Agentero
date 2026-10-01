@@ -613,6 +613,11 @@ export const commands = {
 	chktexLint: (texPath: string, content: string) => __TAURI_INVOKE<ApiResult<LatexLintDiagnostic[]>>("chktex_lint", { texPath, content }),
 	resolveLatexRoot: (texPath: string, vaultPath: string) => __TAURI_INVOKE<ApiResult<LatexRoot>>("resolve_latex_root", { texPath, vaultPath }),
 	jobLatexCompileEnqueue: (args: JobLatexCompileEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_latex_compile_enqueue", { args })),
+	jobJevSmartHighlightsEnqueue: (args: JobEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_jev_smart_highlights_enqueue", { args })),
+	jevSuggestHighlights: (args: JevSuggestHighlightsArgs) => typedError<ApiResult<JevSuggestHighlightsResult>, string>(__TAURI_INVOKE("jev_suggest_highlights", { args })),
+	jevProbeHealth: () => typedError<ApiResult<null>, string>(__TAURI_INVOKE("jev_probe_health")),
+	/**  Run one registered decision through the engine (rules + jEV + fallback). */
+	decide: (args: DecideArgs) => typedError<ApiResult<DecisionOutcome>, string>(__TAURI_INVOKE("decide", { args })),
 };
 
 /** Events */
@@ -1293,7 +1298,7 @@ export type AgentTemplate = "opencode" |
  *  MiniMax Code CLI with native ACP (`mcode acp`).
  *  Docs: https://agent.minimax.io/docs/cli/quick-start
  */
-"minimax-code" |
+"minimax-code" | 
 /**
  *  Xiaomi MiMo Code CLI (an OpenCode fork) with native ACP (`mimo acp`).
  *  Docs: https://mimo.xiaomi.com · npm package `mimocode`
@@ -1489,6 +1494,7 @@ export type AppSettings_Deserialize = {
 	aiResponseLanguage?: string,
 	agentPersonalPrompt?: string,
 	pdfAsk?: PdfAskSettings,
+	jev?: JevSettings,
 	embedding?: EmbeddingSettings,
 	translate?: TranslateSettings,
 	layout?: LayoutSettings,
@@ -1581,6 +1587,7 @@ export type AppSettings_Serialize = {
 	aiResponseLanguage: string,
 	agentPersonalPrompt: string,
 	pdfAsk: PdfAskSettings,
+	jev: JevSettings,
 	embedding: EmbeddingSettings,
 	translate: TranslateSettings,
 	layout: LayoutSettings,
@@ -2296,6 +2303,31 @@ export type CreateVaultResult = {
 	openPath: string,
 };
 
+export type DecideArgs = {
+	/**  Registered decision id, e.g. `pdf.selection.intent`. */
+	decisionId: string,
+	/**  Decision-specific state. */
+	state: Json,
+};
+
+/**
+ *  A decision result: the winning provider's `action` plus provenance.
+ * 
+ *  `action` is whatever the provider produced. Rule/jEV string choices arrive
+ *  as JSON strings (`"ignore"`), richer payloads as objects; consumers switch
+ *  on the shape they registered for.
+ */
+export type DecisionOutcome = {
+	action: Json,
+	/**
+	 *  Name of the provider that produced the action (`rule` / `jev` /
+	 *  `default` / `none`).
+	 */
+	provider: string,
+	/**  Confidence in `[0, 1]`, only present for probabilistic providers. */
+	confidence: number | null,
+};
+
 export type DepPolicy = "allSettled" | "allSucceeded";
 
 export type DoctorApplyAliasesArgs = {
@@ -2804,6 +2836,22 @@ export type InternalLinkOccurrence_Serialize = {
 
 export type InternalLinkSyntax = "wikilink" | "markdown";
 
+/**  TypeSafe jEV (System One) settings for smart paper highlighting. */
+export type JevSettings = {
+	apiKey?: string,
+	baseUrl?: string,
+};
+
+export type JevSuggestHighlightsArgs = {
+	vaultPath: string,
+	/**  Vault-relative paper folder, e.g. `papers/2303.17760`. */
+	path: string,
+};
+
+export type JevSuggestHighlightsResult = {
+	highlights: SuggestedHighlight[],
+};
+
 export type JobChangedEvent = JobChangedPayload;
 
 export type JobChangedPayload = {
@@ -2865,7 +2913,7 @@ export type JobImportEnqueueArgs = {
 	params?: Json | null,
 };
 
-export type JobKind = "parseRefs" | "parseBody" | "layoutAnalyze" | "layoutTranslate" | "downloadAssets" | "pageCount" | "wikiReindex" | "recognizeMetadata" | "import" | "connectorSync" | "modelDownload" | "citingScan" | "libraryIo" | "metadataRefresh" | "latexCompile";
+export type JobKind = "parseRefs" | "parseBody" | "layoutAnalyze" | "layoutTranslate" | "downloadAssets" | "pageCount" | "wikiReindex" | "recognizeMetadata" | "import" | "connectorSync" | "modelDownload" | "citingScan" | "libraryIo" | "metadataRefresh" | "latexCompile" | "jevSmartHighlights";
 
 export type JobLane = "focus" | "normal" | "idle";
 
@@ -3461,6 +3509,17 @@ export type NodeInstallResult_Serialize = {
 	error?: string | null,
 	/**  Host probe re-run after the install attempt. */
 	report: HostDoctorReport_Serialize,
+};
+
+/**
+ *  Rect normalized to 0–1 against the page box, top-left origin, y down —
+ *  identical to what the viewer persists for ask/translate marks.
+ */
+export type NormRect = {
+	x: number | null,
+	y: number | null,
+	w: number | null,
+	h: number | null,
 };
 
 export type NotesTemplateSeedResult = {
@@ -4510,6 +4569,17 @@ export type StageImportFileResult = {
 	path: string,
 };
 
+export type SuggestedHighlight = {
+	quote: string,
+	page: number,
+	rects: NormRect[],
+	color: string,
+	category: string,
+	score: number | null,
+	pageWidth: number | null,
+	pageHeight: number | null,
+};
+
 export type SyncBackendConfig = {
 	/**  Backend discriminator; S3 fields or WebDAV fields apply accordingly. */
 	backend?: SyncBackendKind,
@@ -4680,7 +4750,10 @@ export type TranslateSettings = {
 	sourceLang?: string,
 	providerConfigs?: { [key in string]: TranslateProviderConfig },
 	autoTranslateSelection?: boolean,
+	/**  Deprecated: kept for migration. Use `display_mode` + `dual_pane_source`. */
 	dualPaneTranslate?: boolean,
+	displayMode?: string,
+	dualPaneSource?: string,
 	agentId?: string,
 	modelId?: string,
 	/**

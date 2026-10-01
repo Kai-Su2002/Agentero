@@ -305,6 +305,19 @@ export type AppSettings = {
 	 * {@link CONFIG_REMINDER_IDS}; unknown values are dropped on normalize.
 	 */
 	dismissedReminders: ConfigReminderId[];
+	/**
+	 * TypeSafe jEV (System One) credentials for smart paper highlighting.
+	 * Empty API key disables the feature.
+	 */
+	jev: JevSettings;
+};
+
+/** TypeSafe jEV (System One) credentials. */
+export type JevSettings = {
+	/** jEV API key; masked (`*`) when echoed back from the Host. */
+	apiKey: string;
+	/** jEV base URL, e.g. `https://api.typesafe.ai/v1/systemone`. */
+	baseUrl: string;
 };
 
 /**

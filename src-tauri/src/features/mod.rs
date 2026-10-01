@@ -14,6 +14,8 @@ pub mod cli_install;
 #[cfg(feature = "desktop")]
 pub mod compile;
 #[cfg(feature = "desktop")]
+pub mod decision;
+#[cfg(feature = "desktop")]
 pub mod host_hooks;
 #[cfg(feature = "desktop")]
 pub mod jobs;
@@ -23,6 +25,8 @@ pub mod lifecycle;
 #[path = "../app/open_request/mod.rs"]
 pub mod open_request;
 
+#[cfg(feature = "desktop")]
+pub mod jev;
 pub mod markdown;
 pub mod paper;
 pub mod pdf;
