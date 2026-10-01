@@ -134,6 +134,8 @@ export type UsePdfTextSelectionOptions = {
 	/** Provenance for the published selection (Agent chips / conversation pins). */
 	paperRelPath: string | null;
 	paperAbsPath: string | null;
+	/** Keep toolbar placed while editing a selection note chip. */
+	isCommentDraftActive?: () => boolean;
 };
 
 export type PdfTextSelection = {
@@ -163,6 +165,7 @@ export function usePdfTextSelection({
 	isActive,
 	paperRelPath,
 	paperAbsPath,
+	isCommentDraftActive,
 }: UsePdfTextSelectionOptions): PdfTextSelection {
 	const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(
 		null,
@@ -297,6 +300,12 @@ export function usePdfTextSelection({
 			if (!sel) {
 				setIsSelecting(false);
 				if (selectionInsideTranslation()) return;
+				if (
+					isCommentDraftActive?.() ||
+					document.activeElement?.closest("[data-selection-comment]")
+				) {
+					return;
+				}
 				setSelectionMenu(null);
 				clearActiveSelection("pdf");
 			}
@@ -316,6 +325,7 @@ export function usePdfTextSelection({
 		paperAbsPath,
 		hostRef,
 		zoomRef,
+		isCommentDraftActive,
 	]);
 
 	// PDFium selections are invisible to the browser: intercept copy so ⌘/Ctrl+C

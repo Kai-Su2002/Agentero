@@ -625,6 +625,7 @@ function PdfViewerInner({
 	}, [pageTextLinkMap, citationLinks]);
 
 	const hostRef = useRef<HTMLDivElement>(null);
+	const selectionCommentEngagedRef = useRef(false);
 
 	// ---- Text selection → floating action menu ----
 	// Placed after hostRef/zoomRef: the hook anchors the menu against the page
@@ -644,6 +645,7 @@ function PdfViewerInner({
 		isActive,
 		paperRelPath,
 		paperAbsPath,
+		isCommentDraftActive: () => selectionCommentEngagedRef.current,
 	});
 
 	/**
@@ -1300,7 +1302,6 @@ function PdfViewerInner({
 		useState<SelectionCommentDraft | null>(null);
 	const selectionCommentDraftRef = useRef(selectionCommentDraft);
 	selectionCommentDraftRef.current = selectionCommentDraft;
-	const selectionCommentEngagedRef = useRef(false);
 	const selectionMenuRef = useRef(selectionMenu);
 	selectionMenuRef.current = selectionMenu;
 	const selectionCommentKeyValue = selectionCommentKey(selectionMenu);
@@ -1335,9 +1336,8 @@ function PdfViewerInner({
 	const handleDismissSelectionComment = useCallback(() => {
 		selectionCommentEngagedRef.current = false;
 		setSelectionCommentDraft(null);
-		setSelectionMenu(null);
-		selectionCap?.clear(docId);
-	}, [setSelectionMenu, selectionCap, docId]);
+		closeSelectionMenu();
+	}, [closeSelectionMenu]);
 
 	const handleCommitSelectionComment = useCallback(
 		(comment: string) => {
@@ -1345,6 +1345,7 @@ function PdfViewerInner({
 			selectionCommentEngagedRef.current = false;
 			selectionCommentDraftRef.current = null;
 			setSelectionCommentDraft(null);
+			closeSelectionMenu();
 			if (!draft?.pages.length) return;
 			handleCommitSelectionNote(
 				{
@@ -1355,7 +1356,7 @@ function PdfViewerInner({
 				comment,
 			);
 		},
-		[handleCommitSelectionNote],
+		[handleCommitSelectionNote, closeSelectionMenu],
 	);
 
 	// ---- In-PDF highlight selection menu ----

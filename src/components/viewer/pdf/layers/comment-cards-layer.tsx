@@ -724,13 +724,16 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 		};
 	}, []);
 
-	// Clicking the page does not blur this field (same as a saved comment
-	// card). Commit typed text, or drop an empty open note, on that press.
+	// Clicking outside the note (e.g. anywhere on the PDF page) commits typed
+	// text or drops an empty draft. Chrome elements (like the selection toolbar)
+	// do not trigger dismissal.
 	useEffect(() => {
-		if (!editing) return;
 		const onPointerDown = (event: PointerEvent) => {
 			const target = event.target;
 			if (!(target instanceof Node) || rootRef.current?.contains(target)) {
+				return;
+			}
+			if ((target as Element).closest?.("[data-pdf-chrome]")) {
 				return;
 			}
 			const text = (textareaRef.current?.value ?? draftTextRef.current).trim();
@@ -746,7 +749,7 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 		return () => {
 			document.removeEventListener("pointerdown", onPointerDown, true);
 		};
-	}, [editing, commit]);
+	}, [commit]);
 
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: hosts a textarea; native <button> cannot wrap it

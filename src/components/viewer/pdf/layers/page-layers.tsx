@@ -929,6 +929,11 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 						documentId={docId}
 						pageIndex={pageIndex}
 						background={PDF_TEXT_SELECTION_BACKGROUND}
+						draftPages={
+							marks.selectionCommentDraft?.visiblePages?.length
+								? undefined
+								: marks.selectionCommentDraft?.pages
+						}
 					/>
 				)}
 				{/*

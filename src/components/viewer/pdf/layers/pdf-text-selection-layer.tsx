@@ -1,6 +1,7 @@
 import { useDocumentState } from "@embedpdf/core/react";
 import type { Rect } from "@embedpdf/models";
 import {
+	type FormattedSelection,
 	useSelectionCapability,
 	useSelectionPlugin,
 } from "@embedpdf/plugin-selection/react";
@@ -11,6 +12,7 @@ export type PdfTextSelectionLayerProps = {
 	documentId: string;
 	pageIndex: number;
 	background: string;
+	draftPages?: FormattedSelection[];
 };
 
 /**
@@ -21,6 +23,7 @@ export const PdfTextSelectionLayer = memo(function PdfTextSelectionLayer({
 	documentId,
 	pageIndex,
 	background,
+	draftPages,
 }: PdfTextSelectionLayerProps) {
 	const { plugin } = useSelectionPlugin();
 	const { provides } = useSelectionCapability();
@@ -55,7 +58,18 @@ export const PdfTextSelectionLayer = memo(function PdfTextSelectionLayer({
 		});
 	}, [documentId, pageIndex, plugin, provides]);
 
-	if (rects.length === 0) return null;
+	const draftRects = useMemo(() => {
+		const page = draftPages?.find((p) => p.pageIndex === pageIndex);
+		return page?.segmentRects?.length
+			? page.segmentRects
+			: page?.rect
+				? [page.rect]
+				: [];
+	}, [draftPages, pageIndex]);
+
+	const effectiveRects = rects.length > 0 ? rects : draftRects;
+
+	if (effectiveRects.length === 0) return null;
 
 	return (
 		<div
@@ -72,7 +86,7 @@ export const PdfTextSelectionLayer = memo(function PdfTextSelectionLayer({
 				pointerEvents: "none",
 			}}
 		>
-			{rects.map((rect) => (
+			{effectiveRects.map((rect) => (
 				<div
 					key={`${rect.origin.x}:${rect.origin.y}:${rect.size.width}:${rect.size.height}`}
 					style={{
