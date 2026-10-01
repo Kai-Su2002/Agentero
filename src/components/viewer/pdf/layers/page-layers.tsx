@@ -78,6 +78,8 @@ import {
 	type HighlightColor,
 	highlightHoverOverlayColor,
 } from "@/lib/pdf/highlight/palette";
+import { resolveTranslatedHighlightIds } from "@/lib/pdf/highlight/sentence-tint";
+import type { HighlightQuoteTint } from "@/lib/pdf/highlight/translated-geometry";
 import {
 	isLayoutRegionActivation,
 	isLayoutTranslateItemPainted,
@@ -145,13 +147,7 @@ const PASSIVE_HIGHLIGHT_RENDERERS: BoxedAnnotationRenderer[] = [
 	PASSIVE_HIGHLIGHT_RENDERER,
 ];
 
-/** English glyph boxes do not line up with reflowed translation. */
-const HIDDEN_HIGHLIGHT_RENDERERS: BoxedAnnotationRenderer[] = [
-	{
-		...PASSIVE_HIGHLIGHT_RENDERER,
-		render: () => <></>,
-	},
-];
+const EMPTY_HIGHLIGHT_SET = new Set<string>();
 
 /**
  * Saved translation selection. Same yellow as the English highlight, placed
@@ -403,14 +399,7 @@ export type PdfPageMarksSlice = {
 	 * Nothing is written back. Highlights that stored their own translated
 	 * boxes are omitted.
 	 */
-	highlightQuotesByPage: ReadonlyMap<
-		number,
-		readonly {
-			quote: string;
-			color: HighlightColor;
-			rects: PdfAskNormalizedRect[];
-		}[]
-	>;
+	highlightQuotesByPage: ReadonlyMap<number, readonly HighlightQuoteTint[]>;
 	/**
 	 * Translated selection boxes keyed by 1-based page. Painted instead of the
 	 * English glyph boxes while this page's translation overlay is showing.
@@ -672,15 +661,45 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 	const emphasizedComment = emphasizedCommentId
 		? (shownComments.find((c) => c.id === emphasizedCommentId) ?? null)
 		: null;
-	const highlightRenderers = useMemo(
-		() =>
-			translationVisible
-				? HIDDEN_HIGHLIGHT_RENDERERS
-				: PASSIVE_HIGHLIGHT_RENDERERS,
-		[translationVisible],
-	);
 	const translatedPaints =
 		marks.translatedHighlightsByPage.get(pageNumber) ?? [];
+	const highlightQuotes = marks.highlightQuotesByPage.get(pageNumber);
+	const resolvedTranslatedIds = useMemo(
+		() =>
+			translationVisible
+				? resolveTranslatedHighlightIds({
+						translatedPaints,
+						highlightQuotes,
+						layoutItems: layoutTranslateOnPage,
+						sentenceRectsByItemId: layout.sentenceRectsByItemId,
+					})
+				: EMPTY_HIGHLIGHT_SET,
+		[
+			translationVisible,
+			translatedPaints,
+			highlightQuotes,
+			layoutTranslateOnPage,
+			layout.sentenceRectsByItemId,
+		],
+	);
+	const highlightRenderers = useMemo<BoxedAnnotationRenderer[]>(() => {
+		if (!translationVisible || resolvedTranslatedIds.size === 0) {
+			return PASSIVE_HIGHLIGHT_RENDERERS;
+		}
+		return [
+			{
+				...PASSIVE_HIGHLIGHT_RENDERER,
+				render: (props) => {
+					if (resolvedTranslatedIds.has(props.currentObject.id)) {
+						return (
+							<span className="pointer-events-none hidden" aria-hidden="true" />
+						);
+					}
+					return PASSIVE_HIGHLIGHT_RENDERER.render(props);
+				},
+			},
+		];
+	}, [translationVisible, resolvedTranslatedIds]);
 
 	const textCommentAtPoint = (clientX: number, clientY: number) => {
 		if (!shownComments.length) return null;
@@ -722,18 +741,18 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 						y <= rect.y + rect.h,
 				),
 			);
-			if (!hit) return null;
-			const object = annotationCap
-				.forDocument(docId)
-				.getAnnotationById(hit.id)?.object;
-			if (
-				!object ||
-				object.type !== PdfAnnotationSubtype.HIGHLIGHT ||
-				object.pageIndex !== pageIndex
-			) {
-				return null;
+			if (hit) {
+				const object = annotationCap
+					.forDocument(docId)
+					.getAnnotationById(hit.id)?.object;
+				if (
+					object &&
+					object.type === PdfAnnotationSubtype.HIGHLIGHT &&
+					object.pageIndex === pageIndex
+				) {
+					return object;
+				}
 			}
-			return object;
 		}
 		const pageXPt = pageX / zoomRef.current;
 		const pageYPt = pageY / zoomRef.current;
@@ -744,7 +763,8 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 			.filter(
 				(annotation): annotation is PdfHighlightAnnoObject =>
 					annotation.type === PdfAnnotationSubtype.HIGHLIGHT &&
-					annotation.pageIndex === pageIndex,
+					annotation.pageIndex === pageIndex &&
+					(!translationVisible || !resolvedTranslatedIds.has(annotation.id)),
 			);
 		return (
 			highlights.find((highlight) => {
@@ -829,7 +849,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				pageHeightPx={height}
 				tone={tone}
 				layoutRegions={layout.rawRegionsByPage.get(pageIndex)}
-				highlightQuotes={marks.highlightQuotesByPage.get(pageNumber)}
+				highlightQuotes={highlightQuotes}
 				sentenceRectsByItemId={layout.sentenceRectsByItemId}
 			/>
 		) : null;

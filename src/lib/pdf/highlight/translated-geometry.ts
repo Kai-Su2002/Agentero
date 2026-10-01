@@ -23,6 +23,7 @@ export type TranslatedHighlightPaint = {
  * whose own English boxes overlap these.
  */
 export type HighlightQuoteTint = {
+	id: string;
 	quote: string;
 	color: HighlightColor;
 	rects: PdfHighlightRect[];
@@ -82,6 +83,7 @@ export function partitionHighlightPaint(highlights: readonly PdfHighlight[]): {
 		const quote = highlight.quote.trim();
 		if (!quote) continue;
 		const tint: HighlightQuoteTint = {
+			id: highlight.id,
 			quote,
 			color: normalizeHighlightColor(highlight.color),
 			rects: highlight.rects,

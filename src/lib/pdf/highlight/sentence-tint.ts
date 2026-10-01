@@ -6,8 +6,11 @@
  * the sentence. Text is only a stand-in until those boxes have been read.
  */
 
+import type { HighlightQuoteTint } from "@/lib/pdf/highlight/translated-geometry";
 import type { PdfHighlightRect } from "@/lib/pdf/highlight/types";
 import { sentenceIndexesCoveredByQuote } from "@/lib/pdf/layout/layout-sentences";
+import { isLayoutTranslateItemPainted } from "@/lib/pdf/layout/layout-translate-reliable";
+import type { LayoutTranslateItem } from "@/lib/pdf/layout/types";
 
 /** A sentence this much smaller than the best overlap is a border sliver. */
 const MIN_SHARE_OF_BEST = 0.2;
@@ -68,4 +71,53 @@ export function sentenceIndexesForHighlightTint(options: {
 		);
 	}
 	return sentenceIndexesCoveredByQuote(sentences, options.quote);
+}
+
+/**
+ * Highlight IDs on a page that have an active translated visual replacement.
+ *
+ * A highlight is suppressed from the English annotation layer only when:
+ * 1. It was recorded directly on the translation overlay (has `translatedPaints`), or
+ * 2. It matches at least one sentence in an actively painted layout translation block.
+ *
+ * Highlights outside translated blocks (references, algorithms, untranslated
+ * sections) keep their English annotation rendering and annotation menu.
+ */
+export function resolveTranslatedHighlightIds(options: {
+	translatedPaints?: readonly { id: string }[];
+	highlightQuotes?: readonly HighlightQuoteTint[];
+	layoutItems?: readonly LayoutTranslateItem[];
+	sentenceRectsByItemId?: ReadonlyMap<
+		string,
+		readonly (readonly PdfHighlightRect[])[]
+	>;
+}): Set<string> {
+	const resolved = new Set<string>();
+	if (options.translatedPaints) {
+		for (const paint of options.translatedPaints) {
+			resolved.add(paint.id);
+		}
+	}
+	const quotes = options.highlightQuotes;
+	const items = options.layoutItems;
+	if (quotes?.length && items?.length) {
+		for (const item of items) {
+			if (!isLayoutTranslateItemPainted(item) || !item.sentences?.length) {
+				continue;
+			}
+			for (const tint of quotes) {
+				if (resolved.has(tint.id)) continue;
+				const matchedIndexes = sentenceIndexesForHighlightTint({
+					sentences: item.sentences,
+					quote: tint.quote,
+					sentenceRects: options.sentenceRectsByItemId?.get(item.id),
+					highlightRects: tint.rects,
+				});
+				if (matchedIndexes.length > 0) {
+					resolved.add(tint.id);
+				}
+			}
+		}
+	}
+	return resolved;
 }

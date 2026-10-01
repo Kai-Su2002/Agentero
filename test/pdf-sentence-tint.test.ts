@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	resolveTranslatedHighlightIds,
 	sentenceIndexesForHighlightTint,
 	sentenceIndexesOverlappingHighlight,
 } from "@/lib/pdf/highlight/sentence-tint";
 import type { PdfHighlightRect } from "@/lib/pdf/highlight/types";
 import { sentenceGlyphRects } from "@/lib/pdf/layout/layout-sentence-selection";
+import type { LayoutTranslateItem } from "@/lib/pdf/layout/types";
 
 const box = (y: number, h = 0.02): PdfHighlightRect => ({
 	x: 0.1,
@@ -109,5 +111,91 @@ describe("sentenceGlyphRects", () => {
 		expect(rects[0]?.every((rect) => rect.y === 80 / 500)).toBe(true);
 		expect(rects[1]?.every((rect) => rect.y === 100 / 500)).toBe(true);
 		expect(rects[0]?.some((rect) => rect.y === 100 / 500)).toBe(false);
+	});
+});
+
+describe("resolveTranslatedHighlightIds", () => {
+	const itemDone: LayoutTranslateItem = {
+		id: "item-1",
+		pageIndex: 0,
+		kind: "text",
+		bbox: { x: 0.1, y: 0.2, w: 0.8, h: 0.3 },
+		source: "First sentence. Second sentence.",
+		status: "done",
+		translated: "第一句。第二句。",
+		sentences: [
+			{ quote: "First sentence.", translated: "第一句。" },
+			{ quote: "Second sentence.", translated: "第二句。" },
+		],
+	};
+
+	it("includes highlights recorded directly on the translation overlay", () => {
+		const result = resolveTranslatedHighlightIds({
+			translatedPaints: [{ id: "paint-1" }],
+		});
+		expect(result.has("paint-1")).toBe(true);
+	});
+
+	it("suppresses English highlights that overlap a painted translated sentence", () => {
+		const result = resolveTranslatedHighlightIds({
+			highlightQuotes: [
+				{
+					id: "hl-matched",
+					quote: "First sentence.",
+					color: "yellow",
+					rects: [{ x: 0.1, y: 0.2, w: 0.4, h: 0.05 }],
+				},
+				{
+					id: "hl-untranslated",
+					quote: "References: [1] Author et al.",
+					color: "yellow",
+					rects: [{ x: 0.1, y: 0.8, w: 0.4, h: 0.05 }],
+				},
+			],
+			layoutItems: [itemDone],
+		});
+
+		expect(result.has("hl-matched")).toBe(true);
+		expect(result.has("hl-untranslated")).toBe(false);
+	});
+
+	it("does not suppress highlights when the layout item is pending or unpainted", () => {
+		const itemPending: LayoutTranslateItem = {
+			...itemDone,
+			status: "pending",
+			translated: undefined,
+		};
+		const itemErrorClean: LayoutTranslateItem = {
+			...itemDone,
+			status: "error",
+			translated: undefined,
+			error: "Network error",
+		};
+
+		const resultPending = resolveTranslatedHighlightIds({
+			highlightQuotes: [
+				{
+					id: "hl-1",
+					quote: "First sentence.",
+					color: "yellow",
+					rects: [{ x: 0.1, y: 0.2, w: 0.4, h: 0.05 }],
+				},
+			],
+			layoutItems: [itemPending],
+		});
+		expect(resultPending.has("hl-1")).toBe(false);
+
+		const resultError = resolveTranslatedHighlightIds({
+			highlightQuotes: [
+				{
+					id: "hl-1",
+					quote: "First sentence.",
+					color: "yellow",
+					rects: [{ x: 0.1, y: 0.2, w: 0.4, h: 0.05 }],
+				},
+			],
+			layoutItems: [itemErrorClean],
+		});
+		expect(resultError.has("hl-1")).toBe(false);
 	});
 });
