@@ -728,6 +728,25 @@
 	);
 }
 
+/*
+ * Linux WebKitGTK can draw native overlay scrollbars above tooltips and menus.
+ * Hide page scrollbars while a floating layer is open, keeping the floating
+ * layer's own scrollbars. Enabled only on Linux desktop (lib/core/scrollbars.ts).
+ * Keep the selector list to real scrollers: it is restyled on every open / close.
+ */
+html[data-linux-scrollbars]:has(
+	body > :is([data-radix-popper-content-wrapper], [data-viewport-floating])
+)
+:is(
+	.agentero-scroll,
+	.agentero-scroll-both,
+	.overflow-auto,
+	.overflow-x-auto,
+	.overflow-y-auto
+):not(:is([data-radix-popper-content-wrapper], [data-viewport-floating]) *) {
+	scrollbar-width: none;
+}
+
 /* dockview: map native theme class to app design tokens */
 .agentero-dockview,
 .agentero-dockview-theme {
