@@ -60,6 +60,7 @@ import { CitationLinkLayer } from "@/components/viewer/pdf/layers/citation-links
 import { CommentCardsLayer } from "@/components/viewer/pdf/layers/comment-cards-layer";
 import { HighlightAnnotationMenu } from "@/components/viewer/pdf/layers/highlight-annotation-menu";
 import { LayoutTranslateOverlay } from "@/components/viewer/pdf/layers/layout-translate-overlay";
+import { PASSIVE_LINK_RENDERER } from "@/components/viewer/pdf/layers/link-annotation";
 import { PdfTextSelectionLayer } from "@/components/viewer/pdf/layers/pdf-text-selection-layer";
 import { PdfRegionSelectLayer } from "@/components/viewer/pdf/layers/region-select-layer";
 import { SelectionGutter } from "@/components/viewer/pdf/layers/selection-gutter";
@@ -143,8 +144,9 @@ const PASSIVE_HIGHLIGHT_RENDERER: BoxedAnnotationRenderer = {
 	useAppearanceStream: false,
 };
 
-const PASSIVE_HIGHLIGHT_RENDERERS: BoxedAnnotationRenderer[] = [
+const READING_ANNOTATION_RENDERERS: BoxedAnnotationRenderer[] = [
 	PASSIVE_HIGHLIGHT_RENDERER,
+	PASSIVE_LINK_RENDERER,
 ];
 
 const EMPTY_HIGHLIGHT_SET = new Set<string>();
@@ -682,9 +684,9 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 			layout.sentenceRectsByItemId,
 		],
 	);
-	const highlightRenderers = useMemo<BoxedAnnotationRenderer[]>(() => {
+	const annotationRenderers = useMemo<BoxedAnnotationRenderer[]>(() => {
 		if (!translationVisible || resolvedTranslatedIds.size === 0) {
-			return PASSIVE_HIGHLIGHT_RENDERERS;
+			return READING_ANNOTATION_RENDERERS;
 		}
 		return [
 			{
@@ -698,6 +700,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 					return PASSIVE_HIGHLIGHT_RENDERER.render(props);
 				},
 			},
+			PASSIVE_LINK_RENDERER,
 		];
 	}, [translationVisible, resolvedTranslatedIds]);
 
@@ -939,8 +942,8 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				{/*
 				 * AnnotationLayer is not inverted with the page rasters. In PDF dark
 				 * mode its bright highlight colors look glaring on dark paper, so
-				 * dim/saturation-reduce the whole layer slightly. Link annotations
-				 * are affected too but remain legible.
+				 * dim/saturation-reduce the whole layer slightly. Links keep only
+				 * their border appearance; CitationLinkLayer owns navigation.
 				 */}
 				{!mode.plainViewer ? (
 					<div
@@ -948,14 +951,16 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 							// Above translation paper (z-3), under glyphs (z-6), same
 							// slot as the selection tint. The highlight menu lifts the
 							// layer so it stays clickable over the glyphs.
-							"absolute inset-0 z-[5] has-[[data-pdf-chrome]]:z-[7]",
+							// Empty areas pass through to citation hits (z-2). Annotation
+							// controls opt back into pointers on their own elements.
+							"pointer-events-none absolute inset-0 z-[5] has-[[data-pdf-chrome]]:z-[7]",
 							pdfDark && PDF_ANNOTATION_DARK_CLASS,
 						)}
 					>
 						<AnnotationLayer
 							documentId={docId}
 							pageIndex={pageIndex}
-							annotationRenderers={highlightRenderers}
+							annotationRenderers={annotationRenderers}
 							selectionMenu={(menuProps) => (
 								<HighlightAnnotationMenu
 									{...menuProps}

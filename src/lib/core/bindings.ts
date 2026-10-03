@@ -5512,7 +5512,11 @@ export type ZoteroMigrateArgs = {
 export type ZoteroMigrateResult = {
 	imported: number,
 	skipped: number,
-	/**  Zotero item types deliberately excluded from migration (currently computerProgram). */
+	/**
+	 *  Zotero item types intentionally outside Agentero's paper model (currently
+	 *  `computerProgram`). Kept separate from duplicate skips for an auditable
+	 *  source-item total.
+	 */
 	ignoredUnsupported: number,
 	copiedPdfs: number,
 	/**  Zotero notes backfilled into existing papers' NOTES.md (already-present papers). */
