@@ -82,6 +82,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	paperTreeLabelMode: "title-author",
 	paperTreeSortMode: "folder",
 	autoUpdateInternalLinks: "ask",
+	pdfScrollStrategy: "vertical",
+	pdfSpreadMode: "none",
 	paperNoteMode: "standard",
 	autoOpenPaperNotes: true,
 	autoIngest: true,

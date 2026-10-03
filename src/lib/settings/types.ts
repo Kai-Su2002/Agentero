@@ -88,6 +88,40 @@ export const AUTO_UPDATE_INTERNAL_LINKS: AutoUpdateInternalLinks[] = [
 	"always",
 ];
 
+/** PDF continuous-scroll direction (EmbedPDF scroll strategy). */
+export type PdfScrollStrategy = "vertical" | "horizontal";
+
+export const PDF_SCROLL_STRATEGIES: readonly PdfScrollStrategy[] = [
+	"vertical",
+	"horizontal",
+] as const;
+
+export function isPdfScrollStrategy(v: unknown): v is PdfScrollStrategy {
+	return (
+		typeof v === "string" &&
+		(PDF_SCROLL_STRATEGIES as readonly string[]).includes(v)
+	);
+}
+
+/**
+ * PDF page layout (EmbedPDF spread mode): one page per row (`none`), or
+ * two-page spreads paired from page 1 (`odd`) / after a standalone cover
+ * (`even`).
+ */
+export type PdfSpreadMode = "none" | "odd" | "even";
+
+export const PDF_SPREAD_MODES: readonly PdfSpreadMode[] = [
+	"none",
+	"odd",
+	"even",
+] as const;
+
+export function isPdfSpreadMode(v: unknown): v is PdfSpreadMode {
+	return (
+		typeof v === "string" && (PDF_SPREAD_MODES as readonly string[]).includes(v)
+	);
+}
+
 /**
  * How NOTES.md is initialized when a paper is imported.
  * - `standard`: built-in structured skeleton
@@ -141,6 +175,16 @@ export type AppSettings = {
 	paperTreeSortMode: PaperTreeSortMode;
 	/** Default `ask`: external local renames are previewed before Markdown writes. */
 	autoUpdateInternalLinks: AutoUpdateInternalLinks;
+	/**
+	 * PDF reader continuous-scroll direction. `vertical` (default) stacks pages
+	 * in a column; `horizontal` lays them in a row.
+	 */
+	pdfScrollStrategy: PdfScrollStrategy;
+	/**
+	 * PDF reader page layout: `none` (default) = one page per row, `odd`/`even`
+	 * = two-page spreads (paired from page 1 / after a standalone cover).
+	 */
+	pdfSpreadMode: PdfSpreadMode;
 	/**
 	 * How NOTES.md is initialized on paper import. `custom` copies the vault
 	 * template `.agentero/templates/NOTES.md`. Default: built-in skeleton.

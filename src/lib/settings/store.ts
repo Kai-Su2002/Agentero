@@ -39,6 +39,8 @@ import {
 	type EmbeddingSource,
 	isConfigReminderId,
 	isPaperNoteMode,
+	isPdfScrollStrategy,
+	isPdfSpreadMode,
 	type JevSettings,
 	LIBRARY_COLUMN_KEYS,
 	type LibraryColumnKey,
@@ -369,6 +371,12 @@ function normalizePartial(
 		merged.autoUpdateInternalLinks !== "always"
 	) {
 		merged.autoUpdateInternalLinks = DEFAULT_SETTINGS.autoUpdateInternalLinks;
+	}
+	if (!isPdfScrollStrategy(merged.pdfScrollStrategy)) {
+		merged.pdfScrollStrategy = DEFAULT_SETTINGS.pdfScrollStrategy;
+	}
+	if (!isPdfSpreadMode(merged.pdfSpreadMode)) {
+		merged.pdfSpreadMode = DEFAULT_SETTINGS.pdfSpreadMode;
 	}
 	merged.libraryColumns = normalizeLibraryColumns(merged.libraryColumns);
 	if (typeof parsed.autoPaperReader !== "boolean") {

@@ -111,6 +111,12 @@ pub struct AppSettings {
     pub replace_current_tab_on_open_paper: bool,
     #[serde(default = "default_auto_update_internal_links")]
     pub auto_update_internal_links: String,
+    /// PDF continuous-scroll direction: `vertical` | `horizontal`.
+    #[serde(default = "default_pdf_scroll_strategy")]
+    pub pdf_scroll_strategy: String,
+    /// PDF page layout: `none` (single page) | `odd` | `even` (two-page spread).
+    #[serde(default = "default_pdf_spread_mode")]
+    pub pdf_spread_mode: String,
     #[serde(default = "default_library_columns")]
     pub library_columns: Vec<LibraryColumnPref>,
     #[serde(default)]
@@ -374,6 +380,8 @@ impl Default for AppSettings {
             auto_ingest: default_true(),
             replace_current_tab_on_open_paper: false,
             auto_update_internal_links: default_auto_update_internal_links(),
+            pdf_scroll_strategy: default_pdf_scroll_strategy(),
+            pdf_spread_mode: default_pdf_spread_mode(),
             library_columns: default_library_columns(),
             connector_enabled: false,
             connector_port: default_connector_port(),
@@ -436,6 +444,12 @@ fn default_paper_note_mode() -> String {
 }
 fn default_auto_update_internal_links() -> String {
     "ask".into()
+}
+fn default_pdf_scroll_strategy() -> String {
+    "vertical".into()
+}
+fn default_pdf_spread_mode() -> String {
+    "none".into()
 }
 /// Canonical papers-Library column keys, in default order.
 const LIBRARY_COLUMN_KEYS: &[&str] = &[
@@ -1058,6 +1072,14 @@ fn normalize(s: &mut AppSettings) {
     if !AUTO_UPDATE_INTERNAL_LINKS.contains(&s.auto_update_internal_links.as_str()) {
         s.auto_update_internal_links = default_auto_update_internal_links();
     }
+    const PDF_SCROLL_STRATEGIES: &[&str] = &["vertical", "horizontal"];
+    if !PDF_SCROLL_STRATEGIES.contains(&s.pdf_scroll_strategy.as_str()) {
+        s.pdf_scroll_strategy = default_pdf_scroll_strategy();
+    }
+    const PDF_SPREAD_MODES: &[&str] = &["none", "odd", "even"];
+    if !PDF_SPREAD_MODES.contains(&s.pdf_spread_mode.as_str()) {
+        s.pdf_spread_mode = default_pdf_spread_mode();
+    }
 
     // Library columns: drop unknown/duplicate keys, append missing ones
     // with their default visibility, and keep `title` visible.
@@ -1589,6 +1611,18 @@ mod tests {
         };
         normalize(&mut s);
         assert_eq!(s.paper_note_mode, "standard");
+    }
+
+    #[test]
+    fn normalize_rejects_unknown_pdf_reading_modes() {
+        let mut s = AppSettings {
+            pdf_scroll_strategy: "diagonal".into(),
+            pdf_spread_mode: "triple".into(),
+            ..AppSettings::default()
+        };
+        normalize(&mut s);
+        assert_eq!(s.pdf_scroll_strategy, "vertical");
+        assert_eq!(s.pdf_spread_mode, "none");
     }
 
     #[test]

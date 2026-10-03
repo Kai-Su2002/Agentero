@@ -74,6 +74,10 @@ import {
 	type AutoUpdateInternalLinks,
 	PAPER_NOTE_MODES,
 	type PaperNoteMode,
+	PDF_SCROLL_STRATEGIES,
+	PDF_SPREAD_MODES,
+	type PdfScrollStrategy,
+	type PdfSpreadMode,
 	saveSettingsAsync,
 } from "@/lib/settings";
 import { DEFAULT_NETWORK_PROXY_URL } from "@/lib/settings/defaults";
@@ -282,6 +286,44 @@ export function GeneralPane({
 							{AUTO_UPDATE_INTERNAL_LINKS.map((mode) => (
 								<SelectItem key={mode} value={mode}>
 									{t(`general.autoUpdateInternalLinks.${mode}`)}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</SettingsRow>
+				<SettingsRow label={t("general.pdfScrollStrategy.label")}>
+					<Select
+						value={settings.pdfScrollStrategy}
+						onValueChange={(value) =>
+							patch({ pdfScrollStrategy: value as PdfScrollStrategy })
+						}
+					>
+						<SelectTrigger size="sm" className="min-w-[180px] max-w-[240px]">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{PDF_SCROLL_STRATEGIES.map((strategy) => (
+								<SelectItem key={strategy} value={strategy}>
+									{t(`general.pdfScrollStrategy.${strategy}`)}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</SettingsRow>
+				<SettingsRow label={t("general.pdfSpreadMode.label")}>
+					<Select
+						value={settings.pdfSpreadMode}
+						onValueChange={(value) =>
+							patch({ pdfSpreadMode: value as PdfSpreadMode })
+						}
+					>
+						<SelectTrigger size="sm" className="min-w-[180px] max-w-[240px]">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{PDF_SPREAD_MODES.map((mode) => (
+								<SelectItem key={mode} value={mode}>
+									{t(`general.pdfSpreadMode.${mode}`)}
 								</SelectItem>
 							))}
 						</SelectContent>

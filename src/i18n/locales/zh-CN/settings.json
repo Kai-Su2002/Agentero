@@ -97,6 +97,17 @@
 			"ask": "询问",
 			"always": "始终（安全时）"
 		},
+		"pdfScrollStrategy": {
+			"label": "PDF 滚动方向",
+			"vertical": "纵向",
+			"horizontal": "横向"
+		},
+		"pdfSpreadMode": {
+			"label": "PDF 页面版式",
+			"none": "单页",
+			"odd": "双页（从第 1 页配对）",
+			"even": "双页（封面单独）"
+		},
 		"batchImportConcurrency": {
 			"label": "后台任务并发数",
 			"value": "同时 {{value}} 个"

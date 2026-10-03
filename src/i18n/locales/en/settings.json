@@ -97,6 +97,17 @@
 			"ask": "Ask",
 			"always": "Always when safe"
 		},
+		"pdfScrollStrategy": {
+			"label": "PDF scroll direction",
+			"vertical": "Vertical",
+			"horizontal": "Horizontal"
+		},
+		"pdfSpreadMode": {
+			"label": "PDF page layout",
+			"none": "Single page",
+			"odd": "Two-page (from page 1)",
+			"even": "Two-page (cover separate)"
+		},
 		"batchImportConcurrency": {
 			"label": "Background task concurrency",
 			"value": "{{value}} simultaneous"

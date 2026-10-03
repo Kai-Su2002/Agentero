@@ -30,6 +30,7 @@ import {
 	type PageLayout,
 	Scroller,
 	ScrollPluginPackage,
+	ScrollStrategy,
 	useScroll,
 } from "@embedpdf/plugin-scroll/react";
 import { SearchPluginPackage, useSearch } from "@embedpdf/plugin-search/react";
@@ -38,6 +39,7 @@ import {
 	SelectionPluginPackage,
 	useSelectionCapability,
 } from "@embedpdf/plugin-selection/react";
+import { SpreadMode, SpreadPluginPackage } from "@embedpdf/plugin-spread/react";
 import { TilingPluginPackage } from "@embedpdf/plugin-tiling/react";
 import { ViewportPluginPackage } from "@embedpdf/plugin-viewport/react";
 import {
@@ -81,6 +83,7 @@ import { usePdfOutline } from "@/components/viewer/pdf/hooks/use-pdf-outline";
 import { usePdfPageText } from "@/components/viewer/pdf/hooks/use-pdf-page-text";
 import { usePdfPaperTone } from "@/components/viewer/pdf/hooks/use-pdf-paper-tone";
 import { usePdfPinAnchors } from "@/components/viewer/pdf/hooks/use-pdf-pin-anchors";
+import { usePdfReadingMode } from "@/components/viewer/pdf/hooks/use-pdf-reading-mode";
 import { usePdfRegionFraming } from "@/components/viewer/pdf/hooks/use-pdf-region-framing";
 import { usePdfScrollSync } from "@/components/viewer/pdf/hooks/use-pdf-scroll-sync";
 import { usePdfSelectionActions } from "@/components/viewer/pdf/hooks/use-pdf-selection-actions";
@@ -155,6 +158,7 @@ import {
 	translateHighlightsFingerprint,
 } from "@/lib/pdf/translate/highlights";
 import { PDF_ZOOM_MAX, PDF_ZOOM_MIN } from "@/lib/pdf/zoom";
+import { loadSettings } from "@/lib/settings";
 import { basenameOf } from "@/lib/vault/path";
 import { openLatexTranslationTab } from "@/lib/workspace/actions-latex-translation";
 
@@ -221,15 +225,34 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 		// Translation pane only needs raster + scroll/zoom. Skipping selection /
 		// annotation / search / ONNX layout avoids a second full viewer tax when
 		// dual-pane translation opens beside the source.
+		//
+		// Reading mode is a snapshot at registration so the first layout already
+		// matches the stored preference (no vertical→horizontal flash); later
+		// changes are applied live by `usePdfReadingMode`.
+		const reading = loadSettings();
 		const core = [
 			createPluginRegistration(DocumentManagerPluginPackage, {
 				initialDocuments: [initialDocument],
 			}),
 			createPluginRegistration(ViewportPluginPackage),
+			// Must precede the scroll plugin: its constructor resolves the
+			// optional spread plugin to group pages into one/two-page rows.
+			createPluginRegistration(SpreadPluginPackage, {
+				defaultSpreadMode:
+					reading.pdfSpreadMode === "odd"
+						? SpreadMode.Odd
+						: reading.pdfSpreadMode === "even"
+							? SpreadMode.Even
+							: SpreadMode.None,
+			}),
 			createPluginRegistration(ScrollPluginPackage, {
 				// Manifest default (4) keeps ~8 off-screen pages mounted, and every
 				// mounted page re-renders whenever the scroller layout changes.
 				defaultBufferSize: translationOnly ? 1 : 2,
+				defaultStrategy:
+					reading.pdfScrollStrategy === "horizontal"
+						? ScrollStrategy.Horizontal
+						: ScrollStrategy.Vertical,
 			}),
 			createPluginRegistration(RenderPluginPackage),
 			createPluginRegistration(TilingPluginPackage, {
@@ -428,6 +451,7 @@ function PdfViewerInner({
 	const { provides: zoom, state: zoomState } = useZoom(docId);
 	const { provides: scroll, state: scrollState } = useScroll(docId);
 	usePdfScrollSync(docId);
+	usePdfReadingMode(docId);
 	const { provides: selectionCap } = useSelectionCapability();
 	const { provides: interactionCap } = useInteractionManagerCapability();
 	const { provides: annotationCap } = useAnnotationCapability();
