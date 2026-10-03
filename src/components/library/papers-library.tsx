@@ -44,6 +44,7 @@ import {
 	type LibraryColumnPref,
 	useUiScale,
 } from "@/lib/settings";
+import { setHoveredPaperPath } from "@/lib/shell/ui-store";
 import { joinVaultPath } from "@/lib/vault";
 import { isRemoteVaultHandle } from "@/lib/vault/remote/remote-vault";
 
@@ -126,6 +127,13 @@ export function PapersLibrary({
 	}, [query, commitSearch]);
 
 	useEffect(() => () => commitSearch.cancel(), [commitSearch]);
+
+	// Preview hovered rows in the left Paper Info panel; clear once the table
+	// loses focus or unmounts so a stale preview never lingers.
+	useEffect(() => {
+		if (!active) setHoveredPaperPath(null);
+	}, [active]);
+	useEffect(() => () => setHoveredPaperPath(null), []);
 
 	const onSearchInputChange = useCallback(
 		(value: string) => {
@@ -316,6 +324,8 @@ export function PapersLibrary({
 		}
 		let idleTimer: ReturnType<typeof setTimeout> | null = null;
 		const onScroll = () => {
+			// Rows can unmount under a still pointer while scrolling.
+			setHoveredPaperPath(null);
 			setHeaderCompact((prev) => (prev ? prev : true));
 			if (idleTimer) clearTimeout(idleTimer);
 			idleTimer = setTimeout(() => {
@@ -396,8 +406,10 @@ export function PapersLibrary({
 		const empty = rows.length === 0;
 		body = (
 			<>
+				{/* biome-ignore lint/a11y/noStaticElementInteractions: hover only clears the Paper Info preview */}
 				<div
 					ref={setScrollEl}
+					onMouseLeave={() => setHoveredPaperPath(null)}
 					className={cn(
 						"agentero-scroll-both min-w-0",
 						empty ? "h-auto" : "min-h-0 flex-1",
@@ -479,6 +491,7 @@ export function PapersLibrary({
 										onOpenPaper={openPaperFromRow}
 										onRowClick={onRowClick}
 										onRefreshMetadata={handleRefreshPaperMetadata}
+										onHoverPaper={setHoveredPaperPath}
 										measureRef={rowVirtualizer.measureElement}
 									/>
 								);

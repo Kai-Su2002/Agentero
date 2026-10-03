@@ -20,7 +20,7 @@ import {
 	useVaultStore,
 	useWorkspaceStore,
 } from "@/hooks/use-app-stores";
-import type { PaperMetadata, PaperTag } from "@/lib/paper";
+import type { PaperTag } from "@/lib/paper";
 import { resolvePapersParentDir } from "@/lib/paper";
 import {
 	dropLocalPdfs,
@@ -97,6 +97,13 @@ const onEmptyTrash = () => void emptyTrash();
 const onExportLibrary = () => void libraryExport();
 const onDiscoverCiting = () => void discoverCitingPapers();
 
+/** Catalog keys are vault-relative with forward slashes and no edge slashes. */
+function normalizePaperRelPath(path: string | null | undefined): string | null {
+	if (!path) return null;
+	const normalized = path.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+	return normalized || null;
+}
+
 export function VaultSidebar() {
 	const fileTreeRef = useRef<FileTreeHandle>(null);
 	const [treeSelectionCount, setTreeSelectionCount] = useState(0);
@@ -118,42 +125,32 @@ export function VaultSidebar() {
 	const paperMetaByRelPath = useLibraryStore((s) => s.paperMetaByRelPath);
 	const papers = useLibraryStore((s) => s.papers);
 	const lookupOpenSignal = useUiStore((s) => s.lookupOpenSignal);
+	const hoveredPaperPath = useUiStore((s) => s.hoveredPaperPath);
 	const paperTreeLabelMode = useSettings((s) => s.paperTreeLabelMode);
 	const paperTreeSortMode = useSettings((s) => s.paperTreeSortMode);
 	const paperMeta = useWorkspaceStore(
 		(s) => s.tabs.find((tab) => tab.id === s.activeTabId)?.paperMeta ?? null,
 	);
-	const [lastPaper, setLastPaper] = useState<{
-		vaultPath: string | null;
-		meta: PaperMetadata | null;
-	}>({ vaultPath: null, meta: null });
 
-	useEffect(() => {
-		if (paperMeta) {
-			setLastPaper({ vaultPath, meta: paperMeta });
-			return;
-		}
-		setLastPaper((previous) =>
-			previous.vaultPath === vaultPath ? previous : { vaultPath, meta: null },
-		);
-	}, [paperMeta, vaultPath]);
-
-	const selectedPaperMeta =
-		paperMeta ?? (lastPaper.vaultPath === vaultPath ? lastPaper.meta : null);
-	// Library tag edits update the catalog store while the open tab may retain an older snapshot.
-	const selectedPaperPath = selectedPaperMeta?.path
-		.replace(/\\/g, "/")
-		.replace(/^\/+|\/+$/g, "");
-	const displayedPaperMeta = selectedPaperPath
-		? (paperMetaByRelPath.get(selectedPaperPath) ?? selectedPaperMeta)
-		: selectedPaperMeta;
+	// Prefer the catalog snapshot: library tag edits update it while the open
+	// tab may still hold an older copy.
+	const activePaperPath = normalizePaperRelPath(paperMeta?.path);
+	const activePaperMeta = activePaperPath
+		? (paperMetaByRelPath.get(activePaperPath) ?? paperMeta)
+		: paperMeta;
+	// Hovering a Library row previews that paper without opening it.
+	const hoveredPaperKey = normalizePaperRelPath(hoveredPaperPath);
+	const hoveredPaperMeta = hoveredPaperKey
+		? (paperMetaByRelPath.get(hoveredPaperKey) ?? null)
+		: null;
+	// Auto-hide on non-paper surfaces; only papers and Library hover are shown.
+	const displayedPaperMeta = activePaperMeta ?? hoveredPaperMeta;
 	const onPaperTagsChange = useCallback(
 		async (tags: PaperTag[]) => {
 			if (!displayedPaperMeta) return;
-			const updated = await paperTagsChange(displayedPaperMeta, tags);
-			if (updated) setLastPaper({ vaultPath, meta: updated });
+			await paperTagsChange(displayedPaperMeta, tags);
 		},
-		[displayedPaperMeta, vaultPath],
+		[displayedPaperMeta],
 	);
 	const onOpenZoteroCollectionPaper = useCallback(
 		(relPath: string) => {
