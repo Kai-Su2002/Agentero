@@ -95,6 +95,7 @@ import { usePdfZoomControls } from "@/components/viewer/pdf/hooks/use-pdf-zoom-c
 import { useStableDerived } from "@/components/viewer/pdf/hooks/use-stable-derived";
 import { excludeOverlappingPdfTextLinks } from "@/components/viewer/pdf/layers/citation-links";
 import { COMMENT_RAIL_WIDTH_PX } from "@/components/viewer/pdf/layers/comment-cards-layer";
+import { PDF_LINK_ANNOTATION_CONFIG } from "@/components/viewer/pdf/layers/link-annotation";
 import {
 	type PdfPageHandlers,
 	PdfPageLayers,
@@ -259,6 +260,7 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 				marquee: { enabled: false },
 			}),
 			createPluginRegistration(AnnotationPluginPackage, {
+				...PDF_LINK_ANNOTATION_CONFIG,
 				annotationAuthor: "Agentero",
 				colorPresets: HIGHLIGHT_HEX_LIST,
 				selectAfterCreate: false,
