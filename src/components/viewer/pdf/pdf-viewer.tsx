@@ -118,7 +118,6 @@ import type {
 } from "@/components/viewer/pdf/types";
 import { ActiveCardScrollSync } from "@/components/viewer/pdf/viewport/active-card-scroll-sync";
 import { DockviewViewport } from "@/components/viewer/pdf/viewport/dockview-viewport";
-import { PagedNavigationHandler } from "@/components/viewer/pdf/viewport/paged-navigation-handler";
 import { PanDragHandler } from "@/components/viewer/pdf/viewport/pan-handler";
 import { WheelZoomHandler } from "@/components/viewer/pdf/viewport/wheel-zoom-handler";
 import { useLibraryStore, useSettings } from "@/hooks/use-app-stores";
@@ -267,10 +266,7 @@ export const PdfViewer = memo(function PdfViewer(props: PdfViewerProps) {
 				tileSize: 1024,
 			}),
 			createPluginRegistration(ZoomPluginPackage, {
-				defaultZoomLevel:
-					reading.pdfReadingMode === "paged"
-						? ZoomMode.FitPage
-						: ZoomMode.FitWidth,
+				defaultZoomLevel: ZoomMode.FitWidth,
 				minZoom: PDF_ZOOM_MIN,
 				maxZoom: PDF_ZOOM_MAX,
 			}),
@@ -526,7 +522,6 @@ function PdfViewerInner({
 	const dualPaneSource = useSettings((s) => s.translate.dualPaneSource);
 	const dualPaneTranslate = displayMode === "dualPane";
 	const smartHighlightEnabled = useSettings((s) => s.jev.smartHighlight);
-	const pdfReadingMode = useSettings((s) => s.pdfReadingMode);
 	const paperMeta = useMemo(() => {
 		if (paperMetaProp) return paperMetaProp;
 		if (!paperRelPath) return undefined;
@@ -1945,12 +1940,6 @@ function PdfViewerInner({
 					active={isActive}
 					hostRef={hostRef}
 					allowLeftDrag={!translationOnly && !regionSelecting}
-				/>
-				<PagedNavigationHandler
-					docId={docId}
-					paged={pdfReadingMode === "paged"}
-					active={isActive}
-					hostRef={hostRef}
 				/>
 				<ActiveCardScrollSync
 					active={Boolean(activeCard) || Boolean(selectionMenu)}

@@ -84,7 +84,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	autoUpdateInternalLinks: "ask",
 	pdfScrollStrategy: "vertical",
 	pdfSpreadMode: "none",
-	pdfReadingMode: "continuous",
 	paperNoteMode: "standard",
 	autoOpenPaperNotes: true,
 	autoIngest: true,

@@ -46,7 +46,6 @@ export type {
 	LibraryColumnPref,
 	LocalePreference,
 	PaperNoteMode,
-	PdfReadingMode,
 	PdfScrollStrategy,
 	PdfSpreadMode,
 	ThemePreference,
@@ -58,7 +57,6 @@ export {
 	AUTO_UPDATE_INTERNAL_LINKS,
 	DEFAULT_LIBRARY_COLUMNS,
 	PAPER_NOTE_MODES,
-	PDF_READING_MODES,
 	PDF_SCROLL_STRATEGIES,
 	PDF_SPREAD_MODES,
 } from "@/lib/settings/types";

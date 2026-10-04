@@ -39,7 +39,6 @@ import {
 	type EmbeddingSource,
 	isConfigReminderId,
 	isPaperNoteMode,
-	isPdfReadingMode,
 	isPdfScrollStrategy,
 	isPdfSpreadMode,
 	type JevSettings,
@@ -378,9 +377,6 @@ function normalizePartial(
 	}
 	if (!isPdfSpreadMode(merged.pdfSpreadMode)) {
 		merged.pdfSpreadMode = DEFAULT_SETTINGS.pdfSpreadMode;
-	}
-	if (!isPdfReadingMode(merged.pdfReadingMode)) {
-		merged.pdfReadingMode = DEFAULT_SETTINGS.pdfReadingMode;
 	}
 	merged.libraryColumns = normalizeLibraryColumns(merged.libraryColumns);
 	if (typeof parsed.autoPaperReader !== "boolean") {

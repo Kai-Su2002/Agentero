@@ -28,65 +28,6 @@ export function isEditableClipboardTarget(target: EventTarget | null): boolean {
 	);
 }
 
-/**
- * Space must still activate these rather than being claimed as a bare key — the
- * roles that natively respond to Space, matching the list `index.css` keeps
- * unselectable.
- */
-const INTERACTIVE_SELECTOR = [
-	"button",
-	"a",
-	"summary",
-	"select",
-	"[role='button']",
-	"[role='tab']",
-	"[role='menuitem']",
-	"[role='menuitemcheckbox']",
-	"[role='menuitemradio']",
-	"[role='option']",
-	"[role='radio']",
-	"[role='checkbox']",
-	"[role='switch']",
-	"[role='treeitem']",
-].join(", ");
-
-export function isInteractiveTarget(target: EventTarget | null): boolean {
-	return (
-		target instanceof Element && target.closest(INTERACTIVE_SELECTOR) !== null
-	);
-}
-
-/**
- * Whether a bare (unmodified) key press belongs to a PDF viewer.
- *
- * The viewer under the pointer wins, whichever panel dockview calls active:
- * focus normally sits on a tab, the sidebar, or the notes pane while reading,
- * and only one viewer can be hovered. Not hovered, it falls back to focus —
- * gated on `active` so two mounted panes cannot both claim one keypress.
- * Editable and button-like targets keep their native key behavior.
- */
-export function viewerOwnsBareKey(options: {
-	host: HTMLElement | null;
-	active: boolean;
-	target: EventTarget | null;
-}): boolean {
-	const { host, active, target } = options;
-	if (!host) return false;
-	if (isEditableClipboardTarget(target)) return false;
-	if (isInteractiveTarget(target)) return false;
-	if (host.matches(":hover")) return true;
-	if (!active) return false;
-	// Clicking a page never moves focus off `body`, so a neutral focus still
-	// belongs to the viewer the user last clicked even after the pointer leaves.
-	const focused = document.activeElement;
-	return (
-		!focused ||
-		focused === document.body ||
-		focused === document.documentElement ||
-		host.contains(focused)
-	);
-}
-
 export function nativeSelectionBelongsToHost(
 	host: HTMLElement | null,
 ): boolean {

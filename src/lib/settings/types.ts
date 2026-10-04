@@ -123,24 +123,6 @@ export function isPdfSpreadMode(v: unknown): v is PdfSpreadMode {
 }
 
 /**
- * PDF reading interaction: `continuous` free scroll (default), or `paged`
- * (one page/spread per screen, wheel/keys flip).
- */
-export type PdfReadingMode = "continuous" | "paged";
-
-export const PDF_READING_MODES: readonly PdfReadingMode[] = [
-	"continuous",
-	"paged",
-] as const;
-
-export function isPdfReadingMode(v: unknown): v is PdfReadingMode {
-	return (
-		typeof v === "string" &&
-		(PDF_READING_MODES as readonly string[]).includes(v)
-	);
-}
-
-/**
  * How NOTES.md is initialized when a paper is imported.
  * - `standard`: built-in structured skeleton
  * - `title-only`: title heading only
@@ -203,11 +185,6 @@ export type AppSettings = {
 	 * = two-page spreads (paired from page 1 / after a standalone cover).
 	 */
 	pdfSpreadMode: PdfSpreadMode;
-	/**
-	 * PDF reading interaction: `continuous` (default) free scroll, or `paged`
-	 * one page/spread per screen with wheel / PageUp·Down / arrow flipping.
-	 */
-	pdfReadingMode: PdfReadingMode;
 	/**
 	 * How NOTES.md is initialized on paper import. `custom` copies the vault
 	 * template `.agentero/templates/NOTES.md`. Default: built-in skeleton.
