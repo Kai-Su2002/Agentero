@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import { orderByReadingLine } from "@/lib/pdf/layout/reading-order";
 import {
+	enrichCaptionRegionsWithText,
 	splitBodyRegionAtParagraphGaps,
 	textFromRunsInBbox,
 } from "@/lib/pdf/layout/title-text";
@@ -102,5 +103,31 @@ describe("splitBodyRegionAtParagraphGaps", () => {
 			"Our third contribution is Harbor-Index",
 			"Following sentence here.",
 		]);
+	});
+});
+
+describe("enrichCaptionRegionsWithText", () => {
+	it("replaces body text that was stored in the old top-to-bottom order", () => {
+		const region: PdfLayoutRegion = {
+			id: "body",
+			pageIndex: 2,
+			kind: "text",
+			label: "text",
+			score: 0.9,
+			readingOrder: 4,
+			rect: { x: 30, y: 120, w: 420, h: 80 },
+			bbox,
+			text: "Harbor-Index Our third contribution is",
+		};
+		const [next] = enrichCaptionRegionsWithText(
+			[region],
+			2,
+			[
+				run("Harbor-Index", 207.7, 160.5, 90, 13.6),
+				run("Our third contribution is", 108, 163.03, 90, 11),
+			],
+			page,
+		);
+		expect(next?.text).toBe("Our third contribution is Harbor-Index");
 	});
 });

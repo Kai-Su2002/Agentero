@@ -240,17 +240,20 @@ export function enrichCaptionRegionsWithText(
 
 		if (isLayoutBodyTextKind(region.kind) && region.kind !== "header") {
 			return splitBodyRegionAtParagraphGaps(region, runs, pageSize).map(
-				(segment) => ({
-					...segment,
-					text:
-						segment.text ||
-						textFromRunsInBbox(
-							runs,
-							segment.bbox,
-							pageSize.width,
-							pageSize.height,
-						),
-				}),
+				(segment) => {
+					// A box that does not split still carries previously stored
+					// text. Prefer this walk so a bad word order is replaced.
+					const fresh = textFromRunsInBbox(
+						runs,
+						segment.bbox,
+						pageSize.width,
+						pageSize.height,
+					);
+					return {
+						...segment,
+						text: fresh || segment.text,
+					};
+				},
 			);
 		}
 
