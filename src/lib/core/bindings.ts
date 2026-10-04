@@ -1460,6 +1460,11 @@ export type AppSettings_Deserialize = {
 	pdfScrollStrategy?: string,
 	/**  PDF page layout: `none` (single page) | `odd` | `even` (two-page spread). */
 	pdfSpreadMode?: string,
+	/**
+	 *  PDF reading interaction: `continuous` (free scroll) | `paged` (one
+	 *  page/spread per screen, wheel/keys flip).
+	 */
+	pdfReadingMode?: string,
 	libraryColumns?: LibraryColumnPref_Deserialize[],
 	connectorEnabled?: boolean,
 	connectorPort?: number,
@@ -1557,6 +1562,11 @@ export type AppSettings_Serialize = {
 	pdfScrollStrategy: string,
 	/**  PDF page layout: `none` (single page) | `odd` | `even` (two-page spread). */
 	pdfSpreadMode: string,
+	/**
+	 *  PDF reading interaction: `continuous` (free scroll) | `paged` (one
+	 *  page/spread per screen, wheel/keys flip).
+	 */
+	pdfReadingMode: string,
 	libraryColumns: LibraryColumnPref_Serialize[],
 	connectorEnabled: boolean,
 	connectorPort: number,

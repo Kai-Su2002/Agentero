@@ -75,8 +75,10 @@ import {
 	type AutoUpdateInternalLinks,
 	PAPER_NOTE_MODES,
 	type PaperNoteMode,
+	PDF_READING_MODES,
 	PDF_SCROLL_STRATEGIES,
 	PDF_SPREAD_MODES,
+	type PdfReadingMode,
 	type PdfScrollStrategy,
 	type PdfSpreadMode,
 	saveSettingsAsync,
@@ -322,6 +324,25 @@ export function GeneralPane({
 				{t("general.sections.pdf")}
 			</SettingsSectionLabel>
 			<SettingsGroup>
+				<SettingsRow label={t("general.pdfReadingMode.label")}>
+					<Select
+						value={settings.pdfReadingMode}
+						onValueChange={(value) =>
+							patch({ pdfReadingMode: value as PdfReadingMode })
+						}
+					>
+						<SelectTrigger size="sm" className="min-w-[180px] max-w-[240px]">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{PDF_READING_MODES.map((mode) => (
+								<SelectItem key={mode} value={mode}>
+									{t(`general.pdfReadingMode.${mode}`)}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</SettingsRow>
 				<SettingsRow label={t("general.pdfScrollStrategy.label")}>
 					<Select
 						value={settings.pdfScrollStrategy}

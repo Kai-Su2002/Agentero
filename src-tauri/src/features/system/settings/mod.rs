@@ -117,6 +117,10 @@ pub struct AppSettings {
     /// PDF page layout: `none` (single page) | `odd` | `even` (two-page spread).
     #[serde(default = "default_pdf_spread_mode")]
     pub pdf_spread_mode: String,
+    /// PDF reading interaction: `continuous` (free scroll) | `paged` (one
+    /// page/spread per screen, wheel/keys flip).
+    #[serde(default = "default_pdf_reading_mode")]
+    pub pdf_reading_mode: String,
     #[serde(default = "default_library_columns")]
     pub library_columns: Vec<LibraryColumnPref>,
     #[serde(default)]
@@ -379,6 +383,7 @@ impl Default for AppSettings {
             auto_update_internal_links: default_auto_update_internal_links(),
             pdf_scroll_strategy: default_pdf_scroll_strategy(),
             pdf_spread_mode: default_pdf_spread_mode(),
+            pdf_reading_mode: default_pdf_reading_mode(),
             library_columns: default_library_columns(),
             connector_enabled: false,
             connector_port: default_connector_port(),
@@ -446,6 +451,9 @@ fn default_pdf_scroll_strategy() -> String {
 }
 fn default_pdf_spread_mode() -> String {
     "none".into()
+}
+fn default_pdf_reading_mode() -> String {
+    "continuous".into()
 }
 /// Canonical papers-Library column keys, in default order.
 const LIBRARY_COLUMN_KEYS: &[&str] = &[
@@ -1076,6 +1084,10 @@ fn normalize(s: &mut AppSettings) {
     if !PDF_SPREAD_MODES.contains(&s.pdf_spread_mode.as_str()) {
         s.pdf_spread_mode = default_pdf_spread_mode();
     }
+    const PDF_READING_MODES: &[&str] = &["continuous", "paged"];
+    if !PDF_READING_MODES.contains(&s.pdf_reading_mode.as_str()) {
+        s.pdf_reading_mode = default_pdf_reading_mode();
+    }
 
     // Library columns: drop unknown/duplicate keys, append missing ones
     // with their default visibility, and keep `title` visible.
@@ -1614,11 +1626,13 @@ mod tests {
         let mut s = AppSettings {
             pdf_scroll_strategy: "diagonal".into(),
             pdf_spread_mode: "triple".into(),
+            pdf_reading_mode: "teleport".into(),
             ..AppSettings::default()
         };
         normalize(&mut s);
         assert_eq!(s.pdf_scroll_strategy, "vertical");
         assert_eq!(s.pdf_spread_mode, "none");
+        assert_eq!(s.pdf_reading_mode, "continuous");
     }
 
     #[test]

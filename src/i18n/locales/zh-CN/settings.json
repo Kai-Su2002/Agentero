@@ -115,6 +115,11 @@
 			"odd": "双页（从第 1 页配对）",
 			"even": "双页（封面单独）"
 		},
+		"pdfReadingMode": {
+			"label": "PDF 阅读方式",
+			"continuous": "连续滚动",
+			"paged": "分页翻页"
+		},
 		"batchImportConcurrency": {
 			"label": "后台任务并发数",
 			"value": "同时 {{value}} 个"

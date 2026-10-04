@@ -1,38 +1,14 @@
 import { useViewportElement } from "@embedpdf/plugin-viewport/react";
 import { type RefObject, useEffect, useRef } from "react";
-import { isEditableClipboardTarget } from "@/components/viewer/pdf/host-dom";
+import {
+	isEditableClipboardTarget,
+	viewerOwnsBareKey,
+} from "@/components/viewer/pdf/host-dom";
 import { bindPanDragGesture } from "@/lib/pdf/pan-drag";
 
 /** Cursor feedback classes; the stylesheet overrides EmbedPDF's inline cursor. */
 const PAN_READY_CLASS = "agentero-pdf-pan-ready";
 const PANNING_CLASS = "agentero-pdf-panning";
-
-/**
- * Space must still activate these rather than arm the hand tool — the roles that
- * natively respond to Space, matching the list `index.css` keeps unselectable.
- */
-const INTERACTIVE_SELECTOR = [
-	"button",
-	"a",
-	"summary",
-	"select",
-	"[role='button']",
-	"[role='tab']",
-	"[role='menuitem']",
-	"[role='menuitemcheckbox']",
-	"[role='menuitemradio']",
-	"[role='option']",
-	"[role='radio']",
-	"[role='checkbox']",
-	"[role='switch']",
-	"[role='treeitem']",
-].join(", ");
-
-function isInteractiveTarget(target: EventTarget | null): boolean {
-	return (
-		target instanceof Element && target.closest(INTERACTIVE_SELECTOR) !== null
-	);
-}
 
 type PanDragHandlerProps = {
 	/** Gates the focus fallback for the bare Space key; hover claims without it. */
@@ -106,28 +82,12 @@ export function PanDragHandler({
 		document.addEventListener("pointercancel", endDragAnywhere, true);
 
 		/** Whether this viewer owns a bare Space keydown. */
-		const ownsSpaceKey = (target: EventTarget | null): boolean => {
-			const host = hostRef.current;
-			if (!host) return false;
-			if (isEditableClipboardTarget(target)) return false;
-			if (isInteractiveTarget(target)) return false;
-			// The viewer under the pointer owns Space whichever panel dockview calls
-			// active: focus normally sits on a tab, the sidebar or the notes pane while
-			// the user reads, and only one viewer can be hovered.
-			if (host.matches(":hover")) return true;
-			// Not hovered, so fall back to focus — gated on `active` so two mounted
-			// panes cannot both arm from one keypress.
-			if (!activeRef.current) return false;
-			// Clicking a page never moves focus off `body`, so a neutral focus still
-			// belongs to the viewer the user last clicked even after the pointer leaves.
-			const focused = document.activeElement;
-			return (
-				!focused ||
-				focused === document.body ||
-				focused === document.documentElement ||
-				host.contains(focused)
-			);
-		};
+		const ownsSpaceKey = (target: EventTarget | null): boolean =>
+			viewerOwnsBareKey({
+				host: hostRef.current,
+				active: activeRef.current,
+				target,
+			});
 
 		const isSpaceKey = (event: KeyboardEvent) =>
 			event.key === " " || event.code === "Space";

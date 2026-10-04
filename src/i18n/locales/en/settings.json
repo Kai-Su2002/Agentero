@@ -115,6 +115,11 @@
 			"odd": "Two-page (from page 1)",
 			"even": "Two-page (cover separate)"
 		},
+		"pdfReadingMode": {
+			"label": "PDF reading mode",
+			"continuous": "Continuous scroll",
+			"paged": "Page by page"
+		},
 		"batchImportConcurrency": {
 			"label": "Background task concurrency",
 			"value": "{{value}} simultaneous"
