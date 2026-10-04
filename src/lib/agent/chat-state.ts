@@ -1179,3 +1179,29 @@ export function ensureModelsInclude(
 	}
 	return dedupeModelsClient([...extras, ...models]);
 }
+
+/**
+ * Union two model catalogs by id, keeping `primary` order and appending ids that
+ * only appear in `extra`.
+ *
+ * Guards the picker against a stale ACP catalog overwriting a richer one:
+ * opencode 2.x returns a partial model list on `session/new` and pushes the
+ * complete list moments later via `config_option_update`, while the warm result
+ * (and the pooled slot / run start) still carries the partial snapshot. The
+ * snapshot must not shrink the list (Fix #638).
+ */
+export function mergeModelChoices(
+	primary: AgentModelChoice[],
+	extra: AgentModelChoice[],
+): AgentModelChoice[] {
+	if (extra.length === 0) return primary;
+	const seen = new Set(primary.map((m) => m.id.trim()));
+	const out = [...primary];
+	for (const m of extra) {
+		const id = m.id.trim();
+		if (!id || seen.has(id)) continue;
+		seen.add(id);
+		out.push(m);
+	}
+	return out;
+}

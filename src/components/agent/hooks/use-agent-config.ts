@@ -46,6 +46,7 @@ import {
 	ensureModelsInclude,
 	errorChatLine,
 	errorText,
+	mergeModelChoices,
 } from "@/lib/agent/chat-state";
 import type { AcpCommand } from "@/lib/agent/slash-commands";
 import { isTauri } from "@/lib/core/tauri";
@@ -174,6 +175,14 @@ export function useAgentConfig({
 	const [fastAvailable, setFastAvailable] = useState(false);
 	const [fastEnabled, setFastEnabled] = useState(false);
 	const warmGenRef = useRef(0);
+	/**
+	 * Richest model catalog seen for each agent in this panel session. ACP
+	 * agents (opencode 2.x) report a partial catalog first and push the complete
+	 * one later, so a stale warm result / pooled-slot snapshot must not shrink
+	 * the picker (Fix #638). In-memory only, so a catalog that legitimately
+	 * removes models on a fresh start still wins.
+	 */
+	const modelsSeenRef = useRef<Map<string, AgentModelChoice[]>>(new Map());
 
 	const applyModelsEvent = useCallback(
 		(ev: {
@@ -185,12 +194,16 @@ export function useAgentConfig({
 			const cur = selectedAgentIdRef.current;
 			const pref = loadModelPref(ev.agentId)?.trim() || null;
 			const current = ev.currentId?.trim() || null;
+			const incoming = dedupeModelsClient(ev.models);
+			const seen = modelsSeenRef.current.get(ev.agentId);
+			const base =
+				seen && seen.length > incoming.length
+					? mergeModelChoices(seen, incoming)
+					: incoming;
+			if (base.length > 0) modelsSeenRef.current.set(ev.agentId, base);
 			// Keep user/custom prefs and agent current even when not in the fixed
 			// official catalog (third-party / gateway model ids; Fix #216).
-			const catalogModels = ensureModelsInclude(dedupeModelsClient(ev.models), [
-				current,
-				pref,
-			]);
+			const catalogModels = ensureModelsInclude(base, [current, pref]);
 			if (catalogModels.length === 0) return;
 			saveModelCatalog(ev.agentId, {
 				configId: ev.configId,

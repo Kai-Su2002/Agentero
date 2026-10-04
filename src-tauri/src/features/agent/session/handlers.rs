@@ -14,8 +14,11 @@
 use crate::features::agent::acp::interaction::{
     await_user_permission, permission_response, PermissionPolicy,
 };
-use crate::features::agent::acp::updates::{emit_rich_session_update, emit_session_config_options};
-use crate::features::agent::models::AgentUsageEvent;
+use crate::features::agent::acp::updates::{
+    emit_rich_session_update, emit_session_config_options, models_from_config_options,
+    store_richer_models,
+};
+use crate::features::agent::models::{AgentModelsEvent, AgentUsageEvent};
 use crate::features::agent::runtime::events::AgentEventEmitter;
 use crate::features::agent::runtime::gates::{AskUserGate, ElicitationGate, PermissionGate};
 use crate::features::agent::session::run::RunOnceContext;
@@ -83,6 +86,10 @@ pub(crate) struct WarmIdleHooks {
     pub agent_id: String,
     /// Captured `(used, size)` read by `warm_agent` when setup completes.
     pub usage: Arc<Mutex<Option<(u64, u64)>>>,
+    /// Latest model catalog pushed while the connection idles. Reading this at
+    /// setup end keeps the warm result from clobbering a richer
+    /// `config_option_update` that arrived after `session/new` (#638).
+    pub models: Arc<Mutex<Option<AgentModelsEvent>>>,
 }
 
 impl WarmIdleHooks {
@@ -104,6 +111,15 @@ impl WarmIdleHooks {
             emit_rich_session_update(&self.app, &self.session_id, &self.agent_id, notification);
         }
         if let SessionUpdate::ConfigOptionUpdate(upd) = &notification.update {
+            // Keep the warm result's catalog in sync with the pushed one so the
+            // result cannot overwrite it with a stale partial snapshot (#638).
+            if let Some(ev) =
+                models_from_config_options(&self.session_id, &self.agent_id, &upd.config_options)
+            {
+                if let Ok(mut g) = self.models.lock() {
+                    store_richer_models(&mut g, ev);
+                }
+            }
             emit_session_config_options(
                 &self.app,
                 &self.session_id,
