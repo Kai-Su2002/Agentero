@@ -252,6 +252,7 @@ function createHarness() {
 					b.replace(/\\/g, "/").replace(/^\/+|\/+$/g, ""),
 		},
 		"@/lib/pdf/layout": layout,
+		"@/lib/shell/settings-window": { openSettingsWindow: () => undefined },
 		// Identity stub: the hook only maps known Host markers, else passes through.
 		"@/lib/translate": { displayTranslateError: (message: string) => message },
 	};

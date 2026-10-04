@@ -194,6 +194,35 @@ describe("locateQuoteGlyphs", () => {
 		expect(rects.every((rect) => rect.origin.y === 100)).toBe(true);
 	});
 
+	it("keeps a taller word after the words that share its baseline", () => {
+		const rects = locateQuoteGlyphs({
+			quote: "Our third contribution is Harbor-Index",
+			glyphs: [
+				glyph("Harbor-Index", 207.7, 160.5, 90),
+				glyph("Our third contribution is", 108, 163.03, 90),
+			].map((item, index) =>
+				index === 0
+					? {
+							...item,
+							rect: {
+								origin: item.rect.origin,
+								size: { width: item.rect.size.width, height: 13.6 },
+							},
+						}
+					: {
+							...item,
+							rect: {
+								origin: item.rect.origin,
+								size: { width: item.rect.size.width, height: 11 },
+							},
+						},
+			),
+			...page,
+			bbox: { x: 0.05, y: 0.15, w: 0.7, h: 0.15 },
+		});
+		expect(rects.map((rect) => rect.origin.x)).toEqual([108, 207.7]);
+	});
+
 	it("places a hyphenated sentence on the runs that contain it", () => {
 		const rects = locateQuoteGlyphs({
 			quote: "representation stays.",

@@ -11,6 +11,10 @@ import {
 	joinTranslatedDisplays,
 	normalizeSentenceKey,
 } from "@/lib/pdf/layout/layout-sentences";
+import {
+	orderByReadingLine,
+	type ReadingBox,
+} from "@/lib/pdf/layout/reading-order";
 import type { LayoutTranslateSentence } from "@/lib/pdf/layout/types";
 
 export type TranslationBlockRef = {
@@ -218,9 +222,18 @@ function centerInBbox(
 	);
 }
 
+function pieceReadingBox(piece: TextPiece): ReadingBox {
+	return {
+		x: piece.rect.origin.x,
+		y: piece.rect.origin.y,
+		width: piece.rect.size.width,
+		height: piece.rect.size.height,
+	};
+}
+
 /**
  * Same join as the layout text that sentences were cut from: trim each run,
- * separate runs with one space, reading order top-to-bottom then left-to-right.
+ * separate runs with one space, in baseline reading order.
  */
 function joinedPieces(pieces: readonly TextPiece[]): {
 	text: string;
@@ -230,13 +243,10 @@ function joinedPieces(pieces: readonly TextPiece[]): {
 	let text = "";
 	const refs: PieceRef[] = [];
 	const trimmed: string[] = [];
-	const ordered = pieces
-		.map((piece, index) => ({ piece, index }))
-		.sort(
-			(a, b) =>
-				a.piece.rect.origin.y - b.piece.rect.origin.y ||
-				a.piece.rect.origin.x - b.piece.rect.origin.x,
-		);
+	const ordered = orderByReadingLine(
+		pieces.map((piece, index) => ({ piece, index })),
+		(item) => pieceReadingBox(item.piece),
+	);
 	for (const { piece, index } of ordered) {
 		const value = piece.text.replace(/\s+/g, " ").trim();
 		trimmed[index] = value;
