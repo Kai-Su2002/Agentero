@@ -70,6 +70,7 @@ import type {
 } from "@/lib/markdown/export/types";
 import { splitFrontmatter } from "@/lib/markdown/frontmatter";
 import { saveImageToMarkdownAssets } from "@/lib/markdown/image";
+import { convertInlineMathAtCaret } from "@/lib/markdown/inline-math-auto-close";
 import {
 	getMarkdownScrollTop,
 	setMarkdownScrollTop,
@@ -466,6 +467,11 @@ export function MarkdownEditor({
 					event.stopPropagation();
 					return;
 				}
+				if (event.key === "Enter" && convertInlineMathAtCaret(editor)) {
+					event.preventDefault();
+					event.stopPropagation();
+					return;
+				}
 				if (event.key === "Enter" && convertBlockquoteMarkerToCallout(editor)) {
 					event.preventDefault();
 					event.stopPropagation();
@@ -545,9 +551,10 @@ export function MarkdownEditor({
 				return;
 			}
 			closeMenus();
+			convertInlineMathAtCaret(editor);
 			finalizeWikiLinkDrafts();
 		},
-		[closeMenus, finalizeWikiLinkDrafts],
+		[closeMenus, editor, finalizeWikiLinkDrafts],
 	);
 
 	const {

@@ -199,13 +199,13 @@ export const InlineEquationElement = memo(function InlineEquationElement(
 	return (
 		<PlateElement
 			{...props}
-			className="mx-0.5 inline-flex max-w-full select-none rounded-sm align-middle"
+			className="mx-0.5 inline-flex max-w-full select-none items-baseline rounded-sm align-baseline"
 		>
 			<Popover open={open} onOpenChange={setOpen} modal={false}>
 				<PopoverTrigger asChild>
 					<span
 						className={cn(
-							"inline-flex max-w-full cursor-pointer items-center rounded-sm px-1 py-0.5 align-middle hover:bg-primary/10",
+							"inline-flex max-w-full cursor-pointer items-baseline rounded-sm px-1 py-0.5 align-baseline hover:bg-primary/10",
 							selected && "bg-primary/10",
 							props.element.texExpression.length === 0 &&
 								"text-muted-foreground",
