@@ -1,6 +1,7 @@
 import { clamp01 } from "@/lib/core/math";
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
 import { LAYOUT_SIDEBAR_MIN_SCORE } from "@/lib/pdf/layout/constants";
+import { figureCaptionKey } from "@/lib/pdf/layout/figure-caption-text";
 import {
 	isAlgorithmLayoutKind,
 	isCaptionLayoutKind,
@@ -652,6 +653,8 @@ export function resolveFigureBboxOverlaps(
 			const a = out[i];
 			const b = out[j];
 			if (!isFigureLayoutKind(a.kind) || !isFigureLayoutKind(b.kind)) continue;
+			// Untitled/cross-page figures have no same-page caption anchor for a split.
+			if (!a.titleBbox || !b.titleBbox) continue;
 			if (a.pageIndex !== b.pageIndex) continue;
 			if (!isHalfWidthFigureHost(a) || !isHalfWidthFigureHost(b)) continue;
 			if (verticalOverlapRatio(a.bbox, b.bbox) < 0.2) continue;
@@ -719,7 +722,8 @@ export function suppressOrphanFiguresInsideClusters(
 			// Prefer keeping titled/full-width clusters over bare panel leftovers.
 			const bigIsCluster =
 				(big.titleBbox?.w ?? 0) >= 0.5 || Boolean(big.title?.match(/^fig/i));
-			const smallIsOrphan = !small.titleBbox;
+			const smallIsOrphan =
+				!small.titleBbox && !figureCaptionKey(small.title ?? "");
 			if (!bigIsCluster || !smallIsOrphan) continue;
 			const cont = (() => {
 				const a = small.bbox;
@@ -872,8 +876,8 @@ function attachCaptionToHost(
 }
 
 /**
- * Every figure must have a title fully inside its box.
- * - No titleBbox → drop (panel without Figure N caption = mis-clustered)
+ * Preserve optional titles; same-page title boxes must stay fully inside hosts.
+ * - No titleBbox → keep reliable uncaptioned/text-only/cross-page figures.
  * - Title sticks out → expand bbox to cover full title
  */
 export function requireFigureTitles(
@@ -885,7 +889,10 @@ export function requireFigureTitles(
 			result.push(h);
 			continue;
 		}
-		if (!h.titleBbox) continue;
+		if (!h.titleBbox) {
+			result.push(h);
+			continue;
+		}
 		let bbox = h.bbox;
 		if (!bboxFullyContains(bbox, h.titleBbox)) {
 			bbox = unionBbox(bbox, h.titleBbox);
@@ -1122,35 +1129,138 @@ export function mergeFormulasByNumber(
 
 /**
  * A model can confidently call a caption `text` (ViT Figures 6 and 11).
- * Recover only numbered, punctuated caption text next to a reliable panel;
+ * Recover only numbered, punctuated caption text (including caption-only pages);
  * prose such as "Figure 5 contains ..." remains body text. Keep raw unchanged.
  */
 function recoverFigureCaptionLabels(
 	regions: PdfLayoutRegion[],
 ): PdfLayoutRegion[] {
-	const panels = regions.filter(
-		(r) => isFigureLayoutKind(r.kind) && r.score >= LAYOUT_SIDEBAR_MIN_SCORE,
-	);
-	return regions.map((r) => {
-		if (r.kind !== "text" || r.score < LAYOUT_SIDEBAR_MIN_SCORE || !r.text)
-			return r;
-		if (!/^fig(?:ure)?\.?\s*\d+[a-z]?\s*[:.]\s+\S/i.test(r.text.trim()))
-			return r;
+	const recovered = regions.map((r) => {
 		if (
-			!panels.some(
-				(p) =>
-					p.pageIndex === r.pageIndex &&
-					Number.isFinite(captionAttachScore(p.bbox, r.bbox)),
-			)
+			!(r.kind === "text" || r.kind === "header") ||
+			r.score < LAYOUT_SIDEBAR_MIN_SCORE ||
+			!r.text
 		)
 			return r;
+		if (!figureCaptionKey(r.text)) return r;
 		return {
 			...r,
-			kind: "figure_title",
+			kind: "figure_title" as const,
 			title: r.text,
-			captionRole: "figure_main",
+			captionRole: "figure_main" as const,
 		};
 	});
+	// Prefer the complete text-run caption over an overlapping model/text duplicate.
+	return recovered.filter((r, index) => {
+		const key =
+			r.kind === "figure_title" ? figureCaptionKey(r.title ?? "") : null;
+		if (!key) return true;
+		return !recovered.some(
+			(other, otherIndex) =>
+				otherIndex !== index &&
+				other.kind === "figure_title" &&
+				other.pageIndex === r.pageIndex &&
+				figureCaptionKey(other.title ?? "") === key &&
+				Math.max(
+					bboxCoveredBy(r.bbox, other.bbox),
+					bboxCoveredBy(other.bbox, r.bbox),
+				) >= 0.55 &&
+				(other.bbox.w > r.bbox.w + 0.005 ||
+					(Math.abs(other.bbox.w - r.bbox.w) <= 0.005 && otherIndex < index)),
+		);
+	});
+}
+
+/** Only pair an adjacent-page main caption with a unique, figure-dominated group. */
+function associateCrossPageCaptions(
+	panels: PdfLayoutRegion[],
+	titles: PdfLayoutRegion[],
+	allCaptions: PdfLayoutRegion[],
+	blockers: PdfLayoutRegion[],
+	usedPanelIds: Set<string>,
+	usedCaptionIds: Set<string>,
+): PdfLayoutRegion[] {
+	const groups: PdfLayoutRegion[][] = [];
+	for (const page of new Set(panels.map((p) => p.pageIndex))) {
+		if (titles.some((t) => t.pageIndex === page)) continue;
+		const free = panels.filter(
+			(p) => p.pageIndex === page && !usedPanelIds.has(p.id),
+		);
+		const connected = connectedPanelGroups(free, blockers);
+		if (connected.length !== 1) continue;
+		const group = connected[0];
+		const bounds = unionMany(group.map((p) => p.bbox));
+		if (!bounds || bounds.w * bounds.h < 0.15) continue;
+		// Prose between panels makes a group ambiguous; article text above/below it does not.
+		if (
+			blockers.some(
+				(b) =>
+					b.pageIndex === page &&
+					b.kind === "text" &&
+					b.bbox.w * b.bbox.h > 0.03 &&
+					bboxCoveredBy(b.bbox, bounds) > 0.2 &&
+					!group.some((p) => bboxCoveredBy(b.bbox, p.bbox) >= 0.85),
+			)
+		)
+			continue;
+		groups.push(group);
+	}
+	const proposals = groups.map((group) => ({
+		group,
+		captions: titles.filter((t) => {
+			if (usedCaptionIds.has(t.id) || !figureCaptionKey(t.title ?? ""))
+				return false;
+			const key = figureCaptionKey(t.title ?? "");
+			if (
+				allCaptions.some(
+					(c) =>
+						c.pageIndex === group[0].pageIndex &&
+						/see\s+next\s+page\s+for\s+caption/i.test(c.title ?? "") &&
+						figureCaptionKey(c.title ?? "") !== key,
+				)
+			)
+				return false;
+			if (
+				group.some((p) => {
+					const known = figureCaptionKey(p.title ?? "");
+					return known && known !== key;
+				})
+			)
+				return false;
+			const delta = t.pageIndex - group[0].pageIndex;
+			return (
+				(delta === -1 && t.bbox.y >= 0.6) || (delta === 1 && t.bbox.y <= 0.25)
+			);
+		}),
+	}));
+	const result: PdfLayoutRegion[] = [];
+	for (const { group, captions } of proposals) {
+		if (captions.length !== 1) continue;
+		const caption = captions[0];
+		if (
+			proposals.filter((p) => p.captions.some((c) => c.id === caption.id))
+				.length !== 1
+		)
+			continue;
+		const bbox = unionMany(group.map((p) => p.bbox));
+		if (!bbox) continue;
+		const rect = group
+			.slice(1)
+			.reduce((r, p) => unionRect(r, p.rect), group[0].rect);
+		result.push({
+			...group[0],
+			bbox,
+			rect,
+			title: caption.title,
+			captionPageIndex: caption.pageIndex,
+			captionBbox: caption.bbox,
+			score: Math.max(...group.map((p) => p.score)),
+			captionRole: "figure_main",
+		});
+		for (const panel of group) usedPanelIds.add(panel.id);
+		usedCaptionIds.add(caption.id);
+	}
+	return result;
 }
 
 /**
@@ -1176,8 +1286,17 @@ export function mergeCaptionsIntoHosts(
 			: r,
 	);
 
-	const figures = tagged.filter((r) => isFigureLayoutKind(r.kind));
 	const tables = tagged.filter((r) => isTableLayoutKind(r.kind));
+	const figures = tagged.filter(
+		(r) =>
+			isFigureLayoutKind(r.kind) &&
+			!tables.some(
+				(t) =>
+					t.pageIndex === r.pageIndex &&
+					t.score >= r.score * 0.85 &&
+					bboxCoveredBy(r.bbox, t.bbox) >= 0.85,
+			),
+	);
 	const algorithms = tagged.filter((r) => isAlgorithmLayoutKind(r.kind));
 	const captions = tagged.filter((r) => isCaptionLayoutKind(r.kind));
 	// formula + formula_number only (text no longer used as a formula merge gate).
@@ -1195,7 +1314,11 @@ export function mergeCaptionsIntoHosts(
 			!isTextLayoutKind(r.kind),
 	);
 
-	const mainFigureTitles = captions.filter(isMainFigureCaption);
+	const mainFigureTitles = captions.filter(
+		(c) =>
+			isMainFigureCaption(c) &&
+			!/see\s+next\s+page\s+for\s+caption/i.test(c.title ?? ""),
+	);
 	const tableCaptions = captions.filter(isMainTableCaption);
 	const algorithmCaptions = captions.filter(isMainAlgorithmCaption);
 	const subpanels = captions.filter(isSubpanelCaption);
@@ -1285,6 +1408,17 @@ export function mergeCaptionsIntoHosts(
 		for (const s of extraSubs) usedCaptionIds.add(s.id);
 	}
 
+	clustered.push(
+		...associateCrossPageCaptions(
+			panelsWithSubs,
+			mainFigureTitles,
+			captions,
+			figureBlockers,
+			usedPanelIds,
+			usedCaptionIds,
+		),
+	);
+
 	// ── Phase 2: tables (above caption, including mislabeled figure_title) ──
 	const freeTableCaps = [
 		...tableCaptions.filter((c) => !usedCaptionIds.has(c.id)),
@@ -1316,11 +1450,10 @@ export function mergeCaptionsIntoHosts(
 	for (const cap of figPairs.values()) usedCaptionIds.add(cap.id);
 
 	const singles: PdfLayoutRegion[] = [];
-	// Figures without a paired title are dropped — not a valid figure entry.
+	// Missing captions are not evidence that a detected figure is invalid.
 	for (const host of freeFigures) {
 		const cap = figPairs.get(host.id);
-		if (!cap) continue;
-		singles.push(attachCaptionToHost(host, cap));
+		singles.push(cap ? attachCaptionToHost(host, cap) : host);
 	}
 	for (const host of tables) {
 		const cap = tablePairs.get(host.id);
@@ -1341,7 +1474,7 @@ export function mergeCaptionsIntoHosts(
 		...numberedFormulas,
 	];
 	// Orphans inside 联图 → soft half-width split (title always re-included)
-	// → keep only figures with full title inside bbox.
+	// → include same-page titles in full, preserving uncaptioned figures.
 	return requireFigureTitles(
 		resolveFigureBboxOverlaps(suppressOrphanFiguresInsideClusters(hosts)),
 	);

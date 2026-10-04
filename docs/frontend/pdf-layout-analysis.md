@@ -46,13 +46,14 @@ PP-DocLayoutV3  每页: render → detect → map to PDF points（仅无 sidecar
         ▼
 ①b source/layout.json 缓存命中（打开论文 / 点「重新分析」默认路径）
         │  跳过 PP-DocLayoutV3，只从 raw regions 重新 `mergeCaptionsIntoHosts` + 去重
-        │  `source.textLayerExtracted === true`：不再读文字层，空框也算抽过，界面不进入解析中
+        │  `source.textLayerExtracted === true`：通常不再读文字层；旧 MinerU 缓存还需
+        │  `source.figureCaptionsExtracted === true`，否则本地补读一次编号图注，不重新上传 PDF
         │  标记缺失（含已经存了正文的旧文件）：再抽一次文字层。抽完才写回，
         │  保留 generatedAt；写之前核对 mode、generatedAt 和框几何仍是同一次解析。
         │  某一页没读完则不打标记，下次打开再抽。正文词序变了的块，译文缓存按原文 miss 后重译
         ▼
 ② mergeCaptionsIntoHosts（联图 / 表题 / 算法题 / 公式按编号框几何合并）
-        │  输出 PdfLayoutRegion[]（图必有完整 title；公式仅保留有 formula_number 锚点）
+        │  输出 PdfLayoutRegion[]（图题可缺失；公式仅保留有 formula_number 锚点）
         ▼
 ③ 侧栏展示: isSidebarLayoutKind + dedupeLayoutRegions(minScore 默认 0.3)
         │  分区顺序：插图 → 表 → 算法 → **公式（最底）**
@@ -196,10 +197,10 @@ type LayoutSidecar = {
 
 | # | 规则 | 说明 |
 |---|---|---|
-| **B1** | 文本角色优先 | `Figure N`→`figure_main`；`Table N`→`table_main`；`Algorithm N`→`algorithm_main`；`(a)`→`subpanel`（即使模型标成 figure_title） |
+| **B1** | 文本角色优先 | `Figure N` / `Fig. N \|` / `Extended Data Fig. N \|`→`figure_main`；`Table N`→`table_main`；`Algorithm N`→`algorithm_main`；`(a)` / 单字母 `a`→`subpanel`（即使模型标成 figure_title） |
 | **B2** | 无文本时几何兜底 | 宽≥0.45 且矮 → 可能主图题；窄短框保持未定角色，已知主图题优先聚合后，再用邻近图框恢复无文字图题（单栏 / 多子图均可）。旧 sidecar 中无文字的几何 `subpanel` 重新判断 |
 | **B3** | 角色驱动绑定 | `table_main` 只绑 table；`figure_main` 只绑图；`subpanel` 不当整图锚点 |
-| **B4** | 正文误标图题恢复 | 模型把图题高置信标成 `text` 时（如 ViT Fig 6/11），文本以**带编号 + 标点**的图题开头（`Figure N:` / `Fig. N.` + 正文）且上方存在 score≥0.3 的可靠图框（贴题位有效）→ 提升为 `figure_main` 参与聚合；`Figure 5 contains …` 等正文引用不提升。只影响 merge，不改 raw sidecar |
+| **B4** | 正文误标与漏检图题恢复 | `text` / `header` 以**带编号 + 标点**的主图题开头时，在 merge 中提升为 `figure_main`；也从 PDF text runs 恢复模型漏检的图注并缓存真实几何。包含无检测框的图注页。双栏续文仅在字符序连续且几何匹配时合并；`Figure 5 contains …` 等正文引用不提升 |
 
 ### C. 类型分家与贴题方向（2）
 
@@ -208,14 +209,15 @@ type LayoutSidecar = {
 | **C1** | 宿主族隔离 | figure / table / algorithm 不交叉绑主标题 |
 | **C2** | 贴题方向 | **图：标题在下**；**表 / 算法：标题在上**（学术惯例） |
 
-### D. 联图与 figure_title（4）
+### D. 联图与 figure_title（5）
 
 | # | 规则 | 说明 |
 |---|---|---|
 | **D1** | 主图题锚点 | `figure_main`（或宽 figure_title）优先启动联图；无文字的窄 figure_title 延后匹配，不能抢占已知主图题的子图 |
 | **D2** | 竖向带 | panel 须在「水平方向相交的上一主图题底边 → 本图题顶边」内；另一栏图题不截断当前栏 |
 | **D3** | 全宽 vs 半宽 | 先过滤置信度 < **0.3** 的图框和图题 / 图例候选，再从距图题 ≤ **0.12** 的子图所在连通组聚合；正文 / 表 / 算法在竖向间隙内阻断连接和贴题。图题宽 ≥ **0.55** 可同时锚定多个不连通的列，保留多行联图且不设高度软上限；半宽只取最贴近图题的组，保留高度软上限 0.55。远处孤立框不因全宽图题而被收入 |
-| **D4** | 标题完整包含 | 最终 figure `bbox` **必须完全包含** `titleBbox`；图无 title → **丢弃**（视为未分对） |
+| **D4** | 可选图题 | 同页 `titleBbox` 必须完整包含在 figure `bbox` 中；缺图题或仅有图题文字的可靠图仍保留，继续经过正文 / 表格重复框抑制、面积 / 分数门槛和 NMS |
+| **D5** | 保守跨页关联 | 前页底部或后页顶部的编号图注，只与唯一、面积≥0.15、内部无正文阻断且没有同页主图题的连通图组配对；图号冲突或多个候选时保留未命名图。`See next page for caption` 仅作图号约束。跨页图注写入独立的 `captionPageIndex` / `captionBbox`，不扩张图片页 bbox，也不伪造 `titleBbox` |
 
 ### E. 清理与展示（2）
 
@@ -251,7 +253,7 @@ type LayoutSidecar = {
 | 多套「全宽」阈值 0.55 / 0.62 | **已统一**为 `LAYOUT_MERGE.fullWidthTitle = 0.55` |
 | 硬中线切全宽图导致细条框 | **已废止**（仅半宽软切 + 标题回并） |
 | `clipFigureBboxToTitleColumn` 裁掉标题一半 | **已改为** `buildFigureBboxWithFullTitle`（标题必整框） |
-| 无 title 仍保留 chart 进侧栏 | **已废止**（`requireFigureTitles`） |
+| 缺图题即删除 image/chart | **已废止（#704）**；可靠图不依赖图题存在，`requireFigureTitles` 只保证已有同页标题框完整 |
 | 侧栏默认 50% 置信度 | **已改为固定 30%**（无 UI 滑条） |
 | 文档写死 0.5 / 无 merge 流水线 | **以本文为准** |
 | `looksLikeFigureCaption` | 兼容别名，等价 `captionRoleFromText` 主类判断，勿再扩展 |
@@ -301,6 +303,8 @@ type PdfLayoutRegion = {
   bbox: { x, y, w, h };        // 0–1 页相对
   title?: string;              // 图/表题文字（公式不解析编号串）
   titleBbox?: { x, y, w, h };  // 完整标题框，或公式的 formula_number 几何
+  captionPageIndex?: number;  // 跨页图注所在页；图片 pageIndex 不变
+  captionBbox?: { x, y, w, h };// 相对于图注页；不并入图片 bbox
   captionRole?: CaptionRole;
 };
 ```
@@ -318,6 +322,7 @@ type PdfLayoutRegion = {
 | `paddle.ts` | 远程分析 / probe 的 IPC 封装（provider 参数分发） |
 | `io.ts` | `{paper}/source/layout.json` raw sidecar 读写与 schema 校验 |
 | `title-text.ts` | 抽字、captionRole（**不含**公式编号文本解析） |
+| `captions-from-runs.ts` / `figure-caption-text.ts` | 从真实 PDF 文字行恢复编号主图注、保守双栏续文、统一图号识别 |
 | `merge-captions.ts` | 联图 / 表 / 算法 / **公式按 formula_number 几何合并**、标题完整包含 |
 | `normalize.ts` | DocumentLayout → regions（sync 无文字） |
 | `dedupe.ts` | 侧栏 NMS |
@@ -331,6 +336,7 @@ type PdfLayoutRegion = {
 - 实验路径；大模型推理可能卡顿。后端为本地模型时，主窗口每次启动都会弹一次右上角提醒（仅首次运行向导覆盖时暂停；提示本机模型的性能代价，可「打开版面解析设置」或「不再提醒」，见 [settings.md](settings.md) §低频配置提醒）。
 - 不改 PDF 二进制；只写可重建的 `{paper}/source/layout.json`。
 - `layout.json` 只缓存 raw layout，不等同于未来 `agentero-figures.json` / 缩略图资产 sidecar。
+- 跨页关联只支持相邻页的唯一候选；更远的图注、扫描件无可用文字层或冲突图号不会强行配对，可靠无图题图片仍展示。MinerU #704 的真实论文回放与修复记录见 [mineru-missing-figures.md](../bug_fix/mineru-missing-figures.md)。
 - **模型级整面板误标仍会漏图**（merge 层无法救回，页上没有可用 image/chart 检测）：ViT 附录 Fig 14（注意力图网格被标 `header` 0.91，同框 `image` 仅 0.05）、Transformer 附录 Fig 4（注意力可视化被标 `table` 0.88）。四篇论文（resnet / vit / transformer / swin，单双栏混合）实测图题召回 28/30 ≈ 93%，在容忍范围内；后续如换更强检测模型可回归 `test/pdf-layout-arxiv.test.ts` 复核。
 - **真实 PDF smoke test（opt-in，默认跳过）**：`test/pdf-layout-arxiv.test.ts`，需 `AGENTERO_LAYOUT_PDF_DIR`（放 `<name>.pdf`）+ `AGENTERO_LAYOUT_MODEL`（pp-doclayoutv3.onnx 路径），`AGENTERO_LAYOUT_PDFS` 逗号分隔指定论文名（默认 `resnet,vit`）。逐页输出渲染 PNG、合并后 bbox 叠加 PNG 与 `*-detections.json`，供 before/after 回归对比（`/tmp/agentero-bbox-validation/compare.mjs` 为临时脚本，不在仓库内）。
 - 后续：最终 figure sidecar、自动分析、一键视觉批注。

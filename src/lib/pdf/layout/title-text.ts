@@ -1,6 +1,8 @@
 import type { PdfTextRun } from "@embedpdf/models";
 
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
+import { recoverFigureCaptionsFromRuns } from "@/lib/pdf/layout/captions-from-runs";
+import { figureCaptionKey } from "@/lib/pdf/layout/figure-caption-text";
 import {
 	isCaptionLayoutKind,
 	isLayoutBodyTextKind,
@@ -160,7 +162,9 @@ export function textFromRunsInBbox(
 export function captionRoleFromText(text: string): CaptionRole {
 	const t = text.trim();
 	if (!t) return "other";
+	if (figureCaptionKey(t)) return "figure_main";
 	// (a) Concentration — panel subtitle, not the whole-figure caption.
+	if (/^[a-z]$/i.test(t)) return "subpanel";
 	if (/^\(\s*[a-z]\s*\)/i.test(t)) return "subpanel";
 	if (/^[a-z]\s*[).:]\s+\S/i.test(t) && t.length < 80) return "subpanel";
 	if (/^table\s*\d/i.test(t) || /^tab\.\s*\d/i.test(t)) return "table_main";
@@ -213,7 +217,7 @@ export function enrichCaptionRegionsWithText(
 	runs: PdfTextRun[],
 	pageSize: { width: number; height: number },
 ): PdfLayoutRegion[] {
-	return regions.flatMap((region) => {
+	const enriched = regions.flatMap((region) => {
 		if (region.pageIndex !== pageIndex) return region;
 
 		if (isCaptionLayoutKind(region.kind)) {
@@ -259,6 +263,7 @@ export function enrichCaptionRegionsWithText(
 
 		return region;
 	});
+	return recoverFigureCaptionsFromRuns(enriched, pageIndex, runs, pageSize);
 }
 
 /**

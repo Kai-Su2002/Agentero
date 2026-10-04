@@ -38,6 +38,8 @@ export type PdfLayoutSidecar = {
 		 * was recorded, including ones that already stored text.
 		 */
 		textLayerExtracted?: boolean;
+		/** Numbered captions have been recovered directly from PDF text runs. */
+		figureCaptionsExtracted?: boolean;
 	};
 	/** Raw text-enriched model regions, before caption/formula merge. */
 	regions: PdfLayoutRegion[];
@@ -110,6 +112,14 @@ function parseRegion(value: unknown): PdfLayoutRegion | null {
 	const titleBbox = parseRect(value.titleBbox);
 	if (titleBbox) out.titleBbox = titleBbox;
 	if (
+		Number.isInteger(value.captionPageIndex) &&
+		(value.captionPageIndex as number) >= 0
+	) {
+		out.captionPageIndex = value.captionPageIndex as number;
+		const captionBbox = parseRect(value.captionBbox);
+		if (captionBbox) out.captionBbox = captionBbox;
+	}
+	if (
 		value.captionRole === "figure_main" ||
 		value.captionRole === "table_main" ||
 		value.captionRole === "algorithm_main" ||
@@ -153,6 +163,8 @@ export function parseLayoutSidecar(raw: unknown): PdfLayoutSidecar | null {
 		generatedAt: raw.source.generatedAt,
 	};
 	if (raw.source.textLayerExtracted === true) source.textLayerExtracted = true;
+	if (raw.source.figureCaptionsExtracted === true)
+		source.figureCaptionsExtracted = true;
 	return {
 		schemaVersion: LAYOUT_SIDECAR_SCHEMA_VERSION,
 		source,
@@ -164,7 +176,11 @@ export function parseLayoutSidecar(raw: unknown): PdfLayoutSidecar | null {
 export function layoutSidecarNeedsTextLayer(
 	sidecar: PdfLayoutSidecar,
 ): boolean {
-	return sidecar.source.textLayerExtracted !== true;
+	return (
+		sidecar.source.textLayerExtracted !== true ||
+		(sidecar.source.mode === "mineru-layout" &&
+			sidecar.source.figureCaptionsExtracted !== true)
+	);
 }
 
 export async function readLayoutSidecar(
@@ -190,7 +206,10 @@ export async function writeLayoutSidecar(
 		mode,
 		generatedAt: new Date().toISOString(),
 	};
-	if (options.textLayerExtracted === true) source.textLayerExtracted = true;
+	if (options.textLayerExtracted === true) {
+		source.textLayerExtracted = true;
+		source.figureCaptionsExtracted = true;
+	}
 	const sidecar: PdfLayoutSidecar = {
 		schemaVersion: LAYOUT_SIDECAR_SCHEMA_VERSION,
 		source,
@@ -250,6 +269,7 @@ export function layoutTextBackfillSidecar(
 			mode: expected.source.mode,
 			generatedAt: expected.source.generatedAt,
 			textLayerExtracted: true,
+			figureCaptionsExtracted: true,
 		},
 		regions,
 	};

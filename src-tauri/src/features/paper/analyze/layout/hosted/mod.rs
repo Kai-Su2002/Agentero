@@ -28,6 +28,12 @@ pub struct LayoutRemoteBox {
     pub score: f64,
     /// `[x1, y1, x2, y2]` in rendered-image pixels (top-left origin).
     pub coordinate: [f64; 4],
+    /// OCR/content text for this box, when provided by the engine.
+    #[specta(optional)]
+    pub text: Option<String>,
+    /// Caption text attached to a host without independent caption geometry.
+    #[specta(optional)]
+    pub caption: Option<String>,
 }
 
 /// Map raw `layout_det_res.boxes` entries into the API shape.
@@ -53,6 +59,8 @@ pub fn parse_det_boxes(boxes: &[Value]) -> Vec<LayoutRemoteBox> {
                 .to_string(),
             score: b.get("score").and_then(Value::as_f64).unwrap_or(0.0),
             coordinate: [nums[0], nums[1], nums[2], nums[3]],
+            text: None,
+            caption: None,
         });
     }
     out

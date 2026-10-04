@@ -180,14 +180,17 @@ function buildResultFromRawRegions(
 function estimatePageSizesFromRegions(
 	regions: readonly PdfLayoutRegion[],
 	scope: LayoutAnalysisScope,
-	isDocumentOpen?: () => boolean,
+	options: RunLayoutAnalysisOptions,
 ): Map<number, { width: number; height: number }> {
 	const pageSizes = new Map<number, { width: number; height: number }>();
 	const pages = new Set(regions.map((r) => r.pageIndex));
+	for (let pageIndex = 0; pageIndex < (options.totalPages ?? 0); pageIndex++) {
+		pages.add(pageIndex);
+	}
 	for (const pageIndex of pages) {
-		assertDocumentOpen(isDocumentOpen);
+		assertDocumentOpen(options.isDocumentOpen);
 		const layout = scope.getPageLayout(pageIndex);
-		const size = layout?.pageSize;
+		const size = options.pageSizeAt?.(pageIndex) ?? layout?.pageSize;
 		if (size && size.width > 0 && size.height > 0) {
 			pageSizes.set(pageIndex, size);
 			continue;
@@ -200,7 +203,8 @@ function estimatePageSizesFromRegions(
 			if (r.bbox.w > 0.02) width = Math.max(width, r.rect.w / r.bbox.w);
 			if (r.bbox.h > 0.02) height = Math.max(height, r.rect.h / r.bbox.h);
 		}
-		if (width > 0 && height > 0) pageSizes.set(pageIndex, { width, height });
+		// Keep unknown pages in the walk so they cannot be marked complete.
+		pageSizes.set(pageIndex, { width, height });
 	}
 	return pageSizes;
 }
@@ -214,7 +218,7 @@ async function enrichRawRegionsWithPageText(
 ): Promise<{ regions: PdfLayoutRegion[]; complete: boolean }> {
 	let next = raw;
 	let complete = true;
-	const pages = new Set(raw.map((r) => r.pageIndex));
+	const pages = new Set([...pageSizes.keys(), ...raw.map((r) => r.pageIndex)]);
 	for (const pageIndex of pages) {
 		assertDocumentOpen(isDocumentOpen);
 		const pageSize = pageSizes.get(pageIndex);
@@ -365,11 +369,7 @@ export async function runDocumentLayoutAnalysis(
 					? await enrichRawRegionsWithPageText(
 							scope,
 							cached.regions,
-							estimatePageSizesFromRegions(
-								cached.regions,
-								scope,
-								options.isDocumentOpen,
-							),
+							estimatePageSizesFromRegions(cached.regions, scope, options),
 							options.isDocumentOpen,
 						)
 					: null;

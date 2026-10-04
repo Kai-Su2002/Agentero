@@ -23,6 +23,23 @@ function region(): PdfLayoutSidecar["regions"][number] {
 }
 
 describe("layout sidecar", () => {
+	it("backfills old MinerU captions once without invalidating the model parse", () => {
+		const old: PdfLayoutSidecar = {
+			schemaVersion: 3,
+			source: {
+				mode: "mineru-layout",
+				generatedAt: "now",
+				textLayerExtracted: true,
+			},
+			regions: [region()],
+		};
+		expect(layoutSidecarNeedsTextLayer(old)).toBe(true);
+		const updated = layoutTextBackfillSidecar(old, old.regions);
+		expect(layoutSidecarNeedsTextLayer(updated)).toBe(false);
+		expect(updated.source.generatedAt).toBe("now");
+		const parsed = parseLayoutSidecar(updated);
+		expect(parsed && layoutSidecarNeedsTextLayer(parsed)).toBe(false);
+	});
 	it("stores under the paper source folder", () => {
 		expect(layoutSidecarPath("/vault/papers/demo")).toBe(
 			"/vault/papers/demo/source/layout.json",
