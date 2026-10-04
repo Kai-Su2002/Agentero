@@ -27,10 +27,8 @@ import {
 } from "@/components/viewer/pdf/layers/page-layers";
 import type { PdfViewerInnerProps } from "@/components/viewer/pdf/types";
 import { DockviewViewport } from "@/components/viewer/pdf/viewport/dockview-viewport";
-import { PagedViewportClip } from "@/components/viewer/pdf/viewport/paged-viewport-clip";
 import { PanDragHandler } from "@/components/viewer/pdf/viewport/pan-handler";
 import { WheelZoomHandler } from "@/components/viewer/pdf/viewport/wheel-zoom-handler";
-import { useSettings } from "@/hooks/use-app-stores";
 
 const EMPTY_PAGE_MAP = new Map();
 
@@ -103,7 +101,6 @@ export function PdfTranslationViewerInner({
 }: PdfViewerInnerProps) {
 	usePdfScrollSync(docId);
 	usePdfReadingMode(docId);
-	const paged = useSettings((s) => s.pdfReadingMode) === "paged";
 	// Interaction manager is registered; keep the capability subscribed so
 	// GlobalPointerProvider / pan-zoom gestures stay wired.
 	useInteractionManagerCapability();
@@ -238,7 +235,6 @@ export function PdfTranslationViewerInner({
 					hostRef={hostRef}
 					allowLeftDrag={false}
 				/>
-				<PagedViewportClip docId={docId} paged={paged} />
 				<ZoomGestureWrapper documentId={docId} enableWheel={false}>
 					<GlobalPointerProvider documentId={docId}>
 						<Scroller documentId={docId} renderPage={renderPage} />
