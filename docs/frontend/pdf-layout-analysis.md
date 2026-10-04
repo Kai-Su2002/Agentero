@@ -71,6 +71,9 @@ PP-DocLayoutV3  每页: render → detect → map to PDF points（仅无 sidecar
         │
 ⑤ 正文 / 摘要 / 标题文字抽取（PDF text layer → region.text）
         │  分析或 sidecar 回填时 enrich；供调试与 bulk 翻译
+        │  同一行按字形底边对齐（加粗或更大的字头顶更高，底边仍和邻字对齐），
+        │  行内从左往右，再接下一行。抽正文和英文句子对字形共用
+        │  `reading-order.ts`
         │
 ⑥ 工具栏「翻译」icon（视觉批注旁）：按阅读顺序批量翻译文字类区域
         │  并发 2；每完成一块立刻盖译文图层（`LayoutTranslateOverlay`）
