@@ -13,9 +13,11 @@ import { isTauri } from "@/lib/core/tauri";
 import { findLocalPdfPath, localFileToArrayBuffer } from "@/lib/paper";
 import {
 	type LayoutSidecarMode,
+	layoutSidecarNeedsTextLayer,
 	readLayoutSidecar,
 	writeLayoutIndexFromRaw,
 	writeLayoutSidecar,
+	writeLayoutTextBackfill,
 } from "@/lib/pdf/layout/io";
 import { mergeCaptionsIntoHosts } from "@/lib/pdf/layout/merge-captions";
 import { ensureLayoutModel } from "@/lib/pdf/layout/model";
@@ -209,13 +211,17 @@ async function enrichRawRegionsWithPageText(
 	raw: PdfLayoutRegion[],
 	pageSizes: Map<number, { width: number; height: number }>,
 	isDocumentOpen?: () => boolean,
-): Promise<PdfLayoutRegion[]> {
+): Promise<{ regions: PdfLayoutRegion[]; complete: boolean }> {
 	let next = raw;
+	let complete = true;
 	const pages = new Set(raw.map((r) => r.pageIndex));
 	for (const pageIndex of pages) {
 		assertDocumentOpen(isDocumentOpen);
 		const pageSize = pageSizes.get(pageIndex);
-		if (!pageSize || pageSize.width <= 0 || pageSize.height <= 0) continue;
+		if (!pageSize || pageSize.width <= 0 || pageSize.height <= 0) {
+			complete = false;
+			continue;
+		}
 		try {
 			const textRuns = await taskToPromise(scope.getPageTextRuns(pageIndex));
 			assertDocumentOpen(isDocumentOpen);
@@ -228,10 +234,10 @@ async function enrichRawRegionsWithPageText(
 			) {
 				throw new LayoutDocumentClosedError();
 			}
-			// continue without text for this page
+			complete = false;
 		}
 	}
-	return next;
+	return { regions: next, complete };
 }
 
 /**
@@ -248,6 +254,7 @@ async function buildTextAwareResult(
 ): Promise<{
 	rawRegions: PdfLayoutRegion[];
 	result: PdfLayoutDocumentResult;
+	textLayerExtracted: boolean;
 }> {
 	assertDocumentOpen(isDocumentOpen);
 	let raw: PdfLayoutRegion[] = regionsFromDocumentLayout(docLayout);
@@ -256,12 +263,14 @@ async function buildTextAwareResult(
 	for (const page of docLayout.pages) {
 		pageSizes.set(page.pageIndex, page.pageSize);
 	}
-	raw = await enrichRawRegionsWithPageText(
+	const extracted = await enrichRawRegionsWithPageText(
 		scope,
 		raw,
 		pageSizes,
 		isDocumentOpen,
 	);
+	raw = extracted.regions;
+	const textLayerExtracted = extracted.complete;
 	assertDocumentOpen(isDocumentOpen);
 
 	let result = buildResultFromRawRegions(documentId, raw);
@@ -298,7 +307,7 @@ async function buildTextAwareResult(
 		}
 	}
 
-	return { rawRegions: raw, result };
+	return { rawRegions: raw, result, textLayerExtracted };
 }
 
 /**
@@ -331,14 +340,6 @@ export async function runDocumentLayoutAnalysis(
 	// Default path: JSON→sidebar re-merge from layout.json (no ONNX).
 	// `force` skips this and re-runs PDF→JSON via PP-DocLayoutV3.
 	if (!options.force && options.paperAbsPath) {
-		setUi(
-			{
-				stage: "running",
-				message: "Rebuilding from cached layout…",
-				progress: null,
-			},
-			true,
-		);
 		const cached = await readLayoutSidecar(options.paperAbsPath);
 		if (options.isDocumentOpen && !options.isDocumentOpen()) {
 			cancelClosedDocument();
@@ -346,34 +347,59 @@ export async function runDocumentLayoutAnalysis(
 		}
 		if (cached) {
 			try {
-				// Sidecar may predate body-text extract; re-pull PDF text layer cheaply.
-				const pageSizes = estimatePageSizesFromRegions(
-					cached.regions,
-					scope,
-					options.isDocumentOpen,
-				);
-				const needsText = cached.regions.some(
-					(r) =>
-						(r.kind === "text" ||
-							r.kind === "abstract" ||
-							r.kind === "header" ||
-							r.kind === "figure_title") &&
-						!(r.text?.trim() || r.title?.trim()),
-				);
-				const raw = needsText
+				// No textLayerExtracted flag: walk the text layer once, including
+				// boxes that already have text, then write it back. A flagged
+				// sidecar only merges in memory and does not show analyzing.
+				const needsText = layoutSidecarNeedsTextLayer(cached);
+				if (needsText) {
+					setUi(
+						{
+							stage: "running",
+							message: "Rebuilding from cached layout…",
+							progress: null,
+						},
+						true,
+					);
+				}
+				const extracted = needsText
 					? await enrichRawRegionsWithPageText(
 							scope,
 							cached.regions,
-							pageSizes,
+							estimatePageSizesFromRegions(
+								cached.regions,
+								scope,
+								options.isDocumentOpen,
+							),
 							options.isDocumentOpen,
 						)
-					: cached.regions;
+					: null;
+				const raw = extracted?.regions ?? cached.regions;
 				if (options.isDocumentOpen && !options.isDocumentOpen()) {
 					cancelClosedDocument();
 					return null;
 				}
 				// Always re-run merge/filter so algorithm tweaks apply without ONNX.
 				const result = buildResultFromRawRegions(documentId, raw);
+				// A finished text walk is written back onto this same parse. A newer
+				// sidecar (mode, generatedAt, or box geometry) is left untouched.
+				if (needsText && extracted?.complete) {
+					try {
+						const wrote = await writeLayoutTextBackfill(
+							options.paperAbsPath,
+							cached,
+							raw,
+						);
+						if (!wrote) {
+							logger.warn(
+								"layout text backfill skipped; sidecar parse changed",
+							);
+						}
+					} catch (error) {
+						logger.warn("layout text backfill failed", {
+							error: errorText(error),
+						});
+					}
+				}
 				setLayoutDocumentResult(result);
 				const summary = summarizeLayoutResult(result);
 				setUi({
@@ -387,10 +413,7 @@ export async function runDocumentLayoutAnalysis(
 					cache: true,
 					regions: result.regions,
 				});
-				// Cache hit stays read-only: text is enriched in memory above, but the
-				// viewer never rewrites layout.json (that is the headless writer's job;
-				// writing here raced it — §8.2). The index write is a no-op when the
-				// content is unchanged.
+				// The index write is a no-op when the content is unchanged.
 				void writeLayoutIndexFromRaw(options.paperAbsPath, raw).catch(
 					() => undefined,
 				);
@@ -567,13 +590,18 @@ export async function runDocumentLayoutAnalysis(
 				docLayout,
 				options.isDocumentOpen,
 			)
-				.then(async ({ rawRegions, result }) => {
+				.then(async ({ rawRegions, result, textLayerExtracted }) => {
 					if (options.isDocumentOpen && !options.isDocumentOpen()) {
 						cancelClosedDocument();
 						return;
 					}
 					try {
-						await writeLayoutSidecar(options.paperAbsPath, rawRegions);
+						await writeLayoutSidecar(
+							options.paperAbsPath,
+							rawRegions,
+							"embedpdf-layout",
+							{ textLayerExtracted },
+						);
 					} catch (e) {
 						const message = errorText(e);
 						logger.warn("layout sidecar write failed", { error: message });
@@ -718,12 +746,14 @@ async function finalizeRemoteLayoutRegions(args: {
 		options.paperAbsPath,
 	);
 
-	let enriched = await enrichRawRegionsWithPageText(
+	const extracted = await enrichRawRegionsWithPageText(
 		scope,
 		args.raw,
 		pageSizes,
 		options.isDocumentOpen,
 	);
+	let enriched = extracted.regions;
+	const textLayerExtracted = extracted.complete;
 	assertDocumentOpen(options.isDocumentOpen);
 
 	let result = buildResultFromRawRegions(documentId, enriched);
@@ -759,7 +789,9 @@ async function finalizeRemoteLayoutRegions(args: {
 	enriched = result.rawRegions;
 
 	try {
-		await writeLayoutSidecar(options.paperAbsPath, enriched, args.sidecarMode);
+		await writeLayoutSidecar(options.paperAbsPath, enriched, args.sidecarMode, {
+			textLayerExtracted,
+		});
 	} catch (e) {
 		const message = errorText(e);
 		logger.warn("layout sidecar write failed", { error: message });

@@ -31,7 +31,8 @@
         │  尚无缓存 → 轮询 sidecar，headless 写完后再静默载入
         │  无 paper 目录的散落 PDF：仅 active tab 用 viewer 内分析（asBackgroundTask）
         │  手动：Figures header「分析 / 重新分析」
-        │     · 有 `source/layout.json` → **只** JSON→侧栏归并（不重跑 ONNX / 不重写 sidecar）
+        │     · 有 `source/layout.json` → 不重跑 ONNX。文字层已抽过则只在内存里归并；
+        │       还没标记时补抽文字并写回同一次解析（不换 generatedAt）
         │     · 无缓存 → 全量 PDF→JSON（PP-DocLayoutV3）再归并
         │     · 打开 Figures / 可选 Eye；`force` 仅内部/将来「强制刷新模型」用
         ▼
@@ -45,6 +46,10 @@ PP-DocLayoutV3  每页: render → detect → map to PDF points（仅无 sidecar
         ▼
 ①b source/layout.json 缓存命中（打开论文 / 点「重新分析」默认路径）
         │  跳过 PP-DocLayoutV3，只从 raw regions 重新 `mergeCaptionsIntoHosts` + 去重
+        │  `source.textLayerExtracted === true`：不再读文字层，空框也算抽过，界面不进入解析中
+        │  标记缺失（含已经存了正文的旧文件）：再抽一次文字层。抽完才写回，
+        │  保留 generatedAt；写之前核对 mode、generatedAt 和框几何仍是同一次解析。
+        │  某一页没读完则不打标记，下次打开再抽。正文词序变了的块，译文缓存按原文 miss 后重译
         ▼
 ② mergeCaptionsIntoHosts（联图 / 表题 / 算法题 / 公式按编号框几何合并）
         │  输出 PdfLayoutRegion[]（图必有完整 title；公式仅保留有 formula_number 锚点）
@@ -146,8 +151,12 @@ LayoutAnalysisPluginPackage: {
 
 ```ts
 type LayoutSidecar = {
-  schemaVersion: 2;
-  source: { mode: "embedpdf-layout" | "paddle-layout" | "mineru-layout"; generatedAt: string };
+  schemaVersion: 3;
+  source: {
+    mode: "embedpdf-layout" | "paddle-layout" | "mineru-layout";
+    generatedAt: string;
+    textLayerExtracted?: boolean; // 文字层整篇已抽过；缺省则打开时再抽一次
+  };
   regions: PdfLayoutRegion[]; // raw, pre-merge
 };
 ```
@@ -164,7 +173,7 @@ type LayoutSidecar = {
 
 缓存只在已知 paper folder 时启用；散落 PDF 没有 `{paper}` 路径，仍使用当前内存流程（也不写 index）。
 
-**重新分析按钮**（Figures header）：`force: false`。有 `source/layout.json` 时只重跑 JSON→侧栏（`mergeCaptionsIntoHosts` + NMS），**不**再跑 PP-DocLayoutV3，也**不**覆盖 raw sidecar；**会**刷新 `layout-index.json`。无缓存时才走完整 PDF→JSON。需要强制刷新模型输出时由调用方显式传 `force: true`（当前 UI 不暴露）。
+**重新分析按钮**（Figures header）：`force: false`。有 `source/layout.json` 时不跑 PP-DocLayoutV3。文字层标记已在则只重跑 JSON→侧栏（`mergeCaptionsIntoHosts` + NMS），不改 raw sidecar。标记缺失时把抽到的文字写回同一次解析，`generatedAt` 不变；写之前若磁盘上的 mode、时间戳或框几何已经变了，则放弃这次写回。两种情况都会刷新 `layout-index.json`（内容没变则不落盘）。无缓存时才走完整 PDF→JSON。需要强制刷新模型输出时由调用方显式传 `force: true`（当前 UI 不暴露）。
 
 **全库重置**（设置 →「版面解析」底部两个按钮）：Host 命令 `clear_parse_results` / `clear_and_reparse`（`src-tauri/src/features/jobs/commands.rs`）按 catalog 逐篇删除所选 scope 的解析产物——`layout`（`source/layout.json` + `layout-index.json`）、`paper`（`PAPER.md`）或 `all`（默认）。删除前先取消该 Vault 下相关 queued/running 的 `layoutAnalyze` / `parseBody` job（防止晚到的 runner 把旧结果写回），删除后清空 `CapsCache`。「清除并重新解析」再对全部论文 enqueue `force: true` 的重新解析 job（idle lane，沿用 per-kind 并发上限）。仅支持本地 Vault；前端入口 `src/lib/paper/reparse.ts` + `layout-pane.tsx`（确认弹窗内选 scope）。
 
