@@ -14,6 +14,7 @@
 		"commandsEmpty": "Type to filter commands (prefix > also works in Quick open)",
 		"papers": "Papers",
 		"recent": "Recent papers",
+		"aliases": "Aliases",
 		"contents": "In contents",
 		"searching": "Searching…",
 		"noResults": "No matches",

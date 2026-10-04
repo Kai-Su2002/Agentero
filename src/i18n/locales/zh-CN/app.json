@@ -14,6 +14,7 @@
 		"commandsEmpty": "输入以筛选命令（快速打开中也可用 > 前缀）",
 		"papers": "论文",
 		"recent": "最近论文",
+		"aliases": "别名",
 		"contents": "正文匹配",
 		"searching": "搜索中…",
 		"noResults": "无匹配",
