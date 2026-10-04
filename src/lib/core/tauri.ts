@@ -21,6 +21,21 @@ export function getPlatformOS(): "macos" | "windows" | "linux" | "other" {
 }
 
 /**
+ * True for WebKit webviews (macOS WKWebView, Linux WebKitGTK).
+ *
+ * Blink (WebView2 / Chrome / Edge) and Gecko both include an `AppleWebKit`
+ * token in their UA, so the token alone is not enough: only treat a UA as
+ * WebKit when it has no Chromium tokens. Used to gate rendering optimizations
+ * whose cost/benefit differs by engine.
+ */
+export function isWebKitEngine(ua?: string): boolean {
+	const userAgent =
+		ua ?? (typeof navigator !== "undefined" ? navigator.userAgent : "");
+	if (!/AppleWebKit/.test(userAgent)) return false;
+	return !/(Chrome|Chromium|CriOS|Edg|OPR)\//.test(userAgent);
+}
+
+/**
  * macOS keeps native traffic lights via the Overlay title bar; other desktop
  * platforms use a frameless window with custom caption buttons.
  */

@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { errorText } from "@/lib/core/error";
 import { initLogger, logger } from "@/lib/core/logger";
 import { notifyAction, notifyError } from "@/lib/core/notify";
+import { initPaintOptimizations } from "@/lib/core/paint-perf";
 import { initAutoHideScrollbars } from "@/lib/core/scrollbars";
 import { isMobileApp, isTauri } from "@/lib/core/tauri";
 import {
@@ -79,6 +80,7 @@ async function boot() {
 		applyLocale(s.locale);
 	});
 	initAutoHideScrollbars();
+	initPaintOptimizations();
 	applyLocale(initialSettings.locale);
 	bootStage("i18n");
 

@@ -1103,6 +1103,30 @@ body.agentero-dockview-dragging * {
 	color: #f2cc60;
 }
 
+/*
+ * Markdown reading performance (#702).
+ *
+ * A long note renders every block; changing the pane width (dragging a rail or
+ * a Dockview sash) re-wraps the whole document every frame, and scrolling
+ * paints it all. `content-visibility: auto` lets Chromium skip layout and paint
+ * for offscreen top-level blocks — the Slate-recommended technique for large
+ * documents. It is scoped to the live editor (only it renders
+ * `.slate-blockWrapper`) and disabled while the editor holds focus, so editing,
+ * caret placement and IME keep their uncontained semantics. `contain-intrinsic-
+ * size: auto` caches each block's real height after its first render, so the
+ * `4rem` fallback only applies to never-seen blocks.
+ *
+ * WebKit is slower than not using this per element, so the attribute is set
+ * only on non-WebKit webviews (see lib/core/paint-perf.ts).
+ */
+html[data-offscreen-md-blocks] [data-slate-editor][data-selection-chat-origin="markdown"]:not(
+		:focus-within
+	)
+	.slate-blockWrapper {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 4rem;
+}
+
 ::highlight(agentero-context-selection),
 ::highlight(agentero-annotation-selection),
 ::highlight(agentero-annotation-navigation) {
