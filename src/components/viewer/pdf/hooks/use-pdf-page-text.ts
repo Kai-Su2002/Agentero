@@ -6,7 +6,11 @@
  * whether they land on real glyphs (translucent) or in a free gutter, so the
  * map is shared by `pinsByPage`, {@link usePdfCards} placement and the per-page
  * layer stack. Fetching is lazy and idempotent: only pages that carry a mark or
- * sit within ±2 of the current page are loaded, each at most once.
+ * sit within ±1 of the current page are loaded, each at most once.
+ *
+ * The window is intentionally narrow: `getPageTextRects` is an O(glyphs)
+ * extraction in the single PDFium worker, so widening it competes with raster
+ * rendering and with the selection plugin's own `getPageGeometry` extraction.
  *
  * It lives in its own hook because the fetch is the only writer while three
  * unrelated clusters (ask / translate / visual marks) are readers.
@@ -107,7 +111,7 @@ export function usePdfPageText({
 
 		const need = new Set<number>();
 		const from = Math.max(0, currentPage - 2);
-		const to = Math.min(totalPages, currentPage + 2);
+		const to = Math.min(totalPages, currentPage + 1);
 		for (let i = from; i < to; i++) need.add(i);
 		for (const tr of translates) {
 			if (!tr.error) need.add(tr.page - 1);

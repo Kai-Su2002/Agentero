@@ -627,6 +627,28 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 		if (!selectionArmed) setSelectionArmed(true);
 	};
 	/**
+	 * Prefetch selection geometry for pages the user can actually see, so the
+	 * page is already selectable by the time the pointer reaches it. Off-screen
+	 * scroller-buffer pages stay unloaded. The observer disconnects after the
+	 * first intersection; a page armed this way also fires after the page's own
+	 * raster effect, so the worker still renders the visible page first.
+	 */
+	useEffect(() => {
+		const el = pageShellRef.current;
+		if (!el) return;
+		if (typeof IntersectionObserver === "undefined") {
+			setSelectionArmed(true);
+			return;
+		}
+		const observer = new IntersectionObserver((entries) => {
+			if (!entries.some((entry) => entry.isIntersecting)) return;
+			observer.disconnect();
+			setSelectionArmed(true);
+		});
+		observer.observe(el);
+		return () => observer.disconnect();
+	}, []);
+	/**
 	 * Pointer position at the last pointerdown on a layout hit target. A click
 	 * that travelled beyond the tolerance was a drag, not an activation.
 	 */
