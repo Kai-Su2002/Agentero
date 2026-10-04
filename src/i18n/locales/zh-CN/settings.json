@@ -57,6 +57,13 @@
 	},
 	"general": {
 		"title": "通用",
+		"sections": {
+			"papers": "论文库",
+			"pdf": "PDF 阅读",
+			"plaza": "广场",
+			"network": "网络",
+			"integrations": "集成"
+		},
 		"paperTreeLabelMode": {
 			"label": "文件树论文名称",
 			"title-author": "标题 · 作者",

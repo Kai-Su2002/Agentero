@@ -9,6 +9,7 @@ import {
 	PageTitle,
 	SettingsGroup,
 	SettingsRow,
+	SettingsSectionLabel,
 } from "@/components/settings/settings-layout";
 import { StatusDot } from "@/components/settings/status-dot";
 import type { SettingsHostContext } from "@/components/settings/types";
@@ -159,6 +160,9 @@ export function GeneralPane({
 					})}
 				</p>
 			) : null}
+			<SettingsSectionLabel>
+				{t("general.sections.papers")}
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow label={t("general.paperTreeLabelMode.label")}>
 					<Select
@@ -291,6 +295,33 @@ export function GeneralPane({
 						</SelectContent>
 					</Select>
 				</SettingsRow>
+				<SettingsRow label={t("general.batchImportConcurrency.label")}>
+					<Select
+						value={String(settings.batchImportConcurrency)}
+						onValueChange={(value) =>
+							patch({ batchImportConcurrency: Number(value) })
+						}
+					>
+						<SelectTrigger size="sm" className="min-w-[180px] max-w-[240px]">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{Array.from({ length: 10 }, (_, index) => index + 1).map(
+								(value) => (
+									<SelectItem key={value} value={String(value)}>
+										{t("general.batchImportConcurrency.value", { value })}
+									</SelectItem>
+								),
+							)}
+						</SelectContent>
+					</Select>
+				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsSectionLabel className="mt-4">
+				{t("general.sections.pdf")}
+			</SettingsSectionLabel>
+			<SettingsGroup>
 				<SettingsRow label={t("general.pdfScrollStrategy.label")}>
 					<Select
 						value={settings.pdfScrollStrategy}
@@ -329,27 +360,12 @@ export function GeneralPane({
 						</SelectContent>
 					</Select>
 				</SettingsRow>
-				<SettingsRow label={t("general.batchImportConcurrency.label")}>
-					<Select
-						value={String(settings.batchImportConcurrency)}
-						onValueChange={(value) =>
-							patch({ batchImportConcurrency: Number(value) })
-						}
-					>
-						<SelectTrigger size="sm" className="min-w-[180px] max-w-[240px]">
-							<SelectValue />
-						</SelectTrigger>
-						<SelectContent>
-							{Array.from({ length: 10 }, (_, index) => index + 1).map(
-								(value) => (
-									<SelectItem key={value} value={String(value)}>
-										{t("general.batchImportConcurrency.value", { value })}
-									</SelectItem>
-								),
-							)}
-						</SelectContent>
-					</Select>
-				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsSectionLabel className="mt-4">
+				{t("general.sections.plaza")}
+			</SettingsSectionLabel>
+			<SettingsGroup>
 				<SettingsRow label={t("general.plaza.label")} htmlFor="plaza-enabled">
 					<Switch
 						id="plaza-enabled"
@@ -357,6 +373,12 @@ export function GeneralPane({
 						onCheckedChange={(v) => patch({ plazaEnabled: v })}
 					/>
 				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsSectionLabel className="mt-4">
+				{t("general.sections.network")}
+			</SettingsSectionLabel>
+			<SettingsGroup>
 				<NetworkProxyRow
 					htmlFor="network-proxy-enabled"
 					label={t("general.networkProxy.label")}
@@ -405,17 +427,15 @@ export function GeneralPane({
 					setEasyScholarKeyDraft(next.easyScholarKey);
 				}}
 			/>
+			<SettingsSectionLabel className="mt-4">
+				{t("general.sections.integrations")}
+			</SettingsSectionLabel>
 			<ConnectorSettingsBlock settings={settings} patch={patch} />
-			<div className="mt-4">
-				<p className="mb-2 px-0.5 font-medium text-sm">
-					{t("general.mcp.label")}
-				</p>
-				<McpSettingsBlock
-					settings={settings}
-					patch={patch}
-					disabled={hostContext.kind === "remote"}
-				/>
-			</div>
+			<McpSettingsBlock
+				settings={settings}
+				patch={patch}
+				disabled={hostContext.kind === "remote"}
+			/>
 			<ExportSettingsBlock settings={settings} patch={patch} />
 			<PrivacySettingsBlock settings={settings} patch={patch} />
 		</>
@@ -481,10 +501,10 @@ function EasyScholarSettingsBlock({
 	);
 
 	return (
-		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-sm">
+		<>
+			<SettingsSectionLabel className="mt-4">
 				{t("general.easyScholar.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow
 					label={
@@ -537,7 +557,7 @@ function EasyScholarSettingsBlock({
 					</div>
 				</SettingsRow>
 			</SettingsGroup>
-		</div>
+		</>
 	);
 }
 
@@ -565,10 +585,10 @@ function PrivacySettingsBlock({
 }) {
 	const { t } = useTranslation("settings");
 	return (
-		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-sm">
+		<>
+			<SettingsSectionLabel className="mt-4">
 				{t("general.privacy.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow
 					label={t("general.privacy.telemetry.label")}
@@ -595,7 +615,7 @@ function PrivacySettingsBlock({
 					</Button>
 				</SettingsRow>
 			</SettingsGroup>
-		</div>
+		</>
 	);
 }
 
@@ -608,10 +628,10 @@ function ExportSettingsBlock({
 }) {
 	const { t } = useTranslation("settings");
 	return (
-		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-sm">
+		<>
+			<SettingsSectionLabel className="mt-4">
 				{t("general.export.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow
 					label={t("general.export.watermark.label")}
@@ -624,7 +644,7 @@ function ExportSettingsBlock({
 					/>
 				</SettingsRow>
 			</SettingsGroup>
-		</div>
+		</>
 	);
 }
 

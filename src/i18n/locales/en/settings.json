@@ -57,6 +57,13 @@
 	},
 	"general": {
 		"title": "General",
+		"sections": {
+			"papers": "Paper library",
+			"pdf": "PDF reading",
+			"plaza": "Plaza",
+			"network": "Network",
+			"integrations": "Integrations"
+		},
 		"paperTreeLabelMode": {
 			"label": "Paper names in file tree",
 			"title-author": "Title · Author",
