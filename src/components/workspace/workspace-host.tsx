@@ -78,8 +78,10 @@ const PDF_TAB_MOUNT_LRU = 2;
  * Number of Plate Markdown editors kept mounted (most recent first). Same
  * shell/LRU split as PDF: switching back to a recent note skips plugin init
  * and full-document deserialization without retaining every open editor.
+ * Raised to 4 so a few split notes stay warm; heavier documents deserialize
+ * through the content-trimmed remark pipeline.
  */
-const EDITOR_TAB_MOUNT_LRU = 2;
+const EDITOR_TAB_MOUNT_LRU = 4;
 
 function handleWorkspaceDrop(drop: WorkspaceExternalDrop): void {
 	const path = drop.paths[0];

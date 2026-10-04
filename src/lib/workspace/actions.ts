@@ -80,6 +80,7 @@ import {
 	vaultRelativePath,
 	writeVaultFile,
 } from "@/lib/vault";
+import { primeSeedCache } from "@/lib/vault/seed-cache";
 import {
 	getVaultPath,
 	refreshTree,
@@ -1545,6 +1546,8 @@ export async function applyDiskChange(
 	} catch {
 		return;
 	}
+	// Keep the open-path seed cache in step with what the reload just read.
+	primeSeedCache(absPath, content);
 	const guard = () => {
 		reseedGuard.add(norm);
 		window.setTimeout(() => reseedGuard.delete(norm), 500);
@@ -1633,6 +1636,7 @@ export function persistFile(
 				// The watcher echo of this write must not re-trigger a full Wiki
 				// rebuild on every autosave (#270).
 				trackSelfWrittenPath(path);
+				primeSeedCache(path, md);
 				// Advance the owning tab's seed only after the write is confirmed.
 				setTabs((prev) => syncTabSeedsForPath(prev, path, md));
 				return true;

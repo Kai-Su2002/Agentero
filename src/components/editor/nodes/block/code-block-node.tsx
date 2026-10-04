@@ -15,6 +15,7 @@ import {
 } from "platejs/react";
 import * as React from "react";
 import { useTranslation } from "react-i18next";
+import { useMarkdownExportMode } from "@/components/editor/markdown-export-mode-context";
 import {
 	Command,
 	CommandEmpty,
@@ -34,6 +35,7 @@ import {
 	TooltipProvider,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { useInView } from "@/hooks/use-in-view";
 import { copyTextToClipboard } from "@/lib/core/clipboard";
 import { cn } from "@/lib/core/utils";
 
@@ -81,7 +83,7 @@ function CodeLanguageSelect() {
 						type="button"
 						aria-label={t("codeBlock.languageLabel")}
 						className={cn(
-							"flex h-6 items-center rounded-md bg-background/80 px-1.5 font-mono text-xs text-muted-foreground opacity-0 backdrop-blur transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100",
+							"flex h-6 items-center rounded-md bg-background px-1.5 font-mono text-xs text-muted-foreground opacity-0 transition-opacity hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100 data-[state=open]:opacity-100",
 						)}
 					>
 						{label}
@@ -176,7 +178,7 @@ function CopyCodeButton({ element }: { element: TCodeBlockElement }) {
 							aria-label={t("codeBlock.copy")}
 							onClick={onCopy}
 							className={cn(
-								"flex size-6 items-center justify-center rounded-md bg-background/80 text-muted-foreground opacity-0 backdrop-blur transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100",
+								"flex size-6 items-center justify-center rounded-md bg-background text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none group-focus-within:opacity-100 group-hover:opacity-100",
 							)}
 						>
 							{copied ? (
@@ -195,12 +197,18 @@ function CopyCodeButton({ element }: { element: TCodeBlockElement }) {
 
 function MermaidPreview({ source }: { source: string }) {
 	const { t } = useTranslation("editor");
+	const exportMode = useMarkdownExportMode();
 	const previewId = React.useId().replace(/:/g, "");
 	const [svg, setSvg] = React.useState<string | null>(null);
 	const [renderError, setRenderError] = React.useState(false);
 	const renderVersionRef = React.useRef(0);
+	const rootRef = React.useRef<HTMLDivElement | null>(null);
+	// Mermaid pulls a multi-MB bundle and renders off the main thread; defer it
+	// until the block is near the viewport (export renders everything).
+	const inView = useInView(rootRef, { enabled: !exportMode });
 
 	React.useEffect(() => {
+		if (!inView) return;
 		const sourceText = source.trim();
 		const renderVersion = ++renderVersionRef.current;
 		if (!sourceText) {
@@ -237,22 +245,25 @@ function MermaidPreview({ source }: { source: string }) {
 			cancelled = true;
 			window.clearTimeout(timeout);
 		};
-	}, [previewId, source]);
-
-	if (!svg && !renderError) return null;
+	}, [inView, previewId, source]);
 
 	return (
 		<div
-			className="border-border/40 border-t bg-background/30 px-4 py-3 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full"
+			ref={rootRef}
+			className={cn(
+				!svg && !renderError
+					? "h-0 overflow-hidden"
+					: "border-border/40 border-t bg-background/30 px-4 py-3 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full",
+			)}
 			contentEditable={false}
 		>
 			{svg ? (
 				<MermaidSvg svg={svg} label={t("codeBlock.mermaidPreview")} />
-			) : (
+			) : renderError ? (
 				<p className="m-0 text-muted-foreground text-xs">
 					{t("codeBlock.mermaidPreviewError")}
 				</p>
-			)}
+			) : null}
 		</div>
 	);
 }

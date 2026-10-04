@@ -1,6 +1,5 @@
 "use client";
 
-import { MarkdownPlugin } from "@platejs/markdown";
 import { ImagePlugin } from "@platejs/media/react";
 import { BlockSelectionPlugin } from "@platejs/selection/react";
 import { TocPlugin } from "@platejs/toc/react";
@@ -58,7 +57,7 @@ import { errorMessage, notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
 import { insertBreakAfterSelectedVoidBlocks } from "@/lib/markdown/block-selection";
-import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
+import { deserializeMarkdownBody } from "@/lib/markdown/deserialize-md";
 import { editorContextMenuCapabilities } from "@/lib/markdown/editor-context-menu";
 import {
 	exportDefaultName,
@@ -71,6 +70,10 @@ import type {
 } from "@/lib/markdown/export/types";
 import { splitFrontmatter } from "@/lib/markdown/frontmatter";
 import { saveImageToMarkdownAssets } from "@/lib/markdown/image";
+import {
+	getMarkdownScrollTop,
+	setMarkdownScrollTop,
+} from "@/lib/markdown/scroll-memory";
 import { useUiScale } from "@/lib/settings";
 import { formatModShortcut } from "@/lib/shell/shortcuts";
 import type { LinkFragment, WikiRenameHeadingRequest } from "@/lib/wiki";
@@ -182,6 +185,9 @@ export function MarkdownEditor({
 	const onAssetsChangedRef = useRef(onAssetsChanged);
 	onAssetsChangedRef.current = onAssetsChanged;
 	const editorContainerRef = useRef<HTMLDivElement | null>(null);
+	// Reading position survives keep-alive eviction (see scroll-memory).
+	const scrollKey = filePath ?? null;
+	const scrollTopRef = useRef(0);
 	// Body text keeps its own px font size (editorFontSize setting) so it must
 	// follow the UI zoom (uiScale) explicitly — rem-based chrome scales for free.
 	const uiScale = useUiScale();
@@ -305,9 +311,7 @@ export function MarkdownEditor({
 		plugins,
 		value: (ed) => {
 			const { body } = splitFrontmatter(initialMarkdown);
-			return ed
-				.getApi(MarkdownPlugin)
-				.markdown.deserialize(prepareMarkdownForDeserialize(body || " "));
+			return deserializeMarkdownBody(ed, body);
 		},
 	});
 
@@ -344,11 +348,29 @@ export function MarkdownEditor({
 		const container = editorContainerRef.current;
 		const scrollTop = container?.scrollTop ?? 0;
 		if (!applyExternalMarkdown(initialMarkdown)) return;
+		scrollTopRef.current = scrollTop;
 		window.requestAnimationFrame(() => {
 			const el = editorContainerRef.current;
 			if (el) el.scrollTop = scrollTop;
 		});
 	}, [reloadKey, initialMarkdown, applyExternalMarkdown]);
+
+	// Restore the last reading position when a keep-alive-evicted note remounts,
+	// and persist it (bounded, no re-render) when this instance unmounts.
+	useEffect(() => {
+		if (!scrollKey) return;
+		const frame = window.requestAnimationFrame(() => {
+			const el = editorContainerRef.current;
+			if (!el) return;
+			const top = getMarkdownScrollTop(scrollKey);
+			if (top > 0) el.scrollTop = top;
+			scrollTopRef.current = el.scrollTop;
+		});
+		return () => {
+			window.cancelAnimationFrame(frame);
+			setMarkdownScrollTop(scrollKey, scrollTopRef.current);
+		};
+	}, [scrollKey]);
 
 	const {
 		wikiCompletionDraft,
@@ -695,6 +717,8 @@ export function MarkdownEditor({
 											ref={editorContainerRef}
 											className="agentero-scroll h-full min-w-0 overflow-y-auto"
 											onScrollCapture={() => {
+												const el = editorContainerRef.current;
+												if (el) scrollTopRef.current = el.scrollTop;
 												// Reposition instead of hard-dismiss: arrow-key list
 												// updates can reflow and fire scroll without leaving [[.
 												scheduleCompletionProbe();

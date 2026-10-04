@@ -1,6 +1,5 @@
 "use client";
 
-import { MarkdownPlugin } from "@platejs/markdown";
 import { ImagePlugin } from "@platejs/media/react";
 import { Plate, usePlateEditor } from "platejs/react";
 import { memo, useMemo } from "react";
@@ -9,7 +8,7 @@ import { Editor } from "@/components/editor/editor-surface";
 import { WikiEmbedProjectionProvider } from "@/components/editor/embeds/projection-context";
 import { ImageElement } from "@/components/editor/nodes/block/image-node";
 import { MarkdownEditorKit } from "@/components/editor/plugins/markdown-editor-kit";
-import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
+import { deserializeMarkdownBody } from "@/lib/markdown/deserialize-md";
 import { splitFrontmatter } from "@/lib/markdown/frontmatter";
 
 export const EmbeddedMarkdownProjection = memo(
@@ -28,9 +27,7 @@ export const EmbeddedMarkdownProjection = memo(
 			plugins,
 			value: (currentEditor) => {
 				const { body } = splitFrontmatter(markdown);
-				return currentEditor
-					.getApi(MarkdownPlugin)
-					.markdown.deserialize(prepareMarkdownForDeserialize(body || " "));
+				return deserializeMarkdownBody(currentEditor, body);
 			},
 		});
 

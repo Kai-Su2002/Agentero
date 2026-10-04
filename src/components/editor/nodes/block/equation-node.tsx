@@ -14,12 +14,14 @@ import {
 } from "platejs/react";
 import * as React from "react";
 import { memo, useEffect } from "react";
+import { useMarkdownExportMode } from "@/components/editor/markdown-export-mode-context";
 import { Button } from "@/components/ui/button";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
+import { useInView } from "@/hooks/use-in-view";
 import { cn } from "@/lib/core/utils";
 import { renderKatexToElement } from "@/lib/math/katex-cache";
 
@@ -53,16 +55,19 @@ function useCachedEquationElement({
 	texExpression,
 	katexRef,
 	options,
+	enabled,
 }: {
 	texExpression: string;
 	katexRef: React.RefObject<HTMLElement | null>;
 	options: katex.KatexOptions;
+	enabled: boolean;
 }) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: katexRef is a stable DOM container; only the TeX source should trigger re-render.
 	useEffect(() => {
+		if (!enabled) return;
 		if (!katexRef.current) return;
 		renderKatexToElement(texExpression, options, katexRef.current);
-	}, [texExpression, options]);
+	}, [enabled, texExpression, options]);
 }
 
 function EquationPopoverContent({
@@ -122,11 +127,14 @@ export const EquationElement = memo(function EquationElement(
 	const selected = useSelected();
 	const [open, setOpen] = React.useState(false);
 	const katexRef = React.useRef<HTMLDivElement | null>(null);
+	const exportMode = useMarkdownExportMode();
+	const inView = useInView(katexRef, { enabled: !exportMode });
 
 	useCachedEquationElement({
 		texExpression: props.element.texExpression,
 		katexRef,
 		options: displayKatexOptions,
+		enabled: inView,
 	});
 
 	return (
@@ -178,11 +186,14 @@ export const InlineEquationElement = memo(function InlineEquationElement(
 	const selected = useSelected();
 	const [open, setOpen] = React.useState(false);
 	const katexRef = React.useRef<HTMLDivElement | null>(null);
+	const exportMode = useMarkdownExportMode();
+	const inView = useInView(katexRef, { enabled: !exportMode });
 
 	useCachedEquationElement({
 		texExpression: props.element.texExpression,
 		katexRef,
 		options: inlineKatexOptions,
+		enabled: inView,
 	});
 
 	return (

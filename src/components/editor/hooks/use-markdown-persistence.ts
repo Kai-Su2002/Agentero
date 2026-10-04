@@ -10,7 +10,7 @@ import {
 	useState,
 } from "react";
 import { useDebouncedCallback } from "@/hooks/use-debounce";
-import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
+import { deserializeMarkdownBody } from "@/lib/markdown/deserialize-md";
 import {
 	frontmatterInterior,
 	joinFrontmatter,
@@ -255,9 +255,7 @@ export function useMarkdownPersistence({
 			setFrontmatterYaml(frontmatterInterior(frontmatter));
 			externalReloadRef.current = true;
 			try {
-				const value = editor
-					.getApi(MarkdownPlugin)
-					.markdown.deserialize(prepareMarkdownForDeserialize(body || " "));
+				const value = deserializeMarkdownBody(editor, body);
 				editor.tf.deselect();
 				editor.tf.setValue(value);
 			} finally {

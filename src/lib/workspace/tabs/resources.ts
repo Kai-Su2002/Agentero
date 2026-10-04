@@ -37,6 +37,7 @@ import {
 	readVaultFile,
 } from "@/lib/vault";
 import { basenameOf, normalizePathKey, treeFindNode } from "@/lib/vault/path";
+import { readSeedCached } from "@/lib/vault/seed-cache";
 import {
 	type DocTab,
 	NOTES_PLACEHOLDER,
@@ -288,7 +289,7 @@ export async function loadTabResources(
 		const notesPath = notesPathForPaper(paperDir);
 		// Fallback seed read races with the probes below; resolved last so a
 		// bundle that only arrives on the retry wins over an early failed read.
-		const notesFallback = readVaultFile(notesPath).catch(
+		const notesFallback = readSeedCached(notesPath).catch(
 			() => NOTES_PLACEHOLDER,
 		);
 		const probeOpenState = async () => {
@@ -521,7 +522,7 @@ export async function loadTabResources(
 	}
 
 	try {
-		const markdownSeed = await readVaultFile(path);
+		const markdownSeed = await readSeedCached(path);
 		return { ...base, markdownSeed };
 	} catch (e) {
 		return {

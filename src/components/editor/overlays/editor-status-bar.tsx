@@ -76,15 +76,35 @@ export function EditorStatusBar({ filePath, vaultPath }: EditorStatusBarProps) {
 			return;
 		}
 		let cancelled = false;
-		getBacklinks(vaultPath ?? null, filePath)
-			.then((res) => {
-				if (!cancelled) setBacklinks(res.backlinks);
-			})
-			.catch(() => {
-				if (!cancelled) setBacklinks([]);
-			});
+		const run = () => {
+			if (cancelled) return;
+			getBacklinks(vaultPath ?? null, filePath)
+				.then((res) => {
+					if (!cancelled) setBacklinks(res.backlinks);
+				})
+				.catch(() => {
+					if (!cancelled) setBacklinks([]);
+				});
+		};
+		// Backlinks are chrome, not reading-critical: run after the note is
+		// interactive so opening a long file and the Host query do not compete.
+		const idle = window as unknown as {
+			requestIdleCallback?: (
+				cb: () => void,
+				opts?: { timeout: number },
+			) => number;
+			cancelIdleCallback?: (handle: number) => void;
+		};
+		const handle = idle.requestIdleCallback
+			? idle.requestIdleCallback(run, { timeout: 2000 })
+			: window.setTimeout(run, 250);
 		return () => {
 			cancelled = true;
+			if (idle.requestIdleCallback && idle.cancelIdleCallback) {
+				idle.cancelIdleCallback(handle);
+			} else {
+				window.clearTimeout(handle);
+			}
 		};
 	}, [filePath, vaultPath, wikiIndexRevision]);
 
