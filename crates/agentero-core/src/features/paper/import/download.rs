@@ -28,29 +28,112 @@ use tar::Archive;
 /// Set by the host when settings load or change (`set_institution_proxy`);
 /// read per request by the download fallback chain. An empty prefix disables
 /// the layer — the unauthenticated behaviour stays the default.
-static INSTITUTION_PROXY: Mutex<Option<(String, String)>> = Mutex::new(None);
+static INSTITUTION_PROXY: Mutex<Option<InstitutionProxyConf>> = Mutex::new(None);
 
-/// Update the process-wide institution proxy (prefix + session cookie).
-/// An empty prefix disables the fallback layer. A bare origin (no query part)
-/// gets the EZProxy `/login?url=` convention appended.
-pub fn set_institution_proxy(prefix: &str, cookie: &str) {
+/// Gateway flavour of the configured institution proxy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InstitutionProxyKind {
+    /// Standard EZProxy query passthrough (`/login?url={encoded target}`).
+    EzProxy,
+    /// wengine WebVPN path rewriting (`/https/{encrypted-host}/{path}`), used
+    /// by several CN universities (ZJU etc.). Hosts are AES-128-CTR encrypted
+    /// with the fixed public `wrdvpnisthebest!` key and prefixed with the IV.
+    Wengine,
+}
+
+impl InstitutionProxyKind {
+    pub fn from_setting(s: &str) -> Self {
+        if s.eq_ignore_ascii_case("wengine") {
+            Self::Wengine
+        } else {
+            Self::EzProxy
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct InstitutionProxyConf {
+    kind: InstitutionProxyKind,
+    prefix: String,
+    cookie: String,
+}
+
+/// Update the process-wide institution proxy (kind + prefix + session cookie).
+/// An empty prefix disables the fallback layer. For EZProxy a bare origin
+/// (no query part) gets the `/login?url=` convention appended; for wengine the
+/// prefix stays the bare gateway origin.
+pub fn set_institution_proxy(kind: InstitutionProxyKind, prefix: &str, cookie: &str) {
     let mut prefix = prefix.trim().trim_end_matches('/').to_string();
-    if !prefix.is_empty() && !prefix.contains('?') {
+    if kind == InstitutionProxyKind::EzProxy && !prefix.is_empty() && !prefix.contains('?') {
         prefix.push_str("/login?url=");
     }
     let cookie = cookie.trim().to_string();
     let value = if prefix.is_empty() {
         None
     } else {
-        Some((prefix, cookie))
+        Some(InstitutionProxyConf {
+            kind,
+            prefix,
+            cookie,
+        })
     };
     if let Ok(mut guard) = INSTITUTION_PROXY.lock() {
         *guard = value;
     }
 }
 
-fn institution_proxy() -> Option<(String, String)> {
+fn institution_proxy() -> Option<InstitutionProxyConf> {
     INSTITUTION_PROXY.lock().ok().and_then(|g| g.clone())
+}
+
+/// AES-128-CTR encrypt `host` with the public wengine key/IV and hex-encode
+/// with the IV prefixed in plaintext, matching the gateway's URL form
+/// (`/https/{hex(wrdvpnisthebest!)}{hex(ct)}/`). Verified against a live ZJU
+/// WebVPN deployment (sample: www.cnki.net).
+fn wengine_host(host: &str) -> String {
+    use aes::cipher::{BlockEncrypt, KeyInit};
+    const KEY_IV: &[u8; 16] = b"wrdvpnisthebest!";
+    let cipher = aes::Aes128::new_from_slice(KEY_IV).expect("fixed 16-byte key");
+    let mut counter = *KEY_IV;
+    let mut block = aes::Block::default();
+    let mut out = Vec::with_capacity(host.len());
+    for chunk in host.as_bytes().chunks(16) {
+        block.copy_from_slice(&counter);
+        cipher.encrypt_block(&mut block);
+        for (i, byte) in chunk.iter().enumerate() {
+            out.push(byte ^ block[i]);
+        }
+        // big-endian increment of the full 128-bit counter
+        for b in counter.iter_mut().rev() {
+            *b = b.wrapping_add(1);
+            if *b != 0 {
+                break;
+            }
+        }
+    }
+    let mut hexed = String::with_capacity(32 + out.len() * 2);
+    for b in KEY_IV.iter().chain(out.iter()) {
+        hexed.push_str(&format!("{b:02x}"));
+    }
+    hexed
+}
+
+/// Rewrite `target` into a wengine path-style proxy URL:
+/// `{origin}/{scheme}/{encoded-host}{path}`.
+fn wengine_rewrite(origin: &str, target: &str) -> Option<String> {
+    let (scheme, rest) = target.split_once("://")?;
+    let (host, path) = match rest.split_once('/') {
+        Some((h, p)) => (h, format!("/{p}")),
+        None => (rest, "/".to_string()),
+    };
+    // strip port: the gateway encodes the bare host
+    let host = host.split(':').next().unwrap_or(host);
+    let path = path.trim_start_matches('/').trim_end_matches('/');
+    if path.is_empty() {
+        Some(format!("{origin}/{scheme}/{}", wengine_host(host)))
+    } else {
+        Some(format!("{origin}/{scheme}/{}/{path}", wengine_host(host)))
+    }
 }
 
 /// Rewrite `target` into an EZProxy-style prefixed URL
@@ -100,13 +183,25 @@ fn pdf_links_from_html(html: &str, proxy_origin: &str) -> Vec<String> {
 /// One-shot probe of an institution proxy configuration: fetch a known
 /// paywalled DOI through the rewrite and check the response is a PDF.
 /// Returns the byte count on success. Backs the settings "test connection".
-pub async fn probe_institution_proxy(prefix: &str, cookie: &str) -> Result<usize, String> {
+pub async fn probe_institution_proxy(
+    kind: InstitutionProxyKind,
+    prefix: &str,
+    cookie: &str,
+) -> Result<usize, String> {
     const PROBE_DOI: &str = "10.1038/nature12373";
     let prefix = prefix.trim().trim_end_matches('/');
     if prefix.is_empty() {
         return Err("proxy prefix is empty".into());
     }
-    let rewritten = ezproxy_rewrite(prefix, &format!("https://doi.org/{PROBE_DOI}"));
+    let target = "https://www.nature.com/articles/nature12373.pdf";
+    let rewritten = match kind {
+        InstitutionProxyKind::EzProxy => {
+            ezproxy_rewrite(prefix, &format!("https://doi.org/{PROBE_DOI}"))
+        }
+        InstitutionProxyKind::Wengine => {
+            wengine_rewrite(prefix, target).ok_or_else(|| "wengine rewrite failed".to_string())?
+        }
+    };
     let bytes = fetch_bytes_checked(&rewritten, cookie.trim()).await?;
     if bytes.len() >= 4 && &bytes[..4] == b"%PDF" {
         return Ok(bytes.len());
@@ -647,12 +742,11 @@ async fn fetch_pdf_assets(
             out.messages.push(format!("pdf cancelled: {e}"));
             return out;
         }
-        if let (Some(doi), Some((prefix, cookie))) = (
+        if let (Some(doi), Some(conf)) = (
             doi.map(str::trim).filter(|s| !s.is_empty()),
             institution_proxy(),
         ) {
-            ok = try_institution_proxy_download(paper_dir, id, doi, &prefix, &cookie, &mut out)
-                .await;
+            ok = try_institution_proxy_download(paper_dir, id, doi, &conf, &mut out).await;
         }
     }
     if !ok && candidates.is_empty() {
@@ -669,22 +763,28 @@ async fn try_institution_proxy_download(
     paper_dir: &Path,
     id: &str,
     doi: &str,
-    prefix: &str,
-    cookie: &str,
+    conf: &InstitutionProxyConf,
     out: &mut PdfAssetResult,
 ) -> bool {
-    let proxy_origin = prefix
+    let proxy_origin = conf
+        .prefix
         .split("/login?url=")
         .next()
-        .unwrap_or(prefix)
+        .unwrap_or(&conf.prefix)
         .to_string();
     let mut targets = vec![format!("https://doi.org/{doi}")];
 
     for _hop in 0..2 {
         let mut next_targets: Vec<String> = Vec::new();
         for target in &targets {
-            let rewritten = ezproxy_rewrite(prefix, target);
-            match fetch_bytes_checked(&rewritten, cookie).await {
+            let rewritten = match conf.kind {
+                InstitutionProxyKind::EzProxy => ezproxy_rewrite(&conf.prefix, target),
+                InstitutionProxyKind::Wengine => match wengine_rewrite(&proxy_origin, target) {
+                    Some(url) => url,
+                    None => continue,
+                },
+            };
+            match fetch_bytes_checked(&rewritten, &conf.cookie).await {
                 Ok(bytes) => {
                     if bytes.len() >= 4 && &bytes[..4] == b"%PDF" {
                         let name = safe_filename(id, "pdf");
@@ -1293,19 +1393,48 @@ mod tests {
     }
 
     #[test]
+    fn wengine_host_matches_live_samples() {
+        // Captured from a live ZJU WebVPN deployment (2026-10): the gateway
+        // URL for www.cnki.net.
+        assert_eq!(
+            wengine_host("www.cnki.net"),
+            "77726476706e69737468656265737421e7e056d2243e635930068cb8"
+        );
+    }
+
+    #[test]
+    fn wengine_rewrite_builds_path_form() {
+        assert_eq!(
+            wengine_rewrite(
+                "https://webvpn.zju.edu.cn",
+                "https://www.nature.com/articles/s43018-026-01220-4.pdf"
+            )
+            .as_deref(),
+            Some(
+                "https://webvpn.zju.edu.cn/https/77726476706e69737468656265737421e7e056d229317c456c0dc7af9758/articles/s43018-026-01220-4.pdf"
+            )
+        );
+    }
+
+    #[test]
     fn set_institution_proxy_blank_prefix_disables() {
-        set_institution_proxy("  ", "cookie");
+        set_institution_proxy(InstitutionProxyKind::EzProxy, "  ", "cookie");
         assert!(institution_proxy().is_none());
         // Bare origin gets the EZProxy `/login?url=` convention appended.
-        set_institution_proxy("https://webvpn.example.edu/", " c ");
+        set_institution_proxy(
+            InstitutionProxyKind::EzProxy,
+            "https://webvpn.example.edu/",
+            " c ",
+        );
         assert_eq!(
             institution_proxy(),
-            Some((
-                "https://webvpn.example.edu/login?url=".to_string(),
-                "c".to_string()
-            ))
+            Some(InstitutionProxyConf {
+                kind: InstitutionProxyKind::EzProxy,
+                prefix: "https://webvpn.example.edu/login?url=".to_string(),
+                cookie: "c".to_string(),
+            })
         );
-        set_institution_proxy("", "");
+        set_institution_proxy(InstitutionProxyKind::EzProxy, "", "");
     }
 
     /// 2000 × 8KB chunks of a 16MB known-size download at the same instant

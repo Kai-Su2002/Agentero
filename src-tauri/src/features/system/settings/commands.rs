@@ -112,11 +112,11 @@ pub fn settings_set(
 #[specta::specta]
 pub async fn institution_proxy_probe(app: AppHandle) -> ApiResult<String> {
     let store = app.state::<AppSettingsStore>();
-    let Some((prefix, cookie)) = store.institution_proxy() else {
+    let Some((kind, prefix, cookie)) = store.institution_proxy() else {
         return ApiResult::ok("prefix not configured".into());
     };
     match agentero_core::features::paper::import::download::probe_institution_proxy(
-        &prefix, &cookie,
+        kind, &prefix, &cookie,
     )
     .await
     {

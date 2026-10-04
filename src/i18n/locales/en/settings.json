@@ -113,6 +113,9 @@
 			"description": "WebVPN prefix for paywalled PDF download (leave empty to disable)",
 			"cookieLabel": "Proxy cookie",
 			"cookiePlaceholder": "Paste WebVPN cookie",
+			"typeLabel": "Gateway type",
+			"typeEzproxy": "EZProxy (login?url=)",
+			"typeWengine": "WebVPN (wengine)",
 			"test": "Test",
 			"testing": "Testing…"
 		},

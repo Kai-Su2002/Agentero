@@ -1438,6 +1438,11 @@ export type AppSettings_Deserialize = {
 	 *  the browser). Empty = no cookie.
 	 */
 	institutionProxyCookie?: string,
+	/**
+	 *  Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+	 *  (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+	 */
+	institutionProxyType?: string,
 	paperTreeLabelMode?: string,
 	paperTreeSortMode?: string,
 	/**
@@ -1547,6 +1552,11 @@ export type AppSettings_Serialize = {
 	 *  the browser). Empty = no cookie.
 	 */
 	institutionProxyCookie: string,
+	/**
+	 *  Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+	 *  (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+	 */
+	institutionProxyType: string,
 	paperTreeLabelMode: string,
 	paperTreeSortMode: string,
 	/**

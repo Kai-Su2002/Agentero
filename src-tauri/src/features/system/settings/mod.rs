@@ -95,6 +95,10 @@ pub struct AppSettings {
     /// the browser). Empty = no cookie.
     #[serde(default)]
     pub institution_proxy_cookie: String,
+    /// Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+    /// (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+    #[serde(default)]
+    pub institution_proxy_type: String,
     #[serde(default = "default_paper_tree_label_mode")]
     pub paper_tree_label_mode: String,
     #[serde(default = "default_paper_tree_sort_mode")]
@@ -358,6 +362,7 @@ impl Default for AppSettings {
             github_mirror_base_url: GITHUB_MIRROR_PRESETS[0].to_string(),
             institution_proxy_prefix: String::new(),
             institution_proxy_cookie: String::new(),
+            institution_proxy_type: "ezproxy".to_string(),
             paper_tree_label_mode: default_paper_tree_label_mode(),
             paper_tree_sort_mode: default_paper_tree_sort_mode(),
             paper_note_mode: default_paper_note_mode(),
@@ -830,13 +835,24 @@ impl AppSettingsStore {
 
     /// Resolve the configured institution proxy (prefix, cookie). None when
     /// the prefix is unset.
-    pub fn institution_proxy(&self) -> Option<(String, String)> {
+    pub fn institution_proxy(
+        &self,
+    ) -> Option<(
+        agentero_core::features::paper::import::download::InstitutionProxyKind,
+        String,
+        String,
+    )> {
         let guard = self.inner.lock().ok()?;
         let prefix = guard.institution_proxy_prefix.trim();
         if prefix.is_empty() {
             return None;
         }
+        let kind =
+            agentero_core::features::paper::import::download::InstitutionProxyKind::from_setting(
+                &guard.institution_proxy_type,
+            );
         Some((
+            kind,
             prefix.to_string(),
             guard.institution_proxy_cookie.trim().to_string(),
         ))
@@ -1011,8 +1027,17 @@ fn normalize(s: &mut AppSettings) {
         .trim_end_matches('/')
         .to_string();
     s.institution_proxy_cookie = s.institution_proxy_cookie.trim().to_string();
+    s.institution_proxy_type = if s.institution_proxy_type.eq_ignore_ascii_case("wengine") {
+        "wengine".to_string()
+    } else {
+        "ezproxy".to_string()
+    };
     // Keep the core download fallback in sync on both load and set paths.
+    let kind = agentero_core::features::paper::import::download::InstitutionProxyKind::from_setting(
+        &s.institution_proxy_type,
+    );
     agentero_core::features::paper::import::download::set_institution_proxy(
+        kind,
         &s.institution_proxy_prefix,
         &s.institution_proxy_cookie,
     );

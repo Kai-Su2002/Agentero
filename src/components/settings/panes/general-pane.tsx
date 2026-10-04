@@ -386,6 +386,34 @@ export function GeneralPane({
 					}
 					onToggle={(githubMirrorEnabled) => patch({ githubMirrorEnabled })}
 				/>
+				<SettingsRow
+					label={t("general.institutionProxy.typeLabel")}
+					htmlFor="institution-proxy-type"
+				>
+					<Select
+						value={settings.institutionProxyType}
+						onValueChange={(institutionProxyType) =>
+							patch({ institutionProxyType })
+						}
+					>
+						<SelectTrigger
+							id="institution-proxy-type"
+							size="sm"
+							className="h-8 w-44 text-xs"
+							disabled={!isTauri()}
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="ezproxy" className="text-xs">
+								{t("general.institutionProxy.typeEzproxy")}
+							</SelectItem>
+							<SelectItem value="wengine" className="text-xs">
+								{t("general.institutionProxy.typeWengine")}
+							</SelectItem>
+						</SelectContent>
+					</Select>
+				</SettingsRow>
 				<InstitutionProxyRow
 					htmlFor="institution-proxy-prefix"
 					label={t("general.institutionProxy.label")}

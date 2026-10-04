@@ -64,6 +64,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	easyScholarKey: "",
 	institutionProxyPrefix: "",
 	institutionProxyCookie: "",
+	institutionProxyType: "ezproxy",
 	networkProxyEnabled: false,
 	networkProxyUrl: DEFAULT_NETWORK_PROXY_URL,
 	githubMirrorEnabled: false,
