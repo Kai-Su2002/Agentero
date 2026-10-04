@@ -48,6 +48,7 @@
 			"needLayout": "请先运行版面分析（Figures 面板）。",
 			"noText": "没有可提取文字的版面区域可翻译。",
 			"failed": "全文翻译失败",
+			"openSettings": "打开翻译设置",
 			"waiting": "等待版面解析后翻译…",
 			"cancelQueue": "取消排队",
 			"queuedToast": "全文翻译已排队，等待版面解析完成",
