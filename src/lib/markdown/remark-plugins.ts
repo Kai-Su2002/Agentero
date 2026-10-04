@@ -34,6 +34,15 @@ export const MARKDOWN_REMARK_PLUGINS = [
 type RemarkPluginList = typeof MARKDOWN_REMARK_PLUGINS;
 
 /**
+ * True when `remarkMdx` is needed to parse the source: an HTML/JSX-looking
+ * `<name` or `</name`. After `prepareMarkdownForDeserialize` escapes stray `<`,
+ * a remaining match is one of the editor's supported HTML tags.
+ */
+export function markdownNeedsMdx(source: string): boolean {
+	return /<[A-Za-z/]/.test(source);
+}
+
+/**
  * Pick the deserialize-time remark plugins a document actually needs.
  *
  * `remarkMdx` tokenizes JSX, `remarkEmoji` scans the whole text for `:shortcodes:`
@@ -46,9 +55,7 @@ export function selectMarkdownRemarkPluginsForDeserialize(
 ): RemarkPluginList {
 	const hasMath = source.includes("$");
 	const hasWiki = source.includes("[[");
-	// After `prepareMarkdownForDeserialize` escapes stray `<`, a remaining
-	// `<name` / `</name` is a supported HTML tag that needs MDX.
-	const hasMdxTag = /<[A-Za-z/]/.test(source);
+	const hasMdxTag = markdownNeedsMdx(source);
 	const hasColon = source.includes(":");
 	const plugins: unknown[] = [];
 	if (hasMath) plugins.push(remarkMath);

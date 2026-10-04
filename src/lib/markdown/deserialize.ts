@@ -124,12 +124,22 @@ function escapeUnclosedBlockMath(source: string): string {
 }
 
 export function prepareMarkdownForDeserialize(source: string): string {
+	// Cheap applicability guards so a document that cannot contain the pattern
+	// skips the full line scan entirely (the common plain-note case).
+	let out = source;
+	if (COLLAPSIBLE_BLANK_SEQUENCE.test(out)) {
+		out = preserveExtraBlankLines(out);
+	}
+	if (out.includes("$$")) {
+		out = escapeUnclosedBlockMath(out);
+	}
 	// After the block-math pass so an already-repaired `\$` fence cannot
 	// desync the math tracking below.
-	return escapeStrayLessThan(
-		escapeUnclosedBlockMath(preserveExtraBlankLines(source)),
-	);
+	return escapeStrayLessThan(out);
 }
+
+/** Two blank-ish lines in a row: the only shape `preserveExtraBlankLines` rewrites. */
+const COLLAPSIBLE_BLANK_SEQUENCE = /\n[ \t\r]*\n/;
 
 /** Characters allowed to start a JSX name (`remarkMdx` tag). */
 const JSX_NAME_START = /[\p{ID_Start}$_]/u;

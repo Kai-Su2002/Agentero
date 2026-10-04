@@ -7,11 +7,21 @@ import { remarkPreserveHtml } from "@/lib/markdown/html";
 import { remarkImageGroup } from "@/lib/markdown/image-group";
 import {
 	MARKDOWN_REMARK_PLUGINS,
+	markdownNeedsMdx,
 	selectMarkdownRemarkPluginsForDeserialize,
 } from "@/lib/markdown/remark-plugins";
 
 const list = (source: string) =>
 	selectMarkdownRemarkPluginsForDeserialize(source);
+
+describe("markdownNeedsMdx", () => {
+	it("detects supported HTML tags", () => {
+		expect(markdownNeedsMdx("<div>hi</div>")).toBe(true);
+		expect(markdownNeedsMdx("</p>")).toBe(true);
+		expect(markdownNeedsMdx("plain note")).toBe(false);
+		expect(markdownNeedsMdx("a &lt; b")).toBe(false);
+	});
+});
 
 describe("selectMarkdownRemarkPluginsForDeserialize", () => {
 	it("trims heavy plugins on a plain note", () => {

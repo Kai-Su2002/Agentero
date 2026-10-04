@@ -93,6 +93,14 @@ describe("prepareMarkdownForDeserialize", () => {
 		expect(prepareMarkdownForDeserialize(source)).toBe(source);
 	});
 
+	it("skips the blank/math passes when their syntax is absent", () => {
+		// No double newline and no `$$`: both full scans are skipped, output is
+		// byte-identical to the input.
+		expect(prepareMarkdownForDeserialize("A\nB")).toBe("A\nB");
+		expect(prepareMarkdownForDeserialize("A\n \nB")).toBe("A\n \nB");
+		expect(prepareMarkdownForDeserialize("plain title")).toBe("plain title");
+	});
+
 	it("keeps Markdown after an invalid unclosed equation parseable", () => {
 		const editor = createSlateEditor({
 			plugins: [ParagraphPlugin, MarkdownPlugin],

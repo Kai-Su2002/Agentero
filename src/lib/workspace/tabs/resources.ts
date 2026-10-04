@@ -1,6 +1,7 @@
 import i18n from "@/i18n";
 import { commands } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
+import { scheduleIdle } from "@/lib/core/idle";
 import { callApiResult } from "@/lib/core/ipc";
 import { toVaultRelative } from "@/lib/core/path";
 import { enqueueTaskSettled } from "@/lib/core/tasks";
@@ -74,10 +75,13 @@ function reconcilePaperOnOpen(
 		.replace(/\\/g, "/")
 		.replace(/^\/+|\/+$/g, "");
 	if (!rel) return;
-	void callApiResult(
-		() => commands.jobReconcilePaper({ vaultPath, path: rel }),
-		{ fallback: "paper reconcile failed" },
-	).catch(() => undefined);
+	// Host ParseBody/ParseRefs jobs; keep them off the PDF-open critical path.
+	scheduleIdle(() => {
+		void callApiResult(
+			() => commands.jobReconcilePaper({ vaultPath, path: rel }),
+			{ fallback: "paper reconcile failed" },
+		).catch(() => undefined);
+	});
 }
 
 /**

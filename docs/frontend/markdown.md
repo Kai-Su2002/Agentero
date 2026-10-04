@@ -43,12 +43,15 @@ Plate WYSIWYG；用于普通笔记与论文 `NOTES.md`。磁盘上始终是标�
 ## 阅读与打开性能
 
 - **离屏块跳过渲染**：阅读态（编辑器未聚焦）顶层块 `content-visibility: auto`，滚动与拖拽侧栏/分隔条只重排视口内内容；仅非 WebKit 引擎启用。见 [bug_fix/markdown-read-jank-offscreen-blocks.md](../bug_fix/markdown-read-jank-offscreen-blocks.md)。
-- **反序列化按内容裁剪 remark 插件**：解析前嗅探 `$`/`<name`/`:`/`[[`/`[!`/`@`，只挂载命中的 remark 插件（`remarkMdx` 分词 JSX、`remarkEmoji` 全篇扫短代码、`remarkMath` 解析公式在纯文本笔记上是纯开销）；序列化仍用全量管线，round-trip 不变。
+- **反序列化按内容裁剪 remark 插件**：解析前嗅探 `$`/`<name`/`:`/`[[`/`[!`/`@`，只挂载命中的 remark 插件（`remarkMdx` 分词 JSX、`remarkEmoji` 全篇扫短代码、`remarkMath` 解析公式在纯文本笔记上是纯开销）；序列化仍用全量管线，round-trip 不变。无 `<` 时同时传 `withoutMdx`，跳过 Plate 的 `htmlToJsx` 整篇扫描。
+- **预处理按需执行**：`prepareMarkdownForDeserialize` 仅在存在连续空行 / `$$` / `<` 时才跑对应的整篇扫描，纯文本笔记直接原样返回。
 - **本地图片懒读 + 共享缓存**：图片节点进入视口（`rootMargin 800px`）才走 `readFile` → `blob:`；同一路径多引用与重开共用同一源（引用计数 + LRU=48 + 撤销），导出模式强制立即加载。
 - **打开路径种子缓存**：`loadTabResources` 读 Markdown/NOTES 走会话内 LRU=24 文本缓存，外部变更由 Vault watcher 失效、写盘后回填；保存冲突检测与 `applyDiskChange` 仍读原始文件，冲突语义不变。
 - **编辑器保活 LRU=4**：最近 4 个 Markdown / 文本编辑器常驻，切回跳过插件初始化与整篇反序列化；滚动位置按文件记忆（`scroll-memory`），淘汰重开回到上次位置。
-- **重块懒渲染**：Mermaid 预览与 KaTeX 公式进入视口才渲染（导出模式立即渲染），长笔记首屏不为离屏图表/公式买单。
-- **反链查询延后**：状态栏反链在 `requestIdleCallback`（超时 2s）里查询，不抢首屏。
+- **重块懒渲染**：Mermaid 预览、KaTeX 公式与 `![[…]]` 嵌入进入视口才渲染/反序列化（导出模式立即渲染），长笔记首屏不为离屏图表/公式/嵌入买单。
+- **反链查询延后**：状态栏反链在 idle（`scheduleIdle`，超时 2s）里查询，不抢首屏。
+- **图片引用计数种子延后**：打开时不再同步遍历全树统计图片引用，改到 idle 执行；在它落地前自动保存跳过 asset GC diff，不会误删。
+
 
 ## 内嵌图片
 
@@ -163,6 +166,7 @@ Markdown 已能表达的语法不做 HTML 语义化转换，只处理 Markdown �
 | `src/lib/markdown/scroll-memory.ts` | 每文件会话内滚动位置记忆 |
 | `src/lib/vault/seed-cache.ts` | Markdown/NOTES 打开路径文本种子缓存 |
 | `src/hooks/use-in-view.ts` | 进入视口才执行重活的 IntersectionObserver hook |
+| `src/lib/core/idle.ts` | idle 调度（`requestIdleCallback`，WebKit 回退短定时器） |
 | `src/lib/core/paint-perf.ts` | 按引擎开启离屏块跳过渲染 |
 | `src/lib/markdown/save-state.ts` | 保存与冲突 |
 | `src/lib/vault/fs-watch.ts` | 文件变更重载 |
