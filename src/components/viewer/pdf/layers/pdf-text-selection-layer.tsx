@@ -12,6 +12,14 @@ export type PdfTextSelectionLayerProps = {
 	documentId: string;
 	pageIndex: number;
 	background: string;
+	/**
+	 * Registering with the selection plugin triggers PDFium `getPageGeometry`
+	 * for this page. That extraction is O(glyphs) and runs in the single worker
+	 * shared with raster/tile rendering, so it is deferred until the pointer
+	 * reaches the page (see {@link PdfPageLayers}) instead of firing for every
+	 * mounted page on open.
+	 */
+	armed: boolean;
 	draftPages?: FormattedSelection[];
 };
 
@@ -23,6 +31,7 @@ export const PdfTextSelectionLayer = memo(function PdfTextSelectionLayer({
 	documentId,
 	pageIndex,
 	background,
+	armed,
 	draftPages,
 }: PdfTextSelectionLayerProps) {
 	const { plugin } = useSelectionPlugin();
@@ -35,6 +44,7 @@ export const PdfTextSelectionLayer = memo(function PdfTextSelectionLayer({
 	);
 
 	useEffect(() => {
+		if (!armed) return;
 		if (!plugin || !provides) return;
 
 		return plugin.registerSelectionOnPage({
@@ -56,7 +66,7 @@ export const PdfTextSelectionLayer = memo(function PdfTextSelectionLayer({
 				);
 			},
 		});
-	}, [documentId, pageIndex, plugin, provides]);
+	}, [armed, documentId, pageIndex, plugin, provides]);
 
 	const draftRects = useMemo(() => {
 		const page = draftPages?.find((p) => p.pageIndex === pageIndex);

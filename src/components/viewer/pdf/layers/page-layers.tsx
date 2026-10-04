@@ -614,6 +614,19 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 	const paperTint = PDF_PAPER_TINT[tone];
 	const pageShellRef = useRef<HTMLDivElement | null>(null);
 	/**
+	 * Lazily arm text selection once the pointer reaches the page. Registering
+	 * on mount made the viewer extract PDFium glyph geometry for every
+	 * scroller-buffer page the moment a document opened; that work shares the
+	 * single PDFium worker with the first raster render, delaying both first
+	 * paint and the page becoming selectable. Arming on pointer intent keeps the
+	 * page selectable the moment the user reaches for it while leaving
+	 * off-screen buffer pages unloaded.
+	 */
+	const [selectionArmed, setSelectionArmed] = useState(false);
+	const armSelection = () => {
+		if (!selectionArmed) setSelectionArmed(true);
+	};
+	/**
 	 * Pointer position at the last pointerdown on a layout hit target. A click
 	 * that travelled beyond the tolerance was a drag, not an activation.
 	 */
@@ -786,6 +799,10 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 	};
 
 	const handlePagePointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+		// Any movement over the page is selection intent: arm the geometry load
+		// even if `pointerenter` was missed (e.g. a page scrolled under a
+		// stationary cursor).
+		armSelection();
 		if ((event.target as Element | null)?.closest("[data-pdf-chrome]")) return;
 		const comment = textCommentAtPoint(event.clientX, event.clientY);
 		if (comment?.id === marks.hoveredCommentId) return;
@@ -889,6 +906,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 				PDF_PAPER_SHELL_CLASS[tone],
 			)}
 			style={{ width, height }}
+			onPointerEnter={armSelection}
 			onPointerMove={handlePagePointerMove}
 			onPointerLeave={handlePagePointerLeave}
 			onClickCapture={handlePageClickCapture}
@@ -932,6 +950,7 @@ export const PdfPageLayers = memo(function PdfPageLayers({
 						documentId={docId}
 						pageIndex={pageIndex}
 						background={PDF_TEXT_SELECTION_BACKGROUND}
+						armed={selectionArmed}
 						draftPages={
 							marks.selectionCommentDraft?.visiblePages?.length
 								? undefined
