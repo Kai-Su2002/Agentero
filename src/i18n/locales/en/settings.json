@@ -110,8 +110,9 @@
 		},
 		"institutionProxy": {
 			"label": "Institution proxy",
-			"description": "EZProxy/WebVPN prefix + session cookie for paywalled PDF fallback. Uses your institution's own subscription; leave empty to disable.",
-			"cookiePlaceholder": "Cookie",
+			"description": "WebVPN prefix for paywalled PDF download (leave empty to disable)",
+			"cookieLabel": "Proxy cookie",
+			"cookiePlaceholder": "Paste WebVPN cookie",
 			"test": "Test",
 			"testing": "Testing…"
 		},

@@ -394,6 +394,7 @@ export function GeneralPane({
 					cookie={institutionProxyCookieDraft}
 					prefixPlaceholder="https://webvpn.example.edu/login?url="
 					cookiePlaceholder={t("general.institutionProxy.cookiePlaceholder")}
+					cookieLabel={t("general.institutionProxy.cookieLabel")}
 					testLabel={t("general.institutionProxy.test")}
 					testingLabel={t("general.institutionProxy.testing")}
 					onPrefixChange={setInstitutionProxyPrefixDraft}
