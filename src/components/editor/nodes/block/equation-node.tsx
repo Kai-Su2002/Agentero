@@ -186,14 +186,15 @@ export const InlineEquationElement = memo(function InlineEquationElement(
 	const selected = useSelected();
 	const [open, setOpen] = React.useState(false);
 	const katexRef = React.useRef<HTMLDivElement | null>(null);
-	const exportMode = useMarkdownExportMode();
-	const inView = useInView(katexRef, { enabled: !exportMode });
 
+	// Inline formulas are small and numerous, and a freshly inserted one has an
+	// empty (zero-size) KaTeX span that IntersectionObserver cannot observe.
+	// Render them eagerly; only block equations are deferred.
 	useCachedEquationElement({
 		texExpression: props.element.texExpression,
 		katexRef,
 		options: inlineKatexOptions,
-		enabled: inView,
+		enabled: true,
 	});
 
 	return (

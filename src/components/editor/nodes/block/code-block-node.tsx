@@ -252,7 +252,7 @@ function MermaidPreview({ source }: { source: string }) {
 			ref={rootRef}
 			className={cn(
 				!svg && !renderError
-					? "h-0 overflow-hidden"
+					? "min-h-8 overflow-hidden"
 					: "border-border/40 border-t bg-background/30 px-4 py-3 [&_svg]:mx-auto [&_svg]:h-auto [&_svg]:max-w-full",
 			)}
 			contentEditable={false}

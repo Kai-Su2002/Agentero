@@ -27,6 +27,13 @@ export function useInView(
 			return;
 		}
 		if (inView) return;
+		// A zero-area target (e.g. an empty placeholder) cannot be observed
+		// reliably; treat it as visible so its content is never stuck unrendered.
+		const rect = element.getBoundingClientRect();
+		if (rect.width === 0 && rect.height === 0) {
+			setInView(true);
+			return;
+		}
 		const observer = new IntersectionObserver(
 			(entries) => {
 				if (entries.some((entry) => entry.isIntersecting)) {

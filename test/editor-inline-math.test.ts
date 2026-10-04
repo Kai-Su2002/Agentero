@@ -409,4 +409,28 @@ describe("convertInlineMathAtCaret", () => {
 
 		expect(convertInlineMathAtCaret(editor)).toBe(false);
 	});
+
+	it("converts a $$-then-fill sequence once the pair is complete", () => {
+		const editor = createInlineMathEditor("");
+		editor.tf.insertText("$");
+		editor.tf.insertText("$");
+		editor.tf.select({
+			anchor: { path: [0, 0], offset: 1 },
+			focus: { path: [0, 0], offset: 1 },
+		});
+		for (const ch of "x_0") editor.tf.insertText(ch);
+
+		expect(editor.api.string([])).toBe("$x_0$");
+		expect(convertInlineMathAtCaret(editor)).toBe(true);
+		expect(editor.children).toMatchObject([
+			{
+				type: "p",
+				children: [
+					{ text: "" },
+					{ type: "inline_equation", texExpression: "x_0" },
+					{ text: "" },
+				],
+			},
+		]);
+	});
 });
