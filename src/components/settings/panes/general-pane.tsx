@@ -436,7 +436,6 @@ export function GeneralPane({
 				patch={patch}
 				disabled={hostContext.kind === "remote"}
 			/>
-			<ExportSettingsBlock settings={settings} patch={patch} />
 			<PrivacySettingsBlock settings={settings} patch={patch} />
 		</>
 	);
@@ -613,35 +612,6 @@ function PrivacySettingsBlock({
 					>
 						{t("general.privacy.clearUsage.action")}
 					</Button>
-				</SettingsRow>
-			</SettingsGroup>
-		</>
-	);
-}
-
-function ExportSettingsBlock({
-	settings,
-	patch,
-}: {
-	settings: AppSettings;
-	patch: (p: Partial<AppSettings>) => void;
-}) {
-	const { t } = useTranslation("settings");
-	return (
-		<>
-			<SettingsSectionLabel className="mt-4">
-				{t("general.export.section")}
-			</SettingsSectionLabel>
-			<SettingsGroup>
-				<SettingsRow
-					label={t("general.export.watermark.label")}
-					htmlFor="export-watermark-enabled"
-				>
-					<Switch
-						id="export-watermark-enabled"
-						checked={settings.exportWatermarkEnabled}
-						onCheckedChange={(v) => patch({ exportWatermarkEnabled: v })}
-					/>
 				</SettingsRow>
 			</SettingsGroup>
 		</>

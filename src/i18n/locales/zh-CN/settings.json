@@ -171,12 +171,6 @@
 				"openApiKeys": "打开 API Key 页面"
 			}
 		},
-		"export": {
-			"section": "笔记导出",
-			"watermark": {
-				"label": "默认添加 Agentero 水印"
-			}
-		},
 		"privacy": {
 			"section": "隐私",
 			"telemetry": {

@@ -42,8 +42,6 @@ export type MarkdownExportDialogProps = {
 	busy: boolean;
 	/** Non-null when the note is a paper NOTES.md with catalog meta. */
 	paperHeader: MarkdownExportPaperHeader | null;
-	/** Prefill from settings (watermark default). */
-	defaultWatermark: boolean;
 	onCancel: () => void;
 	onConfirm: (options: MarkdownExportOptions) => void;
 };
@@ -52,7 +50,6 @@ export function MarkdownExportDialog({
 	open,
 	busy,
 	paperHeader,
-	defaultWatermark,
 	onCancel,
 	onConfirm,
 }: MarkdownExportDialogProps) {
@@ -60,7 +57,8 @@ export function MarkdownExportDialog({
 	const [format, setFormat] = useState<MarkdownExportFormat>("pdf");
 	const [expandEmbeds, setExpandEmbeds] = useState(true);
 	const [includePaperHeader, setIncludePaperHeader] = useState(true);
-	const [watermark, setWatermark] = useState(defaultWatermark);
+	// Watermark is on by default; the dialog's checkbox is a per-export opt-out.
+	const [watermark, setWatermark] = useState(true);
 
 	useOverlayRegistration("markdown-export", open, () => {
 		if (!busy) onCancel();
@@ -71,8 +69,8 @@ export function MarkdownExportDialog({
 		setFormat("pdf");
 		setExpandEmbeds(true);
 		setIncludePaperHeader(true);
-		setWatermark(defaultWatermark);
-	}, [open, defaultWatermark]);
+		setWatermark(true);
+	}, [open]);
 
 	return (
 		<Dialog

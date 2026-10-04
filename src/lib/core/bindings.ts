@@ -1502,8 +1502,6 @@ export type AppSettings_Deserialize = {
 	embedding?: EmbeddingSettings,
 	translate?: TranslateSettings,
 	layout?: LayoutSettings,
-	/**  Prefill Markdown export dialog watermark checkbox (default off). */
-	exportWatermarkEnabled?: boolean,
 	/**  PostHog product analytics opt-out (applies from the next launch). */
 	telemetryEnabled?: boolean,
 	/**  Plaza discovery sources in the sidebar. Default on. */
@@ -1599,8 +1597,6 @@ export type AppSettings_Serialize = {
 	embedding: EmbeddingSettings,
 	translate: TranslateSettings,
 	layout: LayoutSettings,
-	/**  Prefill Markdown export dialog watermark checkbox (default off). */
-	exportWatermarkEnabled: boolean,
 	/**  PostHog product analytics opt-out (applies from the next launch). */
 	telemetryEnabled: boolean,
 	/**  Plaza discovery sources in the sidebar. Default on. */

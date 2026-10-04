@@ -183,9 +183,6 @@ pub struct AppSettings {
     pub translate: TranslateSettings,
     #[serde(default)]
     pub layout: LayoutSettings,
-    /// Prefill Markdown export dialog watermark checkbox (default off).
-    #[serde(default)]
-    pub export_watermark_enabled: bool,
     /// PostHog product analytics opt-out (applies from the next launch).
     #[serde(default = "default_true")]
     pub telemetry_enabled: bool,
@@ -410,7 +407,6 @@ impl Default for AppSettings {
             embedding: EmbeddingSettings::default(),
             translate: TranslateSettings::default(),
             layout: LayoutSettings::default(),
-            export_watermark_enabled: false,
             telemetry_enabled: default_true(),
             plaza_enabled: default_true(),
             plaza_hidden_sources: Vec::new(),

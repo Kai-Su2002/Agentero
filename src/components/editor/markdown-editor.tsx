@@ -71,7 +71,7 @@ import type {
 } from "@/lib/markdown/export/types";
 import { splitFrontmatter } from "@/lib/markdown/frontmatter";
 import { saveImageToMarkdownAssets } from "@/lib/markdown/image";
-import { loadSettings, useUiScale } from "@/lib/settings";
+import { useUiScale } from "@/lib/settings";
 import { formatModShortcut } from "@/lib/shell/shortcuts";
 import type { LinkFragment, WikiRenameHeadingRequest } from "@/lib/wiki";
 import { useWikiNav } from "@/lib/wiki/nav-context";
@@ -216,7 +216,6 @@ export function MarkdownEditor({
 	const [exportBusy, setExportBusy] = useState(false);
 	const [exportPaperHeader, setExportPaperHeader] =
 		useState<MarkdownExportPaperHeader | null>(null);
-	const [exportDefaultWatermark, setExportDefaultWatermark] = useState(false);
 	/** Bumped on unmount so in-flight export does not setState after leave. */
 	const exportGenerationRef = useRef(0);
 	const exportInFlightRef = useRef(false);
@@ -594,7 +593,6 @@ export function MarkdownEditor({
 			paperMetaByRelPath,
 		});
 		setExportPaperHeader(header);
-		setExportDefaultWatermark(loadSettings().exportWatermarkEnabled);
 		setExportOpen(true);
 	}, [filePath, paperMetaByRelPath, wikiNav?.vaultPath]);
 
@@ -868,7 +866,6 @@ export function MarkdownEditor({
 							open={exportOpen}
 							busy={exportBusy}
 							paperHeader={exportPaperHeader}
-							defaultWatermark={exportDefaultWatermark}
 							onCancel={() => {
 								if (!exportBusy) setExportOpen(false);
 							}}

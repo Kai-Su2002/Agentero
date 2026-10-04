@@ -97,7 +97,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	mcpTunnelApiKey: "",
 	zoteroSyncDir: "",
 	batchImportConcurrency: 5,
-	exportWatermarkEnabled: false,
 	telemetryEnabled: true,
 	plazaEnabled: true,
 	plazaHiddenSources: [],

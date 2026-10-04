@@ -171,12 +171,6 @@
 				"openApiKeys": "Open API keys"
 			}
 		},
-		"export": {
-			"section": "Note export",
-			"watermark": {
-				"label": "Agentero watermark by default"
-			}
-		},
 		"privacy": {
 			"section": "Privacy",
 			"telemetry": {

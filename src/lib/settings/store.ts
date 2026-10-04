@@ -407,9 +407,6 @@ function normalizePartial(
 	if (typeof merged.mcpTunnelApiKey !== "string") {
 		merged.mcpTunnelApiKey = DEFAULT_SETTINGS.mcpTunnelApiKey;
 	}
-	if (typeof parsed.exportWatermarkEnabled !== "boolean") {
-		merged.exportWatermarkEnabled = DEFAULT_SETTINGS.exportWatermarkEnabled;
-	}
 	if (typeof parsed.telemetryEnabled !== "boolean") {
 		merged.telemetryEnabled = DEFAULT_SETTINGS.telemetryEnabled;
 	}

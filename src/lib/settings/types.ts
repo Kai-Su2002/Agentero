@@ -244,11 +244,6 @@ export type AppSettings = {
 	 */
 	batchImportConcurrency: number;
 	/**
-	 * Prefill the Markdown export dialog's "Agentero watermark" checkbox.
-	 * Default **off**; per-export choice can still override.
-	 */
-	exportWatermarkEnabled: boolean;
-	/**
 	 * Anonymous product analytics (app version + device info) via PostHog.
 	 * Default **on**; takes effect from the next launch.
 	 */
