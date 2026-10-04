@@ -119,6 +119,7 @@ import type {
 import { ActiveCardScrollSync } from "@/components/viewer/pdf/viewport/active-card-scroll-sync";
 import { DockviewViewport } from "@/components/viewer/pdf/viewport/dockview-viewport";
 import { PagedNavigationHandler } from "@/components/viewer/pdf/viewport/paged-navigation-handler";
+import { PagedViewportClip } from "@/components/viewer/pdf/viewport/paged-viewport-clip";
 import { PanDragHandler } from "@/components/viewer/pdf/viewport/pan-handler";
 import { WheelZoomHandler } from "@/components/viewer/pdf/viewport/wheel-zoom-handler";
 import { useLibraryStore, useSettings } from "@/hooks/use-app-stores";
@@ -1952,6 +1953,7 @@ function PdfViewerInner({
 					active={isActive}
 					hostRef={hostRef}
 				/>
+				<PagedViewportClip docId={docId} paged={pdfReadingMode === "paged"} />
 				<ActiveCardScrollSync
 					active={Boolean(activeCard) || Boolean(selectionMenu)}
 					onScroll={rePlaceFloatingOnScroll}
