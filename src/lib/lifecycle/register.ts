@@ -121,6 +121,15 @@ export function registerLifecycleHandlers(): () => void {
 			);
 			scheduleImportWikiRebuild(vaultId);
 			scheduleLibraryRefresh();
+			// A tab opened while assets were still downloading keeps
+			// pdfUrl: null and would show "no paper" forever; re-resolve the
+			// tab resources now that the import has settled.
+			if (paperId) {
+				void syncRenamedPaperTabs(
+					vaultId,
+					joinVaultPath(vaultId, `papers/${paperId}`),
+				);
+			}
 		}),
 		lifecycle.on("paper:renamed", (event) => {
 			const { vaultId, oldPath, newPath, outcome } = event;
