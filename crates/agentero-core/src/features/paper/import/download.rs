@@ -67,7 +67,13 @@ pub fn set_institution_proxy(kind: InstitutionProxyKind, prefix: &str, cookie: &
     if kind == InstitutionProxyKind::EzProxy && !prefix.is_empty() && !prefix.contains('?') {
         prefix.push_str("/login?url=");
     }
-    let cookie = cookie.trim().to_string();
+    // Header values reject control characters; pasted cookies often carry
+    // stray CR/LF/TAB from terminals or chat windows.
+    let cookie: String = cookie
+        .trim()
+        .chars()
+        .filter(|c| !matches!(c, '\r' | '\n' | '\t'))
+        .collect();
     let value = if prefix.is_empty() {
         None
     } else {
@@ -214,9 +220,20 @@ async fn fetch_bytes_checked(url: &str, cookie: &str) -> Result<Vec<u8>, String>
         .map_err(|e| e.to_string())?;
     let mut req = client.get(url);
     if !cookie.is_empty() {
-        req = req.header("Cookie", cookie);
+        let value = reqwest::header::HeaderValue::from_str(cookie)
+            .map_err(|e| format!("cookie contains characters invalid in a header ({e})"))?;
+        req = req.header("Cookie", value);
     }
-    let res = req.send().await.map_err(|e| e.to_string())?;
+    let res = req.send().await.map_err(|e| {
+        let mut msg = e.to_string();
+        let mut src = std::error::Error::source(&e);
+        while let Some(s) = src {
+            msg.push_str(": ");
+            msg.push_str(&s.to_string());
+            src = s.source();
+        }
+        msg
+    })?;
     if !res.status().is_success() {
         return Err(format!("HTTP {}", res.status()));
     }
