@@ -33,6 +33,9 @@ static INSTITUTION_PROXY: Mutex<Option<InstitutionProxyConf>> = Mutex::new(None)
 /// Gateway flavour of the configured institution proxy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InstitutionProxyKind {
+    /// No gateway: direct connection. On campus networks the institution IP
+    /// itself carries the subscription, so this needs zero configuration.
+    Direct,
     /// Standard EZProxy query passthrough (`/login?url={encoded target}`).
     EzProxy,
     /// wengine WebVPN path rewriting (`/https/{encrypted-host}/{path}`), used
@@ -152,7 +155,7 @@ fn ezproxy_rewrite(prefix: &str, target: &str) -> String {
 /// Extract candidate PDF links from a proxied landing page. Absolute links are
 /// returned as-is; publisher-relative paths are resolved against the proxy
 /// origin so the caller can rewrite them again.
-fn pdf_links_from_html(html: &str, proxy_origin: &str) -> Vec<String> {
+fn pdf_links_from_html(html: &str, proxy_origin: &str, gateway_origin: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for attr in ["href=\"", "src=\""] {
         let mut rest = html;
@@ -172,6 +175,10 @@ fn pdf_links_from_html(html: &str, proxy_origin: &str) -> Vec<String> {
             }
             let resolved = if link.starts_with("http") {
                 link.to_string()
+            } else if link.starts_with("/https/") || link.starts_with("/http/") {
+                // Gateway-absolute wengine path — resolve against the gateway
+                // origin, never against the current page's directory.
+                format!("{gateway_origin}{link}")
             } else if link.starts_with('/') {
                 format!("{proxy_origin}{link}")
             } else {
@@ -201,8 +208,19 @@ pub async fn probe_institution_proxy(
     }
     let target = "https://www.nature.com/articles/nature12373.pdf";
     let rewritten = match kind {
+        InstitutionProxyKind::Direct => {
+            return Err("direct mode has no gateway to probe".into());
+        }
         InstitutionProxyKind::EzProxy => {
-            ezproxy_rewrite(prefix, &format!("https://doi.org/{PROBE_DOI}"))
+            // The stored prefix may be a bare origin (normalize appends
+            // /login?url= only for the runtime config, not for probe args);
+            // without the query part the rewrite would concatenate the host
+            // and the encoded target into an unparseable URL.
+            let mut ez = prefix.to_string();
+            if !ez.contains('?') {
+                ez.push_str("/login?url=");
+            }
+            ezproxy_rewrite(&ez, &format!("https://doi.org/{PROBE_DOI}"))
         }
         InstitutionProxyKind::Wengine => {
             wengine_rewrite(prefix, target).ok_or_else(|| "wengine rewrite failed".to_string())?
@@ -215,8 +233,21 @@ pub async fn probe_institution_proxy(
     Err("response was HTML, not a PDF (cookie expired or institution not subscribed?)".into())
 }
 
-async fn fetch_bytes_checked(url: &str, cookie: &str) -> Result<Vec<u8>, String> {
-    let client = http::client_with(Duration::from_secs(60), 10, http::BROWSER_USER_AGENT)
+/// Like [`fetch_bytes_checked`] but also returns the final URL after
+/// redirects — needed to resolve relative links on the landed page.
+async fn fetch_bytes_checked_with_url(
+    url: &str,
+    cookie: &str,
+) -> Result<(Vec<u8>, String), String> {
+    // Cookie store on: publisher bot checks (e.g. nature.com) accept the
+    // request once the landing page's cookies ride along, which also makes
+    // direct on-campus downloads work with zero configuration.
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .user_agent(http::BROWSER_USER_AGENT)
+        .redirect(reqwest::redirect::Policy::limited(10))
+        .cookie_store(true)
+        .build()
         .map_err(|e| e.to_string())?;
     let mut req = client.get(url);
     if !cookie.is_empty() {
@@ -237,7 +268,15 @@ async fn fetch_bytes_checked(url: &str, cookie: &str) -> Result<Vec<u8>, String>
     if !res.status().is_success() {
         return Err(format!("HTTP {}", res.status()));
     }
-    Ok(res.bytes().await.map_err(|e| e.to_string())?.to_vec())
+    let final_url = res.url().to_string();
+    let bytes = res.bytes().await.map_err(|e| e.to_string())?.to_vec();
+    Ok((bytes, final_url))
+}
+
+async fn fetch_bytes_checked(url: &str, cookie: &str) -> Result<Vec<u8>, String> {
+    fetch_bytes_checked_with_url(url, cookie)
+        .await
+        .map(|(bytes, _)| bytes)
 }
 
 /// Upper bound for the network asset phase of one paper import.
@@ -759,10 +798,15 @@ async fn fetch_pdf_assets(
             out.messages.push(format!("pdf cancelled: {e}"));
             return out;
         }
-        if let (Some(doi), Some(conf)) = (
-            doi.map(str::trim).filter(|s| !s.is_empty()),
-            institution_proxy(),
-        ) {
+        if let Some(doi) = doi.map(str::trim).filter(|s| !s.is_empty()) {
+            // Direct connection first: on campus networks the institution IP
+            // carries the subscription, so this needs zero configuration.
+            // Falls back to the configured gateway (if any) when it fails.
+            let conf = institution_proxy().unwrap_or(InstitutionProxyConf {
+                kind: InstitutionProxyKind::Direct,
+                prefix: String::new(),
+                cookie: String::new(),
+            });
             ok = try_institution_proxy_download(paper_dir, id, doi, &conf, &mut out).await;
         }
     }
@@ -795,14 +839,23 @@ async fn try_institution_proxy_download(
         let mut next_targets: Vec<String> = Vec::new();
         for target in &targets {
             let rewritten = match conf.kind {
+                InstitutionProxyKind::Direct => target.clone(),
                 InstitutionProxyKind::EzProxy => ezproxy_rewrite(&conf.prefix, target),
-                InstitutionProxyKind::Wengine => match wengine_rewrite(&proxy_origin, target) {
-                    Some(url) => url,
-                    None => continue,
-                },
+                InstitutionProxyKind::Wengine => {
+                    if target.starts_with(&proxy_origin) {
+                        // Already a gateway-shaped URL (mined from a landed
+                        // page); rewriting it again would re-encode the host.
+                        target.clone()
+                    } else {
+                        match wengine_rewrite(&proxy_origin, target) {
+                            Some(url) => url,
+                            None => continue,
+                        }
+                    }
+                }
             };
-            match fetch_bytes_checked(&rewritten, &conf.cookie).await {
-                Ok(bytes) => {
+            match fetch_bytes_checked_with_url(&rewritten, &conf.cookie).await {
+                Ok((bytes, final_url)) => {
                     if bytes.len() >= 4 && &bytes[..4] == b"%PDF" {
                         let name = safe_filename(id, "pdf");
                         if let Err(e) = fs::write(paper_dir.join(name), &bytes) {
@@ -815,7 +868,47 @@ async fn try_institution_proxy_download(
                         return true;
                     }
                     if let Ok(html) = String::from_utf8(bytes) {
-                        for link in pdf_links_from_html(&html, &proxy_origin) {
+                        // Resolve relative PDF links against the landed page:
+                        // for wengine that is /https/{enc-host}/..., not the
+                        // bare gateway origin.
+                        let link_base = match conf.kind {
+                            InstitutionProxyKind::Direct => final_url
+                                .split("://")
+                                .take(2)
+                                .last()
+                                .and_then(|rest| rest.split('/').next())
+                                .map(|host| {
+                                    format!(
+                                        "://{}",
+                                        if final_url.starts_with("http://") {
+                                            format!("http://{host}")
+                                        } else {
+                                            format!("https://{host}")
+                                        }
+                                    )
+                                })
+                                .map(|full| {
+                                    full.replacen("://https", "https", 1)
+                                        .replacen("://http", "http", 1)
+                                })
+                                .unwrap_or_else(|| proxy_origin.clone()),
+                            InstitutionProxyKind::Wengine => {
+                                let mut base = final_url.clone();
+                                while base.ends_with('/') {
+                                    base.pop();
+                                }
+                                match base.rfind('/') {
+                                    Some(i) => base[..i].to_string(),
+                                    None => proxy_origin.clone(),
+                                }
+                            }
+                            InstitutionProxyKind::EzProxy => proxy_origin.clone(),
+                        };
+                        let mut mined = pdf_links_from_html(&html, &link_base, &proxy_origin);
+                        // Prefer article-body PDFs (/articles/{id}.pdf) over
+                        // supplementary material (MediaObjects/ESM).
+                        mined.sort_by_key(|l| !(l.contains("/articles/") && l.ends_with(".pdf")));
+                        for link in mined {
                             if !next_targets.contains(&link) {
                                 next_targets.push(link);
                             }
@@ -1402,7 +1495,11 @@ mod tests {
             <a href="/doi/pdf/10.1/x">alt</a>
             <a href="https://pub.example.org/article">no</a>
             <embed src="/delivery/getFullTxt.cpx">"#;
-        let links = pdf_links_from_html(html, "https://webvpn.example.edu");
+        let links = pdf_links_from_html(
+            html,
+            "https://webvpn.example.edu",
+            "https://webvpn.example.edu",
+        );
         assert!(links.contains(&"https://pub.example.org/pdf/10.1/x.pdf".to_string()));
         assert!(links.contains(&"https://webvpn.example.edu/doi/pdf/10.1/x".to_string()));
         assert!(links.contains(&"https://webvpn.example.edu/delivery/getFullTxt.cpx".to_string()));
