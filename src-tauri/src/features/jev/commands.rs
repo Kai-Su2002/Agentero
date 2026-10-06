@@ -1,6 +1,6 @@
 //! Tauri commands for TypeSafe jEV smart highlighting.
 
-use crate::core::decision::JevProvider;
+use crate::core::decision::SystemOneProvider;
 use crate::core::error::{map_err, ApiResult, AppError};
 use crate::core::fs::{resolve_paper_dir, resolve_vault};
 use crate::features::jev::service::{
@@ -28,7 +28,7 @@ pub struct JevSuggestHighlightsResult {
 #[tauri::command]
 #[specta::specta]
 pub async fn jev_probe_health(
-    provider: State<'_, Arc<JevProvider>>,
+    provider: State<'_, Arc<SystemOneProvider>>,
 ) -> Result<ApiResult<()>, String> {
     match crate::features::jev::service::jev_probe_health(&provider).await {
         Ok(()) => Ok(ApiResult::ok(())),
@@ -40,7 +40,7 @@ pub async fn jev_probe_health(
 #[specta::specta]
 pub async fn jev_suggest_highlights(
     args: JevSuggestHighlightsArgs,
-    provider: State<'_, Arc<JevProvider>>,
+    provider: State<'_, Arc<SystemOneProvider>>,
 ) -> Result<ApiResult<JevSuggestHighlightsResult>, String> {
     let vault = match resolve_vault(&args.vault_path) {
         Ok(v) => v,

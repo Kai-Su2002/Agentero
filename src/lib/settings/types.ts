@@ -353,18 +353,43 @@ export type AppSettings = {
 	 */
 	dismissedReminders: ConfigReminderId[];
 	/**
-	 * TypeSafe jEV (System One) credentials for smart paper highlighting.
-	 * Empty API key disables the feature.
+	 * Decision-layer provider (System One: TypeSafe jEV / Cloudflare Clef /
+	 * compatible). `provider` selects a preset; base URL + model are editable so
+	 * the OpenAI Decisions API can be configured once its contract ships.
 	 */
-	jev: JevSettings;
+	decision: DecisionSettings;
 };
 
-/** TypeSafe jEV (System One) credentials. */
-export type JevSettings = {
-	/** jEV API key; masked (`*`) when echoed back from the Host. */
+/**
+ * Decision-layer provider ids. `custom` accepts any System One endpoint.
+ * `openai` is a config slot for the (not yet public) OpenAI Decisions API.
+ */
+export type DecisionProviderId = "jev" | "clef" | "openai" | "custom";
+
+export const DECISION_PROVIDER_IDS: readonly DecisionProviderId[] = [
+	"jev",
+	"clef",
+	"openai",
+	"custom",
+] as const;
+
+export function isDecisionProviderId(v: unknown): v is DecisionProviderId {
+	return (
+		typeof v === "string" &&
+		(DECISION_PROVIDER_IDS as readonly string[]).includes(v)
+	);
+}
+
+/** Decision-layer provider settings (System One: jEV / Clef / compatible). */
+export type DecisionSettings = {
+	/** Selected vendor preset. */
+	provider: DecisionProviderId;
+	/** API key; masked (`*`) when echoed back from the Host. */
 	apiKey: string;
-	/** jEV base URL, e.g. `https://api.typesafe.ai/v1/systemone`. */
+	/** System One endpoint, e.g. `https://api.typesafe.ai/v1/systemone`. */
 	baseUrl: string;
+	/** Model id injected into every request, e.g. `jev-latest` or `clef`. */
+	model: string;
 	/** Enable the experimental smart-highlight action in the PDF toolbar. */
 	smartHighlight: boolean;
 };

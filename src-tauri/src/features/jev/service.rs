@@ -1,10 +1,10 @@
 //! jEV smart-highlight service.
 //!
 //! Domain logic (sentence extraction, question building, geometry) stays here;
-//! every HTTP call routes through the shared [`JevProvider`] so credentials and
+//! every HTTP call routes through the shared [`SystemOneProvider`] so credentials and
 //! error handling have a single owner.
 
-use crate::core::decision::{JevProvider, JEV_MODEL};
+use crate::core::decision::SystemOneProvider;
 use crate::core::error::AppError;
 use crate::features::pdf::locate::{extract_text_in_pdf, NormRect};
 use futures_util::stream::{self, StreamExt};
@@ -192,10 +192,9 @@ fn decide_highlight(scores: &HashMap<String, f64>) -> Option<HighlightDecision> 
 }
 
 /// Lightweight health probe: send one tiny `score` question to verify key/endpoint.
-pub async fn jev_probe_health(provider: &JevProvider) -> Result<(), AppError> {
+pub async fn jev_probe_health(provider: &SystemOneProvider) -> Result<(), AppError> {
     let request = serde_json::json!({
         "state": { "paper_title": "probe" },
-        "model": JEV_MODEL,
         "questions": {
             "health_score": {
                 "type": "score",
@@ -208,7 +207,7 @@ pub async fn jev_probe_health(provider: &JevProvider) -> Result<(), AppError> {
 }
 
 async fn jev_suggest_highlights_impl<F: FnMut(usize, usize) + Send>(
-    provider: Arc<JevProvider>,
+    provider: Arc<SystemOneProvider>,
     pdf_path: &Path,
     title: &str,
     cancel_token: &CancellationToken,
@@ -251,7 +250,6 @@ async fn jev_suggest_highlights_impl<F: FnMut(usize, usize) + Send>(
                         "paper_title": title,
                         "sentences": state_items,
                     },
-                    "model": JEV_MODEL,
                     "questions": questions,
                 });
 
@@ -335,7 +333,7 @@ async fn jev_suggest_highlights_impl<F: FnMut(usize, usize) + Send>(
 
 /// Extract highlights for one paper by calling jEV; sentence geometry comes from the initial PDF text extraction.
 pub async fn jev_suggest_highlights_for_paper(
-    provider: &Arc<JevProvider>,
+    provider: &Arc<SystemOneProvider>,
     pdf_path: &Path,
     title: &str,
 ) -> Result<Vec<SuggestedHighlight>, AppError> {
@@ -345,7 +343,7 @@ pub async fn jev_suggest_highlights_for_paper(
 
 /// Same as [`jev_suggest_highlights_for_paper`] but with cancellation and per-batch progress.
 pub async fn jev_suggest_highlights_with_progress<F: FnMut(usize, usize) + Send>(
-    provider: &Arc<JevProvider>,
+    provider: &Arc<SystemOneProvider>,
     pdf_path: &Path,
     title: &str,
     cancel_token: &CancellationToken,

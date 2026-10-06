@@ -1,13 +1,155 @@
-//! Shared System One answer interpretation.
+//! System One provider: transport + answer interpretation.
 //!
-//! TypeSafe jEV and Cloudflare Clef speak the same `state + questions ->
-//! answers` contract (System One API), so the decoding rules live here and are
-//! reused by every provider built on that contract. Decoding is intentionally
-//! conservative: anything that does not look like a usable answer becomes
-//! "no opinion" (`None`) so the engine can fall back instead of acting on a
-//! guess.
+//! TypeSafe jEV, Cloudflare Clef, and compatible APIs all speak the same
+//! `state + questions -> answers` contract (System One). The HTTP transport and
+//! the answer-decoding rules therefore live together here, so every provider
+//! built on the contract shares one credential source and one decoder. The
+//! highlight stream keeps its domain-specific batching/geometry in
+//! `features::jev`, but sends every request through
+//! [`SystemOneProvider::complete`] so credentials and error handling live in
+//! exactly one place.
 
+use super::super::types::{DecisionOutcome, DecisionProvider, ProviderCall, SYSTEM_ONE_PROVIDER};
+use crate::error::AppError;
+use crate::http;
+use async_trait::async_trait;
 use serde_json::{json, Value};
+use std::sync::Arc;
+use std::time::Duration;
+
+/// Resolved System One credentials + model, read from settings at request time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SystemOneCredentials {
+    pub api_key: String,
+    pub base_url: String,
+    /// Model id injected into every request body (e.g. `jev-latest`, `clef`).
+    /// Empty keeps whatever model the request body already carries.
+    pub model: String,
+}
+
+/// Supplies credentials at request time (read from settings).
+pub type SystemOneAuth = dyn Fn() -> Result<SystemOneCredentials, AppError> + Send + Sync;
+
+/// HTTP client + credential source for a System One-compatible endpoint.
+pub struct SystemOneProvider {
+    client: reqwest::Client,
+    auth: Arc<SystemOneAuth>,
+}
+
+impl SystemOneProvider {
+    pub fn new(
+        client: reqwest::Client,
+        auth: impl Fn() -> Result<SystemOneCredentials, AppError> + Send + Sync + 'static,
+    ) -> Self {
+        Self {
+            client,
+            auth: Arc::new(auth),
+        }
+    }
+
+    /// Build a provider backed by the shared pool with a request timeout.
+    pub fn with_shared_client(
+        auth: impl Fn() -> Result<SystemOneCredentials, AppError> + Send + Sync + 'static,
+    ) -> Self {
+        let client =
+            http::client(Duration::from_secs(120)).unwrap_or_else(|_| reqwest::Client::new());
+        Self::new(client, auth)
+    }
+
+    fn credentials(&self) -> Result<SystemOneCredentials, AppError> {
+        (self.auth)()
+    }
+
+    /// POST a raw System One body and return the decoded JSON response.
+    ///
+    /// The configured model is injected into `body["model"]`. This is the single
+    /// transport entry point: the generic [`DecisionProvider`] path and the
+    /// smart-highlight stream both call it.
+    pub async fn complete(&self, body: Value) -> Result<Value, AppError> {
+        let creds = self.credentials()?;
+        self.post(&creds, body).await
+    }
+
+    async fn post(&self, creds: &SystemOneCredentials, mut body: Value) -> Result<Value, AppError> {
+        if creds.api_key.trim().is_empty() {
+            return Err(AppError::message(
+                "decision provider API key is not configured",
+            ));
+        }
+
+        let model = creds.model.trim();
+        if !model.is_empty() {
+            if let Some(object) = body.as_object_mut() {
+                object.insert("model".to_string(), Value::String(model.to_string()));
+            }
+        }
+
+        let resp = self
+            .client
+            .post(creds.base_url.trim())
+            .header("Authorization", format!("Bearer {}", creds.api_key))
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AppError::message(format!("decision request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp
+                .text()
+                .await
+                .unwrap_or_else(|_| "<could not read body>".to_string());
+            return Err(AppError::message(format!(
+                "decision API error {status}: {body}"
+            )));
+        }
+
+        resp.json::<Value>()
+            .await
+            .map_err(|e| AppError::message(format!("decision response decode failed: {e}")))
+    }
+}
+
+#[async_trait]
+impl DecisionProvider for SystemOneProvider {
+    fn name(&self) -> &'static str {
+        SYSTEM_ONE_PROVIDER
+    }
+
+    async fn decide(&self, call: ProviderCall<'_>) -> Result<Option<DecisionOutcome>, AppError> {
+        let Some(config) = call.config else {
+            return Ok(None);
+        };
+        let request = config.build_request(call.state);
+        let creds = self.credentials()?;
+        let response = self.post(&creds, request.body).await?;
+
+        let Some(answer) = interpret_answers(&response) else {
+            return Ok(None);
+        };
+
+        // Calibration-sensitive values stay in `metadata`, scoped to the
+        // provider/model version, so routing thresholds never compare them
+        // across vendors.
+        let mut outcome = DecisionOutcome::decided(answer.action, SYSTEM_ONE_PROVIDER);
+        let model = if creds.model.trim().is_empty() {
+            request.model_version
+        } else {
+            Some(creds.model.trim().to_string())
+        };
+        if let Some(model) = model {
+            outcome = outcome.with_model_version(model);
+        }
+        if let Some(confidence) = answer.confidence {
+            outcome = outcome.with_confidence(confidence);
+        }
+        if let Some(probabilities) = answer.probabilities {
+            outcome = outcome.with_metadata("probabilities", probabilities);
+        }
+        Ok(Some(outcome))
+    }
+}
 
 /// One decoded System One answer.
 #[derive(Debug, Clone, PartialEq)]

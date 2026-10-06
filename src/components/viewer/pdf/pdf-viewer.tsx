@@ -522,7 +522,7 @@ function PdfViewerInner({
 	const displayMode = useSettings((s) => s.translate.displayMode);
 	const dualPaneSource = useSettings((s) => s.translate.dualPaneSource);
 	const dualPaneTranslate = displayMode === "dualPane";
-	const smartHighlightEnabled = useSettings((s) => s.jev.smartHighlight);
+	const smartHighlightEnabled = useSettings((s) => s.decision.smartHighlight);
 	const paperMeta = useMemo(() => {
 		if (paperMetaProp) return paperMetaProp;
 		if (!paperRelPath) return undefined;

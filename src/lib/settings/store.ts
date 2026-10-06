@@ -22,9 +22,9 @@ import {
 } from "@/lib/pdf/layout/settings";
 import {
 	clampEditorLineHeight,
+	DECISION_PROVIDER_PRESETS,
+	DEFAULT_DECISION_SETTINGS,
 	DEFAULT_EMBEDDING_SETTINGS,
-	DEFAULT_JEV_BASE_URL,
-	DEFAULT_JEV_SETTINGS,
 	DEFAULT_PDF_ASK_SETTINGS,
 	DEFAULT_SETTINGS,
 	DEFAULT_TRANSLATOR_BASE_URL,
@@ -35,13 +35,14 @@ import { normalizeFontFamilyValue } from "@/lib/settings/fonts";
 import {
 	type AppSettings,
 	DEFAULT_LIBRARY_COLUMNS,
+	type DecisionSettings,
 	type EmbeddingSettings,
 	type EmbeddingSource,
 	isConfigReminderId,
+	isDecisionProviderId,
 	isPaperNoteMode,
 	isPdfScrollStrategy,
 	isPdfSpreadMode,
-	type JevSettings,
 	LIBRARY_COLUMN_KEYS,
 	type LibraryColumnKey,
 	type LibraryColumnPref,
@@ -89,7 +90,7 @@ let cache: AppSettings = {
 	pdfAsk: { ...DEFAULT_PDF_ASK_SETTINGS },
 	embedding: { ...DEFAULT_EMBEDDING_SETTINGS },
 	dismissedReminders: [],
-	jev: { ...DEFAULT_JEV_SETTINGS },
+	decision: { ...DEFAULT_DECISION_SETTINGS },
 };
 let loaded = false;
 let loadPromise: Promise<AppSettings> | null = null;
@@ -103,7 +104,7 @@ function cloneSettings(s: AppSettings): AppSettings {
 		translate: { ...s.translate },
 		layout: { ...s.layout, providerConfigs: { ...s.layout.providerConfigs } },
 		dismissedReminders: [...s.dismissedReminders],
-		jev: { ...s.jev },
+		decision: { ...s.decision },
 	};
 }
 
@@ -512,27 +513,35 @@ function normalizePartial(
 	);
 	merged.translate = normalizeTranslateSettings(parsed.translate);
 	merged.layout = normalizeLayoutSettings(parsed.layout);
-	merged.jev = normalizeJevSettings(
-		(parsed as { jev?: Partial<JevSettings> }).jev,
+	// Legacy key `jev` → `decision` (pre-provider-selection storage).
+	merged.decision = normalizeDecisionSettings(
+		(parsed as { decision?: Partial<DecisionSettings> }).decision ??
+			(parsed as { jev?: Partial<DecisionSettings> }).jev,
 	);
 	return merged;
 }
 
-function normalizeJevSettings(raw: unknown): JevSettings {
-	const base = { ...DEFAULT_JEV_SETTINGS };
+function normalizeDecisionSettings(raw: unknown): DecisionSettings {
+	const base = { ...DEFAULT_DECISION_SETTINGS };
 	if (!raw || typeof raw !== "object") return base;
-	const partial = raw as Partial<JevSettings>;
+	const partial = raw as Partial<DecisionSettings>;
+	if (isDecisionProviderId(partial.provider)) {
+		base.provider = partial.provider;
+	}
 	if (typeof partial.apiKey === "string") {
 		base.apiKey = partial.apiKey.trim();
 	}
 	if (typeof partial.smartHighlight === "boolean") {
 		base.smartHighlight = partial.smartHighlight;
 	}
-	if (typeof partial.baseUrl === "string" && partial.baseUrl.trim()) {
-		base.baseUrl = partial.baseUrl.trim().replace(/\/+$/, "");
-	} else {
-		base.baseUrl = DEFAULT_JEV_BASE_URL;
-	}
+	const preset = DECISION_PROVIDER_PRESETS[base.provider];
+	const baseUrl =
+		typeof partial.baseUrl === "string"
+			? partial.baseUrl.trim().replace(/\/+$/, "")
+			: "";
+	base.baseUrl = baseUrl || preset.baseUrl;
+	const model = typeof partial.model === "string" ? partial.model.trim() : "";
+	base.model = model || preset.model;
 	return base;
 }
 

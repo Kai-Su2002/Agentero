@@ -595,23 +595,34 @@
 	},
 	"experimental": {
 		"title": "Experimental features",
-		"jev": {
-			"section": "Jev",
+		"decision": {
+			"section": "Decision model",
 			"getKey": "Get an API key",
 			"smartHighlight": "Smart highlight",
+			"provider": {
+				"label": "Provider",
+				"jev": "TypeSafe Jev",
+				"clef": "Cloudflare Clef",
+				"openai": "OpenAI (config)",
+				"custom": "Custom"
+			},
 			"apiKey": {
 				"label": "API key",
-				"placeholder": "Jev API key"
+				"placeholder": "API key"
 			},
 			"baseUrl": {
 				"label": "Endpoint URL"
+			},
+			"model": {
+				"label": "Model",
+				"placeholder": "Model id"
 			},
 			"test": "Test connection",
 			"probeStatus": {
 				"idle": "Not tested yet",
 				"probing": "Testing…",
 				"ok": "Reachable",
-				"failed": "Unreachable",
+				"fail": "Unreachable",
 				"unconfigured": "API key required"
 			}
 		}

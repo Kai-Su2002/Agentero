@@ -1,8 +1,9 @@
 import { DEFAULT_LAYOUT_SETTINGS } from "@/lib/pdf/layout/settings";
 import type {
 	AppSettings,
+	DecisionProviderId,
+	DecisionSettings,
 	EmbeddingSettings,
-	JevSettings,
 	PdfAskSettings,
 } from "@/lib/settings/types";
 import { DEFAULT_LIBRARY_COLUMNS } from "@/lib/settings/types";
@@ -21,16 +22,51 @@ export const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = {
 	model: "",
 };
 
-/** Default TypeSafe jEV (System One) endpoint. */
-export const DEFAULT_JEV_BASE_URL = "https://api.typesafe.ai/v1/systemone";
+/** Default System One endpoint (TypeSafe jEV). */
+export const DEFAULT_DECISION_BASE_URL = "https://api.typesafe.ai/v1/systemone";
+export const DEFAULT_DECISION_MODEL = "jev-latest";
 
-/** TypeSafe console page for creating a jEV API key. */
-export const JEV_API_KEY_URL = "https://console.typesafe.ai/keys";
-
-export const DEFAULT_JEV_SETTINGS: JevSettings = {
+export const DEFAULT_DECISION_SETTINGS: DecisionSettings = {
+	provider: "jev",
 	apiKey: "",
-	baseUrl: DEFAULT_JEV_BASE_URL,
+	baseUrl: DEFAULT_DECISION_BASE_URL,
+	model: DEFAULT_DECISION_MODEL,
 	smartHighlight: false,
+};
+
+/**
+ * Per-provider defaults applied when the user switches the decision provider.
+ * Clef / OpenAI need a user-supplied endpoint (Cloudflare includes the account
+ * id; OpenAI is not public yet), so their base URL stays empty.
+ */
+export const DECISION_PROVIDER_PRESETS: Record<
+	DecisionProviderId,
+	{ baseUrl: string; model: string; keyUrl: string; consoleUrl: string }
+> = {
+	jev: {
+		baseUrl: DEFAULT_DECISION_BASE_URL,
+		model: DEFAULT_DECISION_MODEL,
+		keyUrl: "https://console.typesafe.ai/keys",
+		consoleUrl: "",
+	},
+	clef: {
+		baseUrl: "",
+		model: "clef",
+		keyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+		consoleUrl: "",
+	},
+	openai: {
+		baseUrl: "",
+		model: "",
+		keyUrl: "https://platform.openai.com/api-keys",
+		consoleUrl: "",
+	},
+	custom: {
+		baseUrl: "",
+		model: "",
+		keyUrl: "",
+		consoleUrl: "",
+	},
 };
 
 /** Default Translator Runtime endpoint (overridable in Settings). */
@@ -125,7 +161,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	translate: { ...DEFAULT_TRANSLATE_SETTINGS },
 	layout: { ...DEFAULT_LAYOUT_SETTINGS, providerConfigs: {} },
 	dismissedReminders: [],
-	jev: { ...DEFAULT_JEV_SETTINGS },
+	decision: { ...DEFAULT_DECISION_SETTINGS },
 };
 
 /** Snap an arbitrary scale value to the closest supported preset. */

@@ -2,8 +2,9 @@
 //!
 //! A *decision* is a named judgement (`pdf.selection.intent`) over some
 //! decision-specific `state`. The layer routes it to a *provider* (deterministic
-//! rules, jEV, future LLMs) and returns a typed [`DecisionOutcome`] that records
-//! which provider answered and its confidence (when it has one).
+//! rules, a System One decision model, future LLMs) and returns a typed
+//! [`DecisionOutcome`] that records which provider answered and its confidence
+//! (when it has one).
 //!
 //! @see docs/backend/decision.md
 
@@ -69,8 +70,8 @@ pub struct DecisionOutcome {
     pub action: JsonValue,
     /// How the outcome was reached (provider answer vs. schema default).
     pub status: DecisionStatus,
-    /// Name of the provider that produced the action (`rule` / `jev` /
-    /// `default` / `none`).
+    /// Name of the provider that produced the action (`rule` / `systemone` /
+    /// `default` / `none`). Vendor/model detail lives in `model_version`.
     pub provider: String,
     /// Provider model or config version that produced the action, when known.
     /// Part of the calibration scope: a threshold only applies to outcomes with
@@ -167,7 +168,7 @@ pub struct ProviderCall<'a> {
 /// A module that can answer a routed decision.
 #[async_trait]
 pub trait DecisionProvider: Send + Sync {
-    /// Stable provider name (`"rule"`, `"jev"`, ...).
+    /// Stable provider name (`"rule"`, `"systemone"`, ...).
     fn name(&self) -> &'static str;
 
     /// Answer the decision. `Ok(None)` means "no opinion" (e.g. no rule
@@ -254,7 +255,12 @@ where
 
 /// Names of the built-in providers.
 pub const RULE_PROVIDER: &str = "rule";
-pub const JEV_PROVIDER: &str = "jev";
+/// The shared System One provider, covering TypeSafe jEV, Cloudflare Clef, and
+/// any compatible `state + questions -> answers` endpoint.
+pub const SYSTEM_ONE_PROVIDER: &str = "systemone";
+/// Default System One model id (TypeSafe jEV). Other vendors override it via
+/// settings; it also scopes the default fallback threshold.
+pub const DEFAULT_SYSTEM_ONE_MODEL: &str = "jev-latest";
 
 /// A fallback trigger threshold, scoped to the provider — and optionally the
 /// model/config version — whose confidence it was calibrated against.
@@ -304,7 +310,7 @@ impl FallbackThreshold {
 /// How a decision picks its provider and when it falls back.
 #[derive(Debug, Clone)]
 pub struct DecisionRouting {
-    /// Primary provider name, e.g. `"rule"` / `"jev"`.
+    /// Primary provider name, e.g. `"rule"` / `"systemone"`.
     pub primary: String,
     /// Optional fallback provider, tried when the primary has no opinion or
     /// drops below [`Self::fallback_threshold`].

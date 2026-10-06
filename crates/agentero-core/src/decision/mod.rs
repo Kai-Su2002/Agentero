@@ -1,5 +1,6 @@
 //! Generic decision layer: one place to ask "what should happen?" and get a
-//! typed answer from rules, jEV, or (later) an LLM.
+//! typed answer from rules, a System One decision model (jEV / Clef / ...), or
+//! (later) an LLM.
 //!
 //! The layer is intentionally Tauri-free so the headless CLI can reuse it.
 //! Business modules register [`DecisionSchema`]s at assembly time and call
@@ -14,12 +15,12 @@ pub mod registry;
 pub mod types;
 
 pub use engine::{DecisionEngine, DecisionEngineBuilder};
-pub use providers::{JevCredentials, JevProvider, RuleProvider, JEV_MODEL};
+pub use providers::{RuleProvider, SystemOneCredentials, SystemOneProvider};
 pub use registry::DecisionRegistry;
 pub use types::{
     DecisionOutcome, DecisionProvider, DecisionRequest, DecisionRouting, DecisionRule,
     DecisionSchema, DecisionStatus, FallbackThreshold, FnProviderConfig, ProviderCall,
-    ProviderConfig, ProviderRequest, JEV_PROVIDER, RULE_PROVIDER,
+    ProviderConfig, ProviderRequest, DEFAULT_SYSTEM_ONE_MODEL, RULE_PROVIDER, SYSTEM_ONE_PROVIDER,
 };
 
 #[cfg(test)]

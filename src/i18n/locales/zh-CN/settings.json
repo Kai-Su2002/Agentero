@@ -595,24 +595,35 @@
 	},
 	"experimental": {
 		"title": "实验功能",
-		"jev": {
-			"section": "Jev",
+		"decision": {
+			"section": "决策模型",
 			"getKey": "获取 API Key",
 			"smartHighlight": "智能高亮",
+			"provider": {
+				"label": "提供方",
+				"jev": "TypeSafe Jev",
+				"clef": "Cloudflare Clef",
+				"openai": "OpenAI（待公布）",
+				"custom": "自定义"
+			},
 			"apiKey": {
-				"label": "API key",
-				"placeholder": "Jev API key"
+				"label": "API Key",
+				"placeholder": "API Key"
 			},
 			"baseUrl": {
 				"label": "接口地址"
+			},
+			"model": {
+				"label": "模型",
+				"placeholder": "模型 ID"
 			},
 			"test": "测试连接",
 			"probeStatus": {
 				"idle": "尚未测试",
 				"probing": "测试中…",
 				"ok": "可用",
-				"failed": "不可用",
-				"unconfigured": "需要填写 API key"
+				"fail": "不可用",
+				"unconfigured": "需要填写 API Key"
 			}
 		}
 	},

@@ -1532,7 +1532,6 @@ export type AppSettings_Deserialize = {
 	aiResponseLanguage?: string,
 	agentPersonalPrompt?: string,
 	pdfAsk?: PdfAskSettings,
-	jev?: JevSettings,
 	embedding?: EmbeddingSettings,
 	translate?: TranslateSettings,
 	layout?: LayoutSettings,
@@ -1551,6 +1550,18 @@ export type AppSettings_Deserialize = {
 	 *  (`layout-local-model` | `network-proxy`). Unknown ids are dropped on save.
 	 */
 	dismissedReminders?: string[],
+} & {
+	/**
+	 *  Decision-layer provider (System One: jEV / Cloudflare Clef / compatible).
+	 *  The legacy `jev` key is still read for backward compatibility.
+	 */
+	decision?: DecisionSettings,
+} | {
+	/**
+	 *  Decision-layer provider (System One: jEV / Cloudflare Clef / compatible).
+	 *  The legacy `jev` key is still read for backward compatibility.
+	 */
+	jev?: DecisionSettings,
 };
 
 export type AppSettings_Serialize = {
@@ -1647,7 +1658,11 @@ export type AppSettings_Serialize = {
 	aiResponseLanguage: string,
 	agentPersonalPrompt: string,
 	pdfAsk: PdfAskSettings,
-	jev: JevSettings,
+	/**
+	 *  Decision-layer provider (System One: jEV / Cloudflare Clef / compatible).
+	 *  The legacy `jev` key is still read for backward compatibility.
+	 */
+	decision: DecisionSettings,
 	embedding: EmbeddingSettings,
 	translate: TranslateSettings,
 	layout: LayoutSettings,
@@ -2401,8 +2416,8 @@ export type DecisionOutcome = {
 	/**  How the outcome was reached (provider answer vs. schema default). */
 	status: DecisionStatus,
 	/**
-	 *  Name of the provider that produced the action (`rule` / `jev` /
-	 *  `default` / `none`).
+	 *  Name of the provider that produced the action (`rule` / `systemone` /
+	 *  `default` / `none`). Vendor/model detail lives in `model_version`.
 	 */
 	provider: string,
 	/**
@@ -2416,6 +2431,25 @@ export type DecisionOutcome = {
 	 *  assume a field exists or shares calibration with another provider.
 	 */
 	metadata: Json,
+};
+
+/**
+ *  Decision-layer provider settings.
+ * 
+ *  The layer speaks the System One contract (`state + questions -> answers`),
+ *  implemented by TypeSafe jEV, Cloudflare Clef, and compatible endpoints.
+ *  `provider` selects a vendor preset; `base_url` / `model` can be overridden,
+ *  so the OpenAI Decisions API slots in here once its public contract ships.
+ */
+export type DecisionSettings = {
+	/**  `jev` | `clef` | `openai` | `custom` (empty = `jev`). */
+	provider?: string,
+	apiKey?: string,
+	baseUrl?: string,
+	/**  Model id injected into every request (e.g. `jev-latest`, `clef`). */
+	model?: string,
+	/**  Whether the experimental smart-highlight toolbar action is enabled. */
+	smartHighlight?: boolean,
 };
 
 /**
@@ -2957,14 +2991,6 @@ export type InternalLinkOccurrence_Serialize = {
 };
 
 export type InternalLinkSyntax = "wikilink" | "markdown";
-
-/**  TypeSafe jEV (System One) settings for smart paper highlighting. */
-export type JevSettings = {
-	apiKey?: string,
-	baseUrl?: string,
-	/**  Whether the experimental smart-highlight toolbar action is enabled. */
-	smartHighlight?: boolean,
-};
 
 export type JevSuggestHighlightsArgs = {
 	vaultPath: string,

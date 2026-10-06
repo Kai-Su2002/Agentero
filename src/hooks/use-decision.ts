@@ -7,8 +7,8 @@ import { callApiResult } from "@/lib/core/ipc";
 export type DecisionState = Record<string, unknown>;
 
 /**
- * Run a semantic decision through the Host decision layer (rules + jEV +
- * fallback) and get back the winning provider's action.
+ * Run a semantic decision through the Host decision layer (rules + System One
+ * provider + fallback) and get back the winning provider's action.
  *
  * Pure-rule decisions should use `decideSync` from `@/lib/decision/registry`
  * instead: they are synchronous and never leave the WebView.

@@ -13,6 +13,7 @@
 use crate::core::error::AppError;
 use crate::core::paths::{self, settings_path};
 use crate::features::system::builtin;
+use agentero_core::decision::{SystemOneCredentials, DEFAULT_SYSTEM_ONE_MODEL};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -21,7 +22,8 @@ use std::sync::{Arc, Mutex};
 
 pub const DEFAULT_TRANSLATOR_BASE_URL: &str = "https://translation-server.agentero.app";
 pub const DEFAULT_NETWORK_PROXY_URL: &str = "http://127.0.0.1:7890";
-pub const DEFAULT_JEV_BASE_URL: &str = "https://api.typesafe.ai/v1/systemone";
+/// Default System One endpoint (TypeSafe jEV). Clef/OpenAI presets override it.
+pub const DEFAULT_DECISION_BASE_URL: &str = "https://api.typesafe.ai/v1/systemone";
 /// Built-in URL-prefix GitHub mirrors. The user picks from this list instead of
 /// typing a custom URL. All entries must support `{base}/{canonical_github_url}`.
 pub const GITHUB_MIRROR_PRESETS: &[&str] = &[
@@ -191,8 +193,10 @@ pub struct AppSettings {
     pub agent_personal_prompt: String,
     #[serde(default)]
     pub pdf_ask: PdfAskSettings,
-    #[serde(default)]
-    pub jev: JevSettings,
+    /// Decision-layer provider (System One: jEV / Cloudflare Clef / compatible).
+    /// The legacy `jev` key is still read for backward compatibility.
+    #[serde(default, alias = "jev")]
+    pub decision: DecisionSettings,
     #[serde(default)]
     pub embedding: EmbeddingSettings,
     #[serde(default)]
@@ -229,17 +233,40 @@ pub struct PdfAskSettings {
     pub model_id: String,
 }
 
-/// TypeSafe jEV (System One) settings for smart paper highlighting.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, specta::Type)]
+/// Decision-layer provider settings.
+///
+/// The layer speaks the System One contract (`state + questions -> answers`),
+/// implemented by TypeSafe jEV, Cloudflare Clef, and compatible endpoints.
+/// `provider` selects a vendor preset; `base_url` / `model` can be overridden,
+/// so the OpenAI Decisions API slots in here once its public contract ships.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct JevSettings {
+pub struct DecisionSettings {
+    /// `jev` | `clef` | `openai` | `custom` (empty = `jev`).
+    #[serde(default)]
+    pub provider: String,
     #[serde(default)]
     pub api_key: String,
-    #[serde(default = "default_jev_base_url")]
+    #[serde(default)]
     pub base_url: String,
+    /// Model id injected into every request (e.g. `jev-latest`, `clef`).
+    #[serde(default)]
+    pub model: String,
     /// Whether the experimental smart-highlight toolbar action is enabled.
     #[serde(default)]
     pub smart_highlight: bool,
+}
+
+impl Default for DecisionSettings {
+    fn default() -> Self {
+        Self {
+            provider: default_decision_provider(),
+            api_key: String::new(),
+            base_url: default_decision_base_url(),
+            model: default_decision_model(),
+            smart_highlight: false,
+        }
+    }
 }
 
 /// Embedding endpoint: the built-in provider, or a custom OpenAI-compatible
@@ -423,7 +450,7 @@ impl Default for AppSettings {
             ai_response_language: default_ai_response_language(),
             agent_personal_prompt: String::new(),
             pdf_ask: PdfAskSettings::default(),
-            jev: JevSettings::default(),
+            decision: DecisionSettings::default(),
             embedding: EmbeddingSettings::default(),
             translate: TranslateSettings::default(),
             layout: LayoutSettings::default(),
@@ -446,8 +473,14 @@ fn default_translator_base_url() -> String {
 fn default_network_proxy_url() -> String {
     DEFAULT_NETWORK_PROXY_URL.to_string()
 }
-fn default_jev_base_url() -> String {
-    DEFAULT_JEV_BASE_URL.to_string()
+fn default_decision_provider() -> String {
+    "jev".to_string()
+}
+fn default_decision_base_url() -> String {
+    DEFAULT_DECISION_BASE_URL.to_string()
+}
+fn default_decision_model() -> String {
+    DEFAULT_SYSTEM_ONE_MODEL.to_string()
 }
 fn default_paper_tree_label_mode() -> String {
     "title-author".into()
@@ -863,16 +896,19 @@ impl AppSettingsStore {
         Some((base_url.to_string(), key, model.to_string()))
     }
 
-    /// TypeSafe jEV (System One) credentials. Returns None when the API key is
+    /// Decision-layer System One credentials. Returns None when the API key is
     /// unset or is a UI mask (`*`-only), so probes never send masks.
-    pub fn jev_config(&self) -> Option<(String, String)> {
+    pub fn decision_config(&self) -> Option<SystemOneCredentials> {
         let guard = self.inner.lock().ok()?;
-        let base_url = guard.jev.base_url.trim().to_string();
-        let api_key = guard.jev.api_key.trim();
+        let api_key = guard.decision.api_key.trim();
         if api_key.is_empty() || is_translate_api_key_mask(api_key) {
             return None;
         }
-        Some((api_key.to_string(), base_url))
+        Some(SystemOneCredentials {
+            api_key: api_key.to_string(),
+            base_url: guard.decision.base_url.trim().to_string(),
+            model: guard.decision.model.trim().to_string(),
+        })
     }
 
     /// Raw `(tunnel_id, api_key)` for the built-in ChatGPT tunnel supervisor.
@@ -1008,8 +1044,8 @@ fn redact_secrets(mut settings: AppSettings) -> AppSettings {
     if !settings.easy_scholar_key.trim().is_empty() {
         settings.easy_scholar_key = mask_translate_api_key(&settings.easy_scholar_key);
     }
-    if !settings.jev.api_key.trim().is_empty() {
-        settings.jev.api_key = mask_translate_api_key(&settings.jev.api_key);
+    if !settings.decision.api_key.trim().is_empty() {
+        settings.decision.api_key = mask_translate_api_key(&settings.decision.api_key);
     }
     settings
 }
@@ -1044,8 +1080,8 @@ fn merge_secrets(incoming: &mut AppSettings, previous: &AppSettings) {
     if is_translate_api_key_mask(&incoming.easy_scholar_key) {
         incoming.easy_scholar_key = previous.easy_scholar_key.clone();
     }
-    if is_translate_api_key_mask(&incoming.jev.api_key) {
-        incoming.jev.api_key = previous.jev.api_key.clone();
+    if is_translate_api_key_mask(&incoming.decision.api_key) {
+        incoming.decision.api_key = previous.decision.api_key.clone();
     }
 }
 
@@ -1063,13 +1099,25 @@ fn normalize(s: &mut AppSettings) {
         .to_ascii_lowercase();
     s.mcp_tunnel_api_key = s.mcp_tunnel_api_key.trim().to_string();
     s.easy_scholar_key = s.easy_scholar_key.trim().to_string();
-    s.jev.api_key = s.jev.api_key.trim().to_string();
-    let jev_url = s.jev.base_url.trim().trim_end_matches('/');
-    s.jev.base_url = if jev_url.is_empty() {
-        default_jev_base_url()
+    s.decision.api_key = s.decision.api_key.trim().to_string();
+    let provider = s.decision.provider.trim().to_ascii_lowercase();
+    s.decision.provider = if provider.is_empty() {
+        default_decision_provider()
     } else {
-        jev_url.to_string()
+        provider
     };
+    let decision_url = s.decision.base_url.trim().trim_end_matches('/');
+    // Only the default jEV preset backfills the endpoint; Clef/OpenAI/custom
+    // keep whatever the user typed (empty = not configured yet).
+    s.decision.base_url = if decision_url.is_empty() && s.decision.provider == "jev" {
+        default_decision_base_url()
+    } else {
+        decision_url.to_string()
+    };
+    s.decision.model = s.decision.model.trim().to_string();
+    if s.decision.model.is_empty() && s.decision.provider == "jev" {
+        s.decision.model = default_decision_model();
+    }
     if s.batch_import_concurrency < 1 || s.batch_import_concurrency > 10 {
         s.batch_import_concurrency = default_batch_import_concurrency();
     }
@@ -2040,31 +2088,39 @@ mod tests {
     }
 
     #[test]
-    fn jev_config_never_returns_masked_key() {
+    fn decision_config_never_returns_masked_key() {
         let store = AppSettingsStore::for_tests(AppSettings {
-            jev: JevSettings {
+            decision: DecisionSettings {
+                provider: "jev".into(),
                 api_key: "sk-jev-secret".into(),
                 base_url: "https://jev.test/v1".into(),
+                model: "jev-latest".into(),
                 smart_highlight: false,
             },
             ..AppSettings::default()
         });
         assert_eq!(
-            store.jev_config(),
-            Some(("sk-jev-secret".into(), "https://jev.test/v1".into()))
+            store.decision_config(),
+            Some(SystemOneCredentials {
+                api_key: "sk-jev-secret".into(),
+                base_url: "https://jev.test/v1".into(),
+                model: "jev-latest".into(),
+            })
         );
 
         // After redaction the getter must treat the mask as unset.
         let redacted = redact_secrets(AppSettings {
-            jev: JevSettings {
+            decision: DecisionSettings {
+                provider: "jev".into(),
                 api_key: "sk-jev-secret".into(),
                 base_url: "https://jev.test/v1".into(),
+                model: "jev-latest".into(),
                 smart_highlight: false,
             },
             ..AppSettings::default()
         });
         let masked_store = AppSettingsStore::for_tests(redacted);
-        assert!(masked_store.jev_config().is_none());
+        assert!(masked_store.decision_config().is_none());
     }
 
     #[test]

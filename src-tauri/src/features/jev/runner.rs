@@ -1,6 +1,6 @@
 //! JobCenter runner for jEV smart highlights.
 
-use crate::core::decision::JevProvider;
+use crate::core::decision::SystemOneProvider;
 use crate::core::error::AppError;
 use crate::core::fs::{resolve_paper_dir, resolve_vault};
 use crate::features::jev::service::{
@@ -40,7 +40,7 @@ pub fn jev_smart_highlights_runner(
                         })
                         .unwrap_or_else(|| "Untitled paper".to_string());
 
-                    let provider = app.state::<Arc<JevProvider>>().inner().clone();
+                    let provider = app.state::<Arc<SystemOneProvider>>().inner().clone();
 
                     let progress_center = center.clone();
                     let progress_job_id = job_id.clone();

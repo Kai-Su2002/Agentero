@@ -10,6 +10,8 @@
 > 另：`DecisionOutcome` 只保留中立信封 `{ action, status, provider, modelVersion }`，
 > `confidence` / `probabilities` 放进 provider 专属 `metadata`；`fallback_threshold`
 > 由裸 `f64` 改为 provider/版本作用域内的 `FallbackThreshold`（见 §5.3）。
+> 语义 provider 已泛化为可配置的 `SystemOneProvider`：设置里在 Jev / Clef / 自定义之间
+> 切换，model 由设置注入，schema 不再硬编码模型。
 
 ## 1. 背景与问题
 
@@ -220,13 +222,14 @@ pub struct ProviderRequest {
 3. **统一扩展**：新增 provider 只需实现 `ProviderConfig` + `DecisionProvider`，不需要改 `DecisionSchema` 定义。
 4. **多 provider 请求模板共存**：同一个 decision 可以同时对 jEV 和 LLM 准备不同请求，便于 A/B 测试或渐进迁移。
 
-### 5.6 JevProvider 实现要点
+### 5.6 SystemOneProvider 实现要点
 
 - 复用现有 `reqwest::Client` 连接池。
 - 支持批量请求（batch + 并发），供高亮这类大量 questions 的场景使用。
 - 解析 answer 时把 `confidence` / `probabilities` 写入 `DecisionOutcome::metadata`（不设顶层字段）。
 - `score` 类型回答可通过 probability distribution 或 `score/3` 归一得到置信度。
-- 答案解码（`noul` / `choice` / `score` / 兜底值）与 Clef 共用 `providers/system_one.rs`，越界/缺失一律按“无意见”处理。
+- 答案解码（`noul` / `choice` / `score` / 兜底值）与 Clef 共用，越界/缺失一律按“无意见”处理。
+- 端点与模型来自设置（Jev / Clef / 自定义），请求前注入配置的 model。
 
 ### 5.7 RuleProvider 实现要点
 
