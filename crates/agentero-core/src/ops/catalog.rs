@@ -286,7 +286,10 @@ pub fn build() -> Vec<OpSpec> {
                 "until?": "YYYY-MM-DD",
                 "top?": "number (default 8)",
                 "max_candidates?": "number (default 100, max 200)",
-                "dedup?": "bool (MCP, default true)"
+                "dedup?": "bool (MCP, default true)",
+                "embed_base?": "string (CLI; enables semantic ranking)",
+                "embed_model?": "string (CLI; with embed_base)",
+                "semantic_weight?": "number (CLI, default 1.0)"
             }),
             json!({
                 "source": "string",

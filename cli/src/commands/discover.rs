@@ -11,6 +11,7 @@ use crate::style::{format_table, truncate_chars};
 use agentero_core::features::paper::discovery::discover::{
     discover_arxiv, known_arxiv_ids, DiscoverQuery, DEFAULT_MAX_CANDIDATES, DEFAULT_TOP,
 };
+use agentero_core::features::paper::discovery::embeddings::EmbeddingConfig;
 use clap::Subcommand;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -49,6 +50,16 @@ pub enum DiscoverCmd {
         /// Do not drop papers already in the library catalog.
         #[arg(long = "no-dedup")]
         no_dedup: bool,
+        /// OpenAI-compatible embeddings base URL; enables optional semantic
+        /// ranking. Key is read from AGENTERO_EMBEDDING_API_KEY.
+        #[arg(long = "embed-base", value_name = "URL")]
+        embed_base: Option<String>,
+        /// Embeddings model id (required with --embed-base).
+        #[arg(long = "embed-model", value_name = "MODEL")]
+        embed_model: Option<String>,
+        /// Cosine weight added to the lexical score (default 1.0).
+        #[arg(long = "semantic-weight", value_name = "F")]
+        semantic_weight: Option<f32>,
     },
 }
 
@@ -63,6 +74,9 @@ pub async fn run(cmd: DiscoverCmd, globals: &GlobalOpts) -> Result<Value, CliErr
             max_candidates,
             out,
             no_dedup,
+            embed_base,
+            embed_model,
+            semantic_weight,
         } => {
             run_arxiv(
                 globals,
@@ -75,6 +89,9 @@ pub async fn run(cmd: DiscoverCmd, globals: &GlobalOpts) -> Result<Value, CliErr
                     max_candidates,
                     out,
                     no_dedup,
+                    embed_base,
+                    embed_model,
+                    semantic_weight,
                 },
             )
             .await
@@ -91,6 +108,9 @@ struct ArxivInputs {
     max_candidates: usize,
     out: Option<PathBuf>,
     no_dedup: bool,
+    embed_base: Option<String>,
+    embed_model: Option<String>,
+    semantic_weight: Option<f32>,
 }
 
 async fn run_arxiv(globals: &GlobalOpts, inputs: ArxivInputs) -> Result<Value, CliError> {
@@ -101,9 +121,11 @@ async fn run_arxiv(globals: &GlobalOpts, inputs: ArxivInputs) -> Result<Value, C
         until: inputs.until,
         top: Some(inputs.top),
         max_candidates: Some(inputs.max_candidates),
+        semantic_weight: inputs.semantic_weight,
     };
     let exclude = dedup_ids(globals, inputs.no_dedup)?;
-    let data = discover_arxiv(&query, &exclude).await?;
+    let embedding = embedding_config(inputs.embed_base.as_deref(), inputs.embed_model.as_deref());
+    let data = discover_arxiv(&query, &exclude, embedding.as_ref()).await?;
 
     if let Some(path) = &inputs.out {
         if let Some(parent) = path.parent() {
@@ -138,12 +160,39 @@ async fn run_arxiv(globals: &GlobalOpts, inputs: ArxivInputs) -> Result<Value, C
         data.excluded,
         data.items.len()
     )));
+    if let Some(err) = &data.semantic_error {
+        lines.push(
+            globals
+                .style
+                .dim(&format!("semantic ranking skipped: {err}")),
+        );
+    }
 
     let mut out = to_value(&data)?;
     if let Some(obj) = out.as_object_mut() {
         obj.insert("lines".into(), json!(lines));
     }
     Ok(out)
+}
+
+/// Build an embedding config when both a base URL and a model are given.
+/// The key is read from `AGENTERO_EMBEDDING_API_KEY` (never argv, to avoid
+/// leaking into the process list).
+fn embedding_config(base: Option<&str>, model: Option<&str>) -> Option<EmbeddingConfig> {
+    let base = base?.trim();
+    let model = model?.trim();
+    if base.is_empty() || model.is_empty() {
+        return None;
+    }
+    let api_key = std::env::var("AGENTERO_EMBEDDING_API_KEY")
+        .ok()
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty());
+    Some(EmbeddingConfig {
+        base_url: base.to_string(),
+        api_key,
+        model: model.to_string(),
+    })
 }
 
 /// Library arXiv ids to drop from the shortlist.

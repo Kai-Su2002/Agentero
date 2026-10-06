@@ -12,6 +12,7 @@ use crate::core::error::AppError;
 use crate::core::http;
 use crate::features::paper::catalog::papers;
 use crate::features::paper::catalog::with_catalog;
+use crate::features::paper::discovery::embeddings;
 use crate::features::paper::discovery::feeds::parse::parse_feed_bytes;
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension};
@@ -29,8 +30,6 @@ pub const DEFAULT_TOP_N: usize = 20;
 
 /// Cap on abstracts embedded per request so one run cannot fan out unbounded.
 const MAX_CORPUS: usize = 2_000;
-/// Abstracts per `/embeddings` call. Large batches trip provider input limits.
-const EMBED_BATCH: usize = 64;
 /// Chars of an abstract sent for embedding (providers cap tokens per input).
 const MAX_EMBED_CHARS: usize = 4_000;
 const FEED_TIMEOUT: Duration = Duration::from_secs(30);
@@ -78,22 +77,6 @@ pub struct ProbeEmbeddingResult {
     pub dim: usize,
     /// Wall-clock latency of the probe request in milliseconds.
     pub latency_ms: u64,
-}
-
-/// Resolve a user-supplied embedding base URL into a full `/embeddings` URL.
-///
-/// Accepts trailing slashes and bases that already end in `/embeddings`.
-/// All other paths get `/embeddings` appended after a single separator.
-fn resolve_endpoint(base_url: &str) -> String {
-    let base = base_url.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return String::new();
-    }
-    if base.ends_with("/embeddings") {
-        base.to_string()
-    } else {
-        format!("{base}/embeddings")
-    }
 }
 
 /// Read the most recent stored run without recomputing (page open / prewarm).
@@ -399,73 +382,6 @@ fn write_cached_vectors(
     Ok(())
 }
 
-#[derive(Serialize)]
-struct EmbedRequest<'a> {
-    model: &'a str,
-    input: &'a [String],
-}
-
-/// POST one batch of texts to `{base}/embeddings` and return their vectors.
-async fn embed_batch(
-    client: &reqwest::Client,
-    endpoint: &str,
-    api_key: Option<&str>,
-    model: &str,
-    texts: &[String],
-) -> Result<Vec<Vec<f32>>, AppError> {
-    let mut request = client.post(endpoint).json(&EmbedRequest {
-        model,
-        input: texts,
-    });
-    if let Some(key) = api_key {
-        request = request.header("Authorization", format!("Bearer {key}"));
-    }
-    let resp = request
-        .send()
-        .await
-        .map_err(|e| AppError::message(format!("embeddings request failed: {e}")))?;
-    let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| AppError::message(format!("embeddings read body: {e}")))?;
-    if !status.is_success() {
-        let snippet = http::http_err_snippet(&body);
-        return Err(AppError::message(format!(
-            "embeddings endpoint returned {status}: {snippet}"
-        )));
-    }
-    let value: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| AppError::message(format!("embeddings parse: {e}")))?;
-    let data = value
-        .get("data")
-        .and_then(|d| d.as_array())
-        .ok_or_else(|| AppError::message("embeddings response has no data array"))?;
-    let mut out = Vec::with_capacity(data.len());
-    for entry in data {
-        let vector: Vec<f32> = entry
-            .get("embedding")
-            .and_then(|e| e.as_array())
-            .ok_or_else(|| AppError::message("embeddings entry has no embedding"))?
-            .iter()
-            .filter_map(|v| v.as_f64())
-            .map(|v| v as f32)
-            .collect();
-        if vector.is_empty() {
-            return Err(AppError::message("embeddings entry is empty"));
-        }
-        out.push(vector);
-    }
-    if out.len() != texts.len() {
-        return Err(AppError::message(format!(
-            "embeddings returned {} vectors for {} inputs",
-            out.len(),
-            texts.len()
-        )));
-    }
-    Ok(out)
-}
-
 /// Liveness probe: POST one tiny input, confirm the endpoint actually serves
 /// `/embeddings`, and report the returned dimensionality + latency.
 ///
@@ -476,7 +392,7 @@ pub async fn probe_embedding_endpoint(
     api_key: Option<&str>,
     model: &str,
 ) -> Result<ProbeEmbeddingResult, AppError> {
-    let endpoint = resolve_endpoint(base_url);
+    let endpoint = embeddings::resolve_endpoint(base_url);
     if endpoint.is_empty() {
         return Err(AppError::message(format!(
             "{ERR_PROBE_FAILED}: empty base URL"
@@ -487,46 +403,18 @@ pub async fn probe_embedding_endpoint(
         .build()
         .map_err(|e| AppError::message(format!("{ERR_PROBE_FAILED}: {e}")))?;
     let inputs = [PROBE_INPUT.to_string()];
-    let mut request = client.post(&endpoint).json(&EmbedRequest {
-        model,
-        input: &inputs,
-    });
-    if let Some(key) = api_key {
-        request = request.header("Authorization", format!("Bearer {key}"));
-    }
     let started = std::time::Instant::now();
-    let resp = request
-        .send()
+    let vectors = embeddings::embed_batch(&client, &endpoint, api_key, model, &inputs)
         .await
         .map_err(|e| AppError::message(format!("{ERR_PROBE_FAILED}: {e}")))?;
-    let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| AppError::message(format!("{ERR_PROBE_FAILED}: {e}")))?;
-    if !status.is_success() {
-        let snippet = http::http_err_snippet(&body);
-        return Err(AppError::message(format!(
-            "{ERR_PROBE_FAILED}: HTTP {status} — {snippet}"
-        )));
-    }
-    let value: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| AppError::message(format!("{ERR_PROBE_FAILED}: parse {e}")))?;
-    let vector: Vec<f64> = value
-        .get("data")
-        .and_then(|d| d.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|entry| entry.get("embedding"))
-        .and_then(|e| e.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
-        .unwrap_or_default();
-    if vector.is_empty() {
+    let dim = vectors.first().map(Vec::len).unwrap_or(0);
+    if dim == 0 {
         return Err(AppError::message(format!(
             "{ERR_PROBE_FAILED}: response has no embedding"
         )));
     }
     Ok(ProbeEmbeddingResult {
-        dim: vector.len(),
+        dim,
         latency_ms: started.elapsed().as_millis() as u64,
     })
 }
@@ -561,9 +449,9 @@ async fn embed_all(
         .build()
         .map_err(|e| AppError::message(format!("recommend http client: {e}")))?;
     let mut fresh: Vec<(String, Vec<f32>)> = Vec::new();
-    for chunk in missing.chunks(EMBED_BATCH) {
+    for chunk in missing.chunks(embeddings::EMBED_BATCH) {
         let inputs: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
-        let vectors = embed_batch(&client, endpoint, api_key, model, &inputs).await?;
+        let vectors = embeddings::embed_batch(&client, endpoint, api_key, model, &inputs).await?;
         for ((hash, _), vector) in chunk.iter().zip(vectors) {
             fresh.push((hash.clone(), vector));
         }
@@ -589,19 +477,6 @@ async fn embed_all(
                 .ok_or_else(|| AppError::message("embedding missing after fetch"))
         })
         .collect()
-}
-
-fn normalize(vector: &mut [f32]) {
-    let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for v in vector.iter_mut() {
-            *v /= norm;
-        }
-    }
-}
-
-fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
 /// Weights for corpus papers ordered newest-first: `1/(1+log10(rank+1))`,
@@ -670,7 +545,7 @@ pub async fn recommend(
     let Some((base_url, api_key, model)) = embedding else {
         return Err(AppError::message(ERR_NO_EMBEDDING));
     };
-    let endpoint = resolve_endpoint(&base_url);
+    let endpoint = embeddings::resolve_endpoint(&base_url);
     if endpoint.is_empty() {
         return Err(AppError::message(ERR_NO_EMBEDDING));
     }
@@ -723,10 +598,10 @@ pub async fn recommend(
     )
     .await?;
     for v in corpus_vectors.iter_mut() {
-        normalize(v);
+        embeddings::normalize(v);
     }
     for v in candidate_vectors.iter_mut() {
-        normalize(v);
+        embeddings::normalize(v);
     }
 
     let weights = time_decay_weights(corpus_vectors.len());
@@ -740,7 +615,7 @@ pub async fn recommend(
                 .map(|(corpus_vector, weight)| {
                     // Mismatched dims mean two different models wrote the cache.
                     if corpus_vector.len() == cv.len() {
-                        dot(corpus_vector, cv) * weight
+                        embeddings::dot(corpus_vector, cv) * weight
                     } else {
                         0.0
                     }
@@ -802,13 +677,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_makes_unit_length() {
-        let mut v = vec![3.0_f32, 4.0];
-        normalize(&mut v);
-        assert!((dot(&v, &v) - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
     fn categories_dedupe_and_trim() {
         let out = normalize_categories(vec![
             " cs.AI ".into(),
@@ -817,31 +685,6 @@ mod tests {
             "cs.LG".into(),
         ]);
         assert_eq!(out, vec!["cs.AI".to_string(), "cs.LG".to_string()]);
-    }
-
-    #[test]
-    fn resolve_endpoint_appends_embeddings_path() {
-        assert_eq!(
-            resolve_endpoint("https://api.openai.com/v1"),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(
-            resolve_endpoint("https://api.openai.com/v1/"),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(
-            resolve_endpoint("https://api.openai.com/v1/embeddings"),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(
-            resolve_endpoint("https://api.openai.com/v1/embeddings/"),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(
-            resolve_endpoint("  https://api.openai.com/v1/  "),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(resolve_endpoint(""), "");
     }
 
     fn sample_result(computed_at: String) -> RecommendResult {

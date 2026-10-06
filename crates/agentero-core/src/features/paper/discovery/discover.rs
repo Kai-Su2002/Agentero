@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::path::Path;
 
 use crate::error::AppError;
+use crate::features::paper::discovery::embeddings::{self, EmbeddingConfig};
 use crate::features::scholar_api::sources::arxiv;
 use crate::features::scholar_api::ApiPaper;
 
@@ -27,6 +28,10 @@ const ABSTRACT_WEIGHT: f32 = 1.0;
 pub const DEFAULT_MAX_CANDIDATES: usize = 100;
 /// Shortlist size when the caller does not ask for a specific one.
 pub const DEFAULT_TOP: usize = 8;
+/// Cosine weight added on top of the lexical score when semantic ranking runs.
+pub const DEFAULT_SEMANTIC_WEIGHT: f32 = 1.0;
+/// Chars of a candidate sent for embedding (providers cap tokens per input).
+const MAX_EMBED_CHARS: usize = 4_000;
 
 /// A discovery request. At least one keyword or category is required; a date
 /// window alone would scan an unbounded slice of arXiv.
@@ -51,6 +56,11 @@ pub struct DiscoverQuery {
     /// Max candidates fetched before ranking.
     #[serde(default)]
     pub max_candidates: Option<usize>,
+    /// Cosine weight added on top of the lexical score when an embedding
+    /// endpoint is supplied (default [`DEFAULT_SEMANTIC_WEIGHT`]); ignored when
+    /// no endpoint is passed.
+    #[serde(default)]
+    pub semantic_weight: Option<f32>,
 }
 
 /// One term's contribution to an item's score (for explainability).
@@ -95,6 +105,10 @@ pub struct DiscoverResult {
     /// Candidates dropped because they are already known (e.g. in the library).
     pub excluded: usize,
     pub computed_at: String,
+    /// Set when semantic ranking was requested but the endpoint failed; the
+    /// result then degrades to lexical-only instead of erroring.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub semantic_error: Option<String>,
     pub items: Vec<DiscoverItem>,
 }
 
@@ -105,11 +119,15 @@ pub struct DiscoverResult {
 /// papers instead of being eaten by a truncated `top`. Pass an empty set for a
 /// pure network discovery run.
 ///
-/// Network-only otherwise: does not touch the Vault or catalog, so it works
-/// headless and without an embedding provider configured.
+/// `embedding`, when supplied, adds an optional cosine-similarity term to the
+/// lexical score (see [`DiscoverQuery::semantic_weight`]); if that call fails
+/// the run degrades to lexical-only and records `semantic_error`.
+///
+/// Network-only otherwise: does not touch the Vault or catalog.
 pub async fn discover_arxiv(
     query: &DiscoverQuery,
     exclude_ids: &HashSet<String>,
+    embedding: Option<&EmbeddingConfig>,
 ) -> Result<DiscoverResult, AppError> {
     let search_query = build_search_query(query)?;
     let max_candidates = query
@@ -122,7 +140,21 @@ pub async fn discover_arxiv(
     let candidates_scanned = papers.len();
 
     let (kept, excluded) = drop_known(papers, exclude_ids);
-    let items = rank(kept, &query.keywords, top);
+    let terms = normalize_terms(&query.keywords);
+    let mut items = score_lexical(kept, &terms);
+
+    let mut semantic_error = None;
+    if let Some(config) = embedding {
+        if !terms.is_empty() && !items.is_empty() {
+            let weight = query.semantic_weight.unwrap_or(DEFAULT_SEMANTIC_WEIGHT);
+            if let Err(err) = apply_semantic(&mut items, &terms, config, weight).await {
+                log::warn!(target: "agentero::discover", "semantic ranking skipped: {err}");
+                semantic_error = Some(err.to_string());
+            }
+        }
+    }
+
+    let items = finalize(items, top);
 
     Ok(DiscoverResult {
         source: "arxiv".to_string(),
@@ -131,8 +163,67 @@ pub async fn discover_arxiv(
         candidates_scanned,
         excluded,
         computed_at: crate::time::now_rfc3339_millis(),
+        semantic_error,
         items,
     })
+}
+
+/// Add `weight * cosine(query, candidate)` to each item and record it as a
+/// `semantic` score term. Degrades to lexical on any endpoint error.
+async fn apply_semantic(
+    items: &mut [DiscoverItem],
+    terms: &[String],
+    config: &EmbeddingConfig,
+    weight: f32,
+) -> Result<(), AppError> {
+    let mut texts: Vec<String> = Vec::with_capacity(items.len() + 1);
+    texts.push(terms.join(" "));
+    for item in items.iter() {
+        texts.push(embed_input(&item.title, &item.abstract_text));
+    }
+
+    let mut vectors = embeddings::embed_texts(config, &texts).await?;
+    if vectors.len() != texts.len() {
+        return Err(AppError::message(
+            "embeddings returned the wrong number of vectors",
+        ));
+    }
+    for vector in vectors.iter_mut() {
+        embeddings::normalize(vector);
+    }
+    let query_vector = vectors.remove(0);
+    apply_semantic_vectors(items, &query_vector, &vectors, weight);
+    Ok(())
+}
+
+/// Add `weight * cosine(query, candidate)` to each item and record it as a
+/// `semantic` score term. Pure so the blend is unit-testable.
+fn apply_semantic_vectors(
+    items: &mut [DiscoverItem],
+    query_vector: &[f32],
+    vectors: &[Vec<f32>],
+    weight: f32,
+) {
+    for (item, candidate) in items.iter_mut().zip(vectors.iter()) {
+        let contribution = if query_vector.len() == candidate.len() {
+            weight * embeddings::dot(query_vector, candidate)
+        } else {
+            0.0
+        };
+        item.score += contribution;
+        item.matches.push(ScoreTerm {
+            term: "<semantic>".to_string(),
+            field: "semantic".to_string(),
+            count: 0,
+            weight,
+            contribution,
+        });
+    }
+}
+
+fn embed_input(title: &str, abstract_text: &str) -> String {
+    let joined = format!("{}\n\n{}", title.trim(), abstract_text.trim());
+    joined.chars().take(MAX_EMBED_CHARS).collect()
 }
 
 /// Split candidates into "kept" and "already known" (dropped). Papers with no
@@ -248,13 +339,11 @@ fn count_occurrences(haystack: &str, needle: &str) -> u32 {
     haystack.matches(needle).count() as u32
 }
 
-/// Rank candidates against the keyword terms. With no keywords every score is
-/// zero, so the submission-date ordering (newest first, from the query sort)
-/// is preserved by the tie-break.
-fn rank(papers: Vec<ApiPaper>, keywords: &[String], top: usize) -> Vec<DiscoverItem> {
-    let terms = normalize_terms(keywords);
-
-    let mut items: Vec<DiscoverItem> = papers
+/// Score candidates against the normalized `terms` (no sort / truncate).
+/// With no terms every score is zero, so [`finalize`] preserves the
+/// submission-date ordering from the arXiv query.
+fn score_lexical(papers: Vec<ApiPaper>, terms: &[String]) -> Vec<DiscoverItem> {
+    papers
         .into_iter()
         .map(|paper| {
             let title = paper.title.trim().to_string();
@@ -264,7 +353,7 @@ fn rank(papers: Vec<ApiPaper>, keywords: &[String], top: usize) -> Vec<DiscoverI
 
             let mut matches: Vec<ScoreTerm> = Vec::new();
             let mut score = 0.0_f32;
-            for term in &terms {
+            for term in terms {
                 let title_hits = count_occurrences(&title_lower, term);
                 let abstract_hits = count_occurrences(&abstract_lower, term);
                 if title_hits == 0 && abstract_hits == 0 {
@@ -305,8 +394,11 @@ fn rank(papers: Vec<ApiPaper>, keywords: &[String], top: usize) -> Vec<DiscoverI
                 matches,
             }
         })
-        .collect();
+        .collect()
+}
 
+/// Sort by score (desc), then newest, then title; truncate to `top`.
+fn finalize(mut items: Vec<DiscoverItem>, top: usize) -> Vec<DiscoverItem> {
     items.sort_by(|a, b| {
         b.score
             .total_cmp(&a.score)
@@ -315,6 +407,12 @@ fn rank(papers: Vec<ApiPaper>, keywords: &[String], top: usize) -> Vec<DiscoverI
     });
     items.truncate(top);
     items
+}
+
+/// Lexical-only ranking helper (unit tests).
+#[cfg(test)]
+fn rank(papers: Vec<ApiPaper>, keywords: &[String], top: usize) -> Vec<DiscoverItem> {
+    finalize(score_lexical(papers, &normalize_terms(keywords)), top)
 }
 
 #[cfg(test)]
@@ -421,6 +519,33 @@ mod tests {
         )];
         let ranked = rank(candidates, &["world model".to_string()], 8);
         assert!(!ranked[0].matches.is_empty());
+    }
+
+    #[test]
+    fn semantic_vectors_add_cosine_and_reorder() {
+        // Two candidates with equal lexical score; semantic decides.
+        let candidates = vec![
+            paper("low", "agent", "", "2026-08-01T00:00:00Z"),
+            paper("high", "agent", "", "2026-08-01T00:00:00Z"),
+        ];
+        let mut items = score_lexical(candidates, &["agent".to_string()]);
+        let query = vec![1.0_f32, 0.0];
+        let vectors = vec![vec![0.1_f32, 0.0], vec![0.9_f32, 0.0]];
+        apply_semantic_vectors(&mut items, &query, &vectors, 2.0);
+
+        let ranked = finalize(items, 8);
+        assert_eq!(ranked[0].arxiv_id, "high");
+        assert!((ranked[0].score - (3.0 + 1.8)).abs() < 1e-5);
+        assert_eq!(ranked[0].matches.last().unwrap().field, "semantic");
+    }
+
+    #[test]
+    fn semantic_dimension_mismatch_is_zero() {
+        let candidates = vec![paper("a", "agent", "", "2026-08-01T00:00:00Z")];
+        let mut items = score_lexical(candidates, &["agent".to_string()]);
+        let before = items[0].score;
+        apply_semantic_vectors(&mut items, &[1.0, 0.0], &[vec![0.5]], 1.0);
+        assert!((items[0].score - before).abs() < 1e-6);
     }
 
     #[test]

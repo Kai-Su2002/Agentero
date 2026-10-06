@@ -446,8 +446,9 @@ impl AgenteroMcp {
             until: args.until,
             top: args.top,
             max_candidates: args.max_candidates,
+            semantic_weight: None,
         };
-        match discover::discover_arxiv(&query, &exclude).await {
+        match discover::discover_arxiv(&query, &exclude, None).await {
             Ok(result) => Ok(Json(DiscoverArxivOut::from(result))),
             Err(e) => Err(tool_err(e)),
         }
