@@ -149,7 +149,6 @@ export type DefaultAgentChoice = {
 function catalogTemplateFromId(templateId: string): AgentTemplate {
 	switch (templateId) {
 		case "opencode":
-		case "openclaw":
 		case "hermes":
 		case "claude-acp":
 		case "codex-acp":

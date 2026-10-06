@@ -11,8 +11,8 @@ use crate::features::agent::registry::discovery::resolve_command;
 use crate::features::agent::registry::templates::{
     antigravity_install_dir, antigravity_server_name, kimi_launcher_dir, template_info,
     CLAUDE_ACP_INSTALL_COMMAND, CODEX_ACP_INSTALL_COMMAND, DSH_INSTALL_COMMAND,
-    MINIMAX_CODE_INSTALL_COMMAND, PI_ACP_INSTALL_COMMAND, PI_HOST_INSTALL_COMMAND,
-    ZCODE_ACP_INSTALL_COMMAND,
+    MIMO_CODE_INSTALL_COMMAND, MINIMAX_CODE_INSTALL_COMMAND, PI_ACP_INSTALL_COMMAND,
+    PI_HOST_INSTALL_COMMAND, ZCODE_ACP_INSTALL_COMMAND,
 };
 use serde::Serialize;
 use std::collections::HashSet;
@@ -78,7 +78,6 @@ static WINDOWS_BATCH_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 /// Catalog template ids that support silent install/update.
 pub const LIFECYCLE_TEMPLATES: &[&str] = &[
     "opencode",
-    "openclaw",
     "claude-acp",
     "codex-acp",
     "hermes",
@@ -88,6 +87,7 @@ pub const LIFECYCLE_TEMPLATES: &[&str] = &[
     "kimi-code",
     "zcode",
     "minimax-code",
+    "mimo-code",
     #[cfg(not(all(target_os = "macos", target_arch = "x86_64")))]
     "antigravity-acp",
 ];
@@ -286,7 +286,6 @@ pub fn uninstall_info(template_id: &str) -> Option<UninstallInfo> {
             ],
             Vec::new(),
         ),
-        "openclaw" => (vec!["npm uninstall -g openclaw".to_string()], Vec::new()),
         "claude-acp" => (
             vec!["npm uninstall -g @anthropic-ai/claude-code".to_string()],
             vec![claude_acp],
@@ -314,6 +313,7 @@ pub fn uninstall_info(template_id: &str) -> Option<UninstallInfo> {
             vec!["npm uninstall -g @minimax-ai/code".to_string()],
             Vec::new(),
         ),
+        "mimo-code" => (vec!["npm uninstall -g mimocode".to_string()], Vec::new()),
         // Single-package adapter: the ACP bridge is the only npm artifact
         // (the zcode CLI itself ships inside the ZCode desktop app).
         "zcode" => (vec![zcode_acp], Vec::new()),
@@ -462,7 +462,7 @@ pub fn run_template_lifecycle(
     // the bundled adapter moves with app releases.
     let bundled_tier_active = !acp_path_present && super::bundled::bundled_spawnable(template_id);
     let acp_present = acp_path_present || bundled_tier_active;
-    // Same binary for host and ACP (opencode, openclaw, hermes, grok via npx).
+    // Same binary for host and ACP (opencode, hermes, grok via npx).
     let needs_separate_adapter = info
         .detect_command
         .as_ref()
@@ -819,7 +819,6 @@ fn host_install_command(template_id: &str) -> Result<String, String> {
             "claude-acp" => Ok("npm i -g @anthropic-ai/claude-code@latest".to_string()),
             "codex-acp" => Ok("npm i -g @openai/codex@latest".to_string()),
             "opencode" => Ok(OPENCODE_NPM_INSTALL_COMMAND.to_string()),
-            "openclaw" => Ok("npm i -g openclaw@latest".to_string()),
             "hermes" => Ok(hermes_install_windows_command()),
             "pi" => Ok(PI_HOST_INSTALL_COMMAND.to_string()),
             "dsh" => Ok(DSH_INSTALL_COMMAND.to_string()),
@@ -828,6 +827,7 @@ fn host_install_command(template_id: &str) -> Result<String, String> {
                 KIMI_NPM_INSTALL_COMMAND,
             )),
             "minimax-code" => Ok(MINIMAX_CODE_INSTALL_COMMAND.to_string()),
+            "mimo-code" => Ok(MIMO_CODE_INSTALL_COMMAND.to_string()),
             "grok-build" => Ok(chain_or(
                 &grok_install_windows_command(),
                 "npm i -g @xai-official/grok@latest",
@@ -848,12 +848,12 @@ fn host_install_command(template_id: &str) -> Result<String, String> {
                 OPENCODE_INSTALL_UNIX,
                 OPENCODE_NPM_INSTALL_COMMAND,
             )),
-            "openclaw" => Ok("npm i -g openclaw@latest".to_string()),
             "hermes" => Ok(HERMES_INSTALL_UNIX.to_string()),
             "pi" => Ok(PI_HOST_INSTALL_COMMAND.to_string()),
             "dsh" => Ok(DSH_INSTALL_COMMAND.to_string()),
             "kimi-code" => Ok(chain_or(KIMI_INSTALL_UNIX, KIMI_NPM_INSTALL_COMMAND)),
             "minimax-code" => Ok(MINIMAX_CODE_INSTALL_COMMAND.to_string()),
+            "mimo-code" => Ok(MIMO_CODE_INSTALL_COMMAND.to_string()),
             "grok-build" => Ok(chain_or(
                 GROK_INSTALL_UNIX,
                 "npm i -g @xai-official/grok@latest",
@@ -889,10 +889,6 @@ fn host_update_command(template_id: &str) -> Result<String, String> {
             }
         }
         "codex-acp" => Ok("npm i -g @openai/codex@latest".to_string()),
-        "openclaw" => Ok(chain_or(
-            "openclaw update --yes",
-            "npm i -g openclaw@latest",
-        )),
         "pi" => {
             // pi is a host CLI plus a community ACP adapter. Updating only the
             // host frequently leaves the adapter out of sync after a `pi` release,
@@ -908,6 +904,7 @@ fn host_update_command(template_id: &str) -> Result<String, String> {
         // (latest version) with the npm install as fallback.
         "kimi-code" => Ok(host_install_command(template_id)?),
         "minimax-code" => Ok(MINIMAX_CODE_INSTALL_COMMAND.to_string()),
+        "mimo-code" => Ok(MIMO_CODE_INSTALL_COMMAND.to_string()),
         "hermes" => {
             #[cfg(target_os = "windows")]
             {
@@ -1022,8 +1019,6 @@ npm i -g @openai/codex@latest
 {codex_acp}
 # OpenCode
 npm i -g @opencode/cli@latest
-# OpenClaw
-npm i -g openclaw@latest
 # Pi + ACP adapter
 {pi_host}
 {pi_acp}
@@ -1061,8 +1056,6 @@ npm i -g @openai/codex@latest
 {codex_acp}
 # OpenCode
 {opencode} || npm i -g @opencode/cli@latest
-# OpenClaw
-npm i -g openclaw@latest
 # Pi + ACP adapter
 {pi_host}
 {pi_acp}
@@ -1694,7 +1687,6 @@ mod tests {
         let text = manual_install_commands_text();
         assert!(text.contains("Claude"));
         assert!(text.contains("OpenCode"));
-        assert!(text.contains("OpenClaw"));
         assert!(text.contains("Hermes"));
         assert!(text.contains("Grok"));
         assert!(text.contains("Pi"));
@@ -1773,6 +1765,20 @@ mod tests {
 
         let update = host_update_command("minimax-code").expect("MiniMax Code update");
         assert_eq!(update, cmd);
+    }
+
+    #[test]
+    fn mimo_install_update_and_uninstall_use_the_npm_package() {
+        let cmd = host_install_command("mimo-code").expect("MiMo Code install");
+        assert!(cmd.contains("mimocode"), "{cmd}");
+        let update = host_update_command("mimo-code").expect("MiMo Code update");
+        assert_eq!(update, cmd);
+        assert!(supports_lifecycle("mimo-code"));
+        let info = uninstall_info("mimo-code").expect("MiMo Code uninstall");
+        assert_eq!(
+            info.agent.npm_commands,
+            vec!["npm uninstall -g mimocode".to_string()]
+        );
     }
 
     #[test]

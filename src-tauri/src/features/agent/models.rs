@@ -5,9 +5,6 @@ use std::collections::HashMap;
 #[serde(rename_all = "kebab-case")]
 pub enum AgentTemplate {
     Opencode,
-    /// OpenClaw native ACP (`openclaw acp`).
-    /// Docs: https://docs.openclaw.ai/cli/acp
-    OpenClaw,
     /// Hermes Agent native ACP (`hermes acp`).
     /// Docs: https://github.com/NousResearch/hermes-agent
     Hermes,
@@ -52,7 +49,9 @@ impl<'de> serde::Deserialize<'de> for AgentTemplate {
         let s = String::deserialize(deserializer)?;
         Ok(match s.as_str() {
             "opencode" => Self::Opencode,
-            "openclaw" => Self::OpenClaw,
+            // Legacy OpenClaw preset (removed): keep old registries loading as
+            // a custom agent instead of failing the whole registry parse.
+            "openclaw" => Self::Custom,
             "hermes" => Self::Hermes,
             "claude-acp" => Self::ClaudeAcp,
             "codex-acp" => Self::CodexAcp,
@@ -79,7 +78,6 @@ impl AgentTemplate {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Opencode => "opencode",
-            Self::OpenClaw => "openclaw",
             Self::Hermes => "hermes",
             Self::ClaudeAcp => "claude-acp",
             Self::CodexAcp => "codex-acp",

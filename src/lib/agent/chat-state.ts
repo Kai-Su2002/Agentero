@@ -354,7 +354,6 @@ export type AgentOption = {
 function catalogTemplateFromId(templateId: string): AgentTemplate | undefined {
 	switch (templateId) {
 		case "opencode":
-		case "openclaw":
 		case "hermes":
 		case "claude-acp":
 		case "codex-acp":

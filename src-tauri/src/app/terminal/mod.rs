@@ -223,7 +223,7 @@ status=$?
 echo ""
 if [ "$status" -eq 0 ]; then
   echo "Done. Verifying on remote…"
-  ssh -T "$DEST" "bash -lc $(printf '%q' 'command -v claude-agent-acp || command -v opencode || command -v openclaw || command -v hermes || true; ls -la \"$HOME/.local/bin\" 2>/dev/null | head -20')" || true
+  ssh -T "$DEST" "bash -lc $(printf '%q' 'command -v claude-agent-acp || command -v opencode || command -v hermes || true; ls -la \"$HOME/.local/bin\" 2>/dev/null | head -20')" || true
   echo ""
   echo "Return to Agentero → Settings → Agent and click Refresh."
 else

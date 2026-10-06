@@ -1266,11 +1266,6 @@ export type AgentStreamKind = "message" | "thought";
 
 export type AgentTemplate = "opencode" | 
 /**
- *  OpenClaw native ACP (`openclaw acp`).
- *  Docs: https://docs.openclaw.ai/cli/acp
- */
-"open-claw" | 
-/**
  *  Hermes Agent native ACP (`hermes acp`).
  *  Docs: https://github.com/NousResearch/hermes-agent
  */

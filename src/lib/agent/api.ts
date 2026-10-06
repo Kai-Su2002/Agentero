@@ -20,7 +20,6 @@ export type {
 
 export type AgentTemplate =
 	| "opencode"
-	| "openclaw"
 	| "hermes"
 	| "claude-acp"
 	| "codex-acp"

@@ -313,18 +313,6 @@ pub fn builtin_templates() -> Vec<AgentTemplateInfo> {
             login_command: None,
         },
         AgentTemplateInfo {
-            id: AgentTemplate::OpenClaw.as_str().to_string(),
-            name: "OpenClaw".to_string(),
-            description: "OpenClaw with native ACP (`openclaw acp`).".to_string(),
-            command: "openclaw".to_string(),
-            args: vec!["acp".to_string()],
-            detect_command: Some("openclaw".to_string()),
-            install_hint: "npm i -g openclaw@latest  ·  https://docs.openclaw.ai/cli/acp"
-                .to_string(),
-            install_command: None,
-            login_command: None,
-        },
-        AgentTemplateInfo {
             id: AgentTemplate::ClaudeAcp.as_str().to_string(),
             name: "Claude".to_string(),
             description: "Claude Code via official ACP adapter (`claude-agent-acp`).".to_string(),
@@ -530,7 +518,7 @@ pub fn catalog_templates() -> Vec<AgentTemplateInfo> {
 pub fn template_from_id(id: &str) -> AgentTemplate {
     match id {
         "opencode" => AgentTemplate::Opencode,
-        "openclaw" => AgentTemplate::OpenClaw,
+        "openclaw" => AgentTemplate::Custom,
         "hermes" => AgentTemplate::Hermes,
         "claude-acp" => AgentTemplate::ClaudeAcp,
         "codex-acp" => AgentTemplate::CodexAcp,
@@ -554,20 +542,26 @@ pub fn template_info(id: &str) -> Option<AgentTemplateInfo> {
 /// Interactive host CLI for a template, when the Agent ships one.
 ///
 /// Usually the same binary as `detect_command`, but some agents differ
-/// (Antigravity's `agy`) and some have no user-facing CLI at all (ZCode's only
-/// entrypoint is the ACP adapter). `None` hides the Settings "open in terminal"
-/// action for that row.
-pub fn interactive_cli(info: &AgentTemplateInfo) -> Option<&str> {
+/// (Antigravity's `agy`) or need launch arguments (Dsh's `--profile tui`), and
+/// some have no user-facing CLI at all (ZCode's only entrypoint is the ACP
+/// adapter). `None` hides the Settings "open in terminal" action for that row.
+pub fn interactive_cli(info: &AgentTemplateInfo) -> Option<String> {
     if info.id == AgentTemplate::Zcode.as_str() {
         return None;
     }
     if info.id == AgentTemplate::AntigravityAcp.as_str() {
         // The Antigravity IDE/CLI ships `agy`; the managed `.par` is the ACP
         // server, not a user-facing CLI.
-        return Some("agy");
+        return Some("agy".to_string());
+    }
+    if info.id == AgentTemplate::Dsh.as_str() {
+        // `dsh` requires an explicit profile; `tui` is the shipped interactive
+        // one (`acp` is the stdio server Agentero itself boots).
+        return Some("dsh --profile tui".to_string());
     }
     info.detect_command
         .as_deref()
         .map(str::trim)
         .filter(|command| !command.is_empty())
+        .map(str::to_string)
 }

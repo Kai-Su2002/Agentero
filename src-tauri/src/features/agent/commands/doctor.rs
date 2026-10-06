@@ -122,7 +122,7 @@ pub fn doctor_open_agent_cli_terminal(
         ));
     };
     let environment = login_command_environment(registry.inner(), &template_id);
-    let command = resolve_login_command(binary, &environment);
+    let command = resolve_login_command(&binary, &environment);
     match open_terminal_agent_cli(&command) {
         Ok(()) => ApiResult::ok(()),
         Err(error) => map_err(error),

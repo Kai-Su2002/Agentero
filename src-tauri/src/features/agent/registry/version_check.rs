@@ -39,7 +39,6 @@ fn npm_version_cache() -> &'static Mutex<NpmVersionCache> {
 pub fn npm_package_for_template(template_id: &str) -> Option<&'static str> {
     match template_id {
         "opencode" => Some("@opencode/cli"),
-        "openclaw" => Some("openclaw"),
         "claude-acp" => Some("@anthropic-ai/claude-code"),
         "codex-acp" => Some("@openai/codex"),
         "pi" => Some("@earendil-works/pi-coding-agent"),
@@ -48,6 +47,7 @@ pub fn npm_package_for_template(template_id: &str) -> Option<&'static str> {
         "kimi-code" => Some("@moonshot-ai/kimi-code"),
         "zcode" => Some("zcode-acp-server"),
         "minimax-code" => Some("@minimax-ai/code"),
+        "mimo-code" => Some("mimocode"),
         _ => None,
     }
 }
@@ -341,6 +341,7 @@ mod tests {
             npm_package_for_template("minimax-code"),
             Some("@minimax-ai/code")
         );
+        assert_eq!(npm_package_for_template("mimo-code"), Some("mimocode"));
     }
 
     #[test]

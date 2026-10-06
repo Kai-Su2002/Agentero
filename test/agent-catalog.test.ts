@@ -101,8 +101,8 @@ describe("buildDefaultAgentChoices", () => {
 			scan({
 				entries: [
 					entry({
-						templateId: "openclaw",
-						name: "OpenClaw",
+						templateId: "pi",
+						name: "Pi",
 						binaryAvailable: false,
 						acpCommandAvailable: false,
 						canInstall: true,

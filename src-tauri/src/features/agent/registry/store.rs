@@ -488,12 +488,12 @@ impl AgentRegistry {
                     .as_ref()
                     .is_some_and(|d| d != &info.command);
                 let can_install = lifecycle::supports_lifecycle(&info.id);
-                // Resolve the interactive CLI so the row only offers the
-                // terminal action when the binary is actually available (e.g.
-                // Antigravity's separate `agy`, not the managed `.par`).
+                // Resolve the interactive CLI's leading binary so the row only
+                // offers the terminal action when it is actually available
+                // (e.g. Antigravity's separate `agy`), keeping any launch args.
                 let cli_command = interactive_cli(&info).and_then(|command| {
-                    resolve_command_in_agent_env(command, &environment)
-                        .map(|path| path.display().to_string())
+                    let binary = command.split_whitespace().next()?.to_string();
+                    resolve_command_in_agent_env(&binary, &environment).map(|_| command)
                 });
                 // Offer ACP install when host is present but ACP entry is missing.
                 let offer_install = binary_available
@@ -863,7 +863,6 @@ fn apply_user_agent_to_agent(agent: &mut AgentDescriptor, user_agent: &str, prov
         | AgentTemplate::AntigravityAcp
         | AgentTemplate::QoderCli
         | AgentTemplate::GrokBuild
-        | AgentTemplate::OpenClaw
         | AgentTemplate::Pi
         | AgentTemplate::Hermes
         | AgentTemplate::Dsh

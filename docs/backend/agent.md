@@ -35,7 +35,7 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
   环境变量（`SHELL -lic 'env -0'`）以及 `AgentDescriptor.env`。这样 macOS/Linux 上从
   GUI 启动 Agentero 也能读到 `.zshrc` / `.bashrc` 里 `export` 的 `OPENAI_API_KEY`、
   `OPENAI_BASE_URL` 等变量；`AgentDescriptor.env` 优先级最高，可覆盖 shell 值（#478）。
-- 统一接口：OpenCode、OpenClaw、Hermes、Claude ACP、Codex ACP、Antigravity ACP、Qoder、Grok、Pi、Dsh（DeepSeek Harness）、Kimi Code、ZCode、MiniMax Code、自定义 `command`/`args`/`env`。自定义项不探测安装器，保存后按同一 stdio 路径拉起；前端把参数字符串按空白拆开。设置表单用 `agent.form.hint` 说明这一约定。
+- 统一接口：OpenCode、Hermes、Claude ACP、Codex ACP、Antigravity ACP、Qoder、Grok、Pi、Dsh（DeepSeek Harness）、Kimi Code、ZCode、MiniMax Code、MiMo Code、自定义 `command`/`args`/`env`。自定义项不探测安装器，保存后按同一 stdio 路径拉起；前端把参数字符串按空白拆开。设置表单用 `agent.form.hint` 说明这一约定。
 - Dsh：umbrella CLI `@deepseek-ai/dsh`（npm，需 0.1.2+）内置 ACP profile——
   `dsh --profile acp` 以 ACP stdio 服务，首次启动从内置模板自动初始化 profile
   （`$DSH_HOME/profiles/acp`），无需手写 `cordis.yml` 或受管 launcher 目录。
@@ -59,6 +59,10 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
   --include=optional --allow-scripts=@minimax-ai/code,better-sqlite3
   --registry https://registry.npmjs.org/ --foreground-scripts`，登录命令为
   `mcode login`，skill 走 slash mention。
+- MiMo Code：Xiaomi 的 OpenCode fork，原生 ACP（`mimo acp`）。npm 包 `mimocode`
+  （bin `mimo`，需 Node 22+），install/update 走 `npm i -g mimocode`（Unix
+  `--prefix "$HOME/.local"`），uninstall 走 `npm uninstall -g mimocode`；detect/ACP
+  入口同二进制，登录在 CLI 内完成（`mimo providers`，即 opencode auth login 流程）。
 - Antigravity ACP：Google 官方 ACP server，安装和更新从 ACP Registry 的 manifest
   读取当前版本及平台压缩包，不保留旧版本回退。压缩包解压到 Agentero 管理目录，并保留
   `agy_acp_server` 与 `localharness_external`；macOS Intel 没有官方构建，因此不提供该预设。
@@ -137,9 +141,10 @@ Agentero 作为 **ACP Client**，stdio JSON-RPC 连接用户本机或远端 Agen
 - 「终端」按钮（`doctor_open_agent_cli_terminal`，仅已安装 Agent 行显示，位于「升级」与
   「卸载」之间）**直接**在系统默认终端启动该 Agent 的交互式 CLI（无需回车确认）：命令取
   模板的交互式 CLI（`registry::interactive_cli`，通常等同 `detect_command`，如 `claude` /
-  `codex` / `opencode`；Antigravity 为独立的 `agy` CLI，而非受管目录里的
-  `agy_acp_server.par` ACP server）；ZCode 只有 ACP 适配器、无面向用户的 CLI，故不显示该
-  按钮。二进制解析逻辑与登录按钮共用（注册 Agent 合并 env / login-shell PATH，#686）。
+  `codex` / `opencode`；Antigravity 为独立的 `agy` CLI 而非受管目录里的
+  `agy_acp_server.par` ACP server；Dsh 需显式 profile，使用 shipped 的 `dsh --profile tui`）；
+  ZCode 只有 ACP 适配器、无面向用户的 CLI，故不显示该按钮。二进制解析逻辑与登录按钮共用
+  （注册 Agent 合并 env / login-shell PATH，#686）。
 - 后台熔断（`AgentWarmGate`）：`agent_warm` / `agent_list_sessions` 失败后进入
   120s 冷却，冷却期内直接返回上次错误、不再 spawn；成功或用户消息
   （`agent_run_once`）成功后清除。详见
