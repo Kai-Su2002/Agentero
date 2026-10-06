@@ -2383,22 +2383,52 @@ export type DecideArgs = {
 };
 
 /**
- *  A decision result: the winning provider's `action` plus provenance.
+ *  A decision result: the neutral envelope `{action, status, provider,
+ *  modelVersion}` plus provider-specific [`Self::metadata`].
  * 
  *  `action` is whatever the provider produced. Rule/jEV string choices arrive
  *  as JSON strings (`"ignore"`), richer payloads as objects; consumers switch
  *  on the shape they registered for.
+ * 
+ *  Calibration-sensitive values (confidence, probabilities) are deliberately
+ *  **not** top-level fields: confidences are not comparable across providers,
+ *  so they live in `metadata` scoped to the `provider` / `modelVersion` that
+ *  produced them. Routing thresholds are scoped the same way
+ *  ([`FallbackThreshold`]).
  */
 export type DecisionOutcome = {
 	action: Json,
+	/**  How the outcome was reached (provider answer vs. schema default). */
+	status: DecisionStatus,
 	/**
 	 *  Name of the provider that produced the action (`rule` / `jev` /
 	 *  `default` / `none`).
 	 */
 	provider: string,
-	/**  Confidence in `[0, 1]`, only present for probabilistic providers. */
-	confidence: number | null,
+	/**
+	 *  Provider model or config version that produced the action, when known.
+	 *  Part of the calibration scope: a threshold only applies to outcomes with
+	 *  the same `provider` and (if pinned) `model_version`.
+	 */
+	modelVersion: string | null,
+	/**
+	 *  Provider-specific payload (e.g. `confidence`, `probabilities`). Never
+	 *  assume a field exists or shares calibration with another provider.
+	 */
+	metadata: Json,
 };
+
+/**
+ *  Provider-neutral disposition of a decision, independent of any
+ *  provider-specific calibration.
+ */
+export type DecisionStatus = 
+/**  A provider produced the action. */
+"decided" | 
+/**  No provider had an opinion; the schema's `default_action` was used. */
+"defaulted" | 
+/**  Neither a provider nor a schema default produced anything. */
+"no_opinion";
 
 export type DepPolicy = "allSettled" | "allSucceeded";
 

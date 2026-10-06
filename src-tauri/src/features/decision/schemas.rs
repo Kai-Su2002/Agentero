@@ -5,7 +5,8 @@
 //! handles the genuinely semantic cases (intent, tagging).
 
 use crate::core::decision::{
-    DecisionRouting, DecisionSchema, FnProviderConfig, ProviderRequest, JEV_PROVIDER, RULE_PROVIDER,
+    DecisionRouting, DecisionSchema, FallbackThreshold, FnProviderConfig, ProviderRequest,
+    JEV_MODEL, JEV_PROVIDER, RULE_PROVIDER,
 };
 use serde_json::{json, Value};
 
@@ -18,7 +19,10 @@ pub fn pdf_selection_intent() -> DecisionSchema {
         "pdf.selection.intent",
         "Decide the most likely intent when the user selects text in a PDF",
     )
-    .routing(DecisionRouting::provider(JEV_PROVIDER).with_fallback(RULE_PROVIDER, Some(0.75)))
+    .routing(DecisionRouting::provider(JEV_PROVIDER).with_fallback(
+        RULE_PROVIDER,
+        Some(FallbackThreshold::for_provider(JEV_PROVIDER, 0.75).model_version(JEV_MODEL)),
+    ))
     .rule(|state: &Value| {
         let text = state
             .get("selectedText")
@@ -39,7 +43,7 @@ pub fn pdf_selection_intent() -> DecisionSchema {
             JEV_PROVIDER,
             json!({
                 "state": { "selected_text": selected },
-                "model": crate::core::decision::JEV_MODEL,
+                "model": JEV_MODEL,
                 "questions": {
                     "intent": {
                         "type": "choice",
@@ -57,6 +61,7 @@ pub fn pdf_selection_intent() -> DecisionSchema {
                 }
             }),
         )
+        .model_version(JEV_MODEL)
     }))
     .default_action(json!("ignore"))
 }
@@ -75,7 +80,7 @@ pub fn paper_auto_tag() -> DecisionSchema {
             JEV_PROVIDER,
             json!({
                 "state": { "title": title, "abstract": abstract_text },
-                "model": crate::core::decision::JEV_MODEL,
+                "model": JEV_MODEL,
                 "questions": {
                     "primary-tag": {
                         "type": "choice",
@@ -91,6 +96,7 @@ pub fn paper_auto_tag() -> DecisionSchema {
                 }
             }),
         )
+        .model_version(JEV_MODEL)
     }))
 }
 

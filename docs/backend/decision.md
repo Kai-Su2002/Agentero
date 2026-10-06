@@ -18,7 +18,9 @@
 | Provider | 具体执行决策的模块：`RuleProvider`、`JevProvider`。 |
 | Routing | 主 provider、fallback provider、fallback 阈值。 |
 | ProviderConfig | provider 专属配置，例如 jEV 的 questions。 |
-| Outcome | 结果：`action` + `provider` 来源 + `confidence`。 |
+| Outcome | 结果：中立信封 `{ action, status, provider, modelVersion }` + provider 专属 `metadata`。 |
+| Status | 结果如何得来：`decided`（provider 作答）/ `defaulted`（schema 默认）/ `no_opinion`。 |
+| Metadata | provider 专属负载（`confidence`、`probabilities`）；校准不可跨 provider 比较。 |
 
 ## 架构
 
@@ -59,19 +61,44 @@ pub trait DecisionProvider: Send + Sync {
 |---|---|---|---|
 | `rule` | — | — | 纯规则 |
 | `jev` | — | — | 纯 jEV |
-| `jev` | `rule` | `0.75` | jEV 置信度低时回退规则 |
+| `jev` | `rule` | scoped `0.75` | jEV 置信度低时回退规则 |
 | `rule` | `jev` | — | 规则未命中时让 jEV 兜底 |
 
 引擎在以下情况尝试 fallback：主 provider 返回 `Ok(None)`、主 provider 置信度低于阈值、
 或主 provider 报错且配置了 fallback（报错被吞掉，让确定性 fallback 仍能作答）。fallback
 也无意见时保留主 provider 结果；都没有则用 schema 的 `default_action`（否则 `null`）。
 
+### 校准边界（confidence 与阈值不跨 provider）
+
+不同 provider 的 `confidence` 由各自训练/标定过程产生，**不可直接比较**。因此：
+
+- 结果信封只保留中立字段 `{ action, status, provider, modelVersion }`；
+  `confidence` / `probabilities` 一律放进 `DecisionOutcome::metadata`（`outcome.confidence()`
+  读取，非有限值视为缺失）。
+- `fallback_threshold` 不是裸 `f64`，而是 [`FallbackThreshold`]：它记录该阈值是为哪个
+  `provider`（可再 pin 到 `model_version`）标定的。只有当主结果的 `provider` / `modelVersion`
+  落在阈值作用域内时才生效；作用域外绝不触发基于置信度的 fallback。
+- `ProviderRequest::model_version()` 声明请求面向的模型/配置版本，provider 把它写进
+  `DecisionOutcome::model_version`，使阈值作用域可被校验、也便于调试。
+
+这样 Jev、Clef、OpenAI、Laya 各自适配时，阈值随 provider 配置一起定义，不会拿 A 家的
+`0.75` 去裁 B 家的分数。
+
 ### Built-in providers
 
-- `RuleProvider`：按注册顺序执行规则，`Some` 即停；无置信度。
+- `RuleProvider`：按注册顺序执行规则，`Some` 即停；无置信度（`status = decided`，无 metadata）。
 - `JevProvider`：`state + questions -> answers` 的 HTTP 传输。`complete(body)` 是唯一的
   HTTP 入口（Bearer key、错误截断、超时），凭证通过 auth 闭包在请求时读设置。
-  `decide` 用 config 构造请求并把 answers 解释成 `(action, confidence)`。
+  `decide` 用 config 构造请求，交给共享的 `system_one::interpret_answers` 解码，再把
+  action/confidence/probabilities 组装成带 metadata 的 `DecisionOutcome`。
+
+### System One 共享解码（`providers/system_one.rs`）
+
+jEV 与 Cloudflare Clef 同属 System One 契约，答案解码规则抽到这里，供各 provider 与
+conformance 测试复用：`noul`（概率转 bool）、`choice`（选项键 + 概率/置信度）、`score`
+（有序评分，`score/3` 归一）以及 `value`/`label`/`answer` 兜底。解码是保守的——无法识别
+的答案一律返回 `None`（无意见），交给 fallback，而不是猜。fixture 覆盖：缺失/越界选项、
+多余 answers、超时（transport error）、缺失/非有限 `confidence`。
 
 ### 注册
 
@@ -80,18 +107,22 @@ Host 在 `features/decision/schemas.rs` 声明 schema，`features/decision/mod.r
 
 ```rust
 DecisionSchema::new("pdf.selection.intent", "…")
-    .routing(DecisionRouting::provider(JEV_PROVIDER).with_fallback(RULE_PROVIDER, Some(0.75)))
+    .routing(DecisionRouting::provider(JEV_PROVIDER).with_fallback(
+        RULE_PROVIDER,
+        // 阈值只为 jEV/jev-latest 标定；换 provider 不会拿它去裁别人。
+        Some(FallbackThreshold::for_provider(JEV_PROVIDER, 0.75).model_version(JEV_MODEL)),
+    ))
     .rule(|state| /* 空选区 -> ignore */)
     .provider_config(FnProviderConfig::new(JEV_PROVIDER, |state| ProviderRequest::new(
         JEV_PROVIDER,
         json!({ "state": state, "model": JEV_MODEL, "questions": { /* … */ } }),
-    )))
+    ).model_version(JEV_MODEL)))
     .default_action(json!("ignore"))
 ```
 
 ### IPC
 
-`decide({ decisionId, state }) -> ApiResult<DecisionOutcome>`。`state` / `action` 走
+`decide({ decisionId, state }) -> ApiResult<DecisionOutcome>`。`state` / `action` / `metadata` 走
 `core::json::Json`（`serde_json::Value` 的 specta 表示，见 [api.md](api.md)）。
 未注册 id 或 provider 缺失返回 Host 错误。
 
@@ -128,7 +159,7 @@ const action = decideSync("file-tree.click", { node });
 
 | decision | routing | 触发点 |
 |---|---|---|
-| `pdf.selection.intent` | jEV + 规则兜底（0.75） | 已注册，暂未接 UI（原 PDF 选区「智能操作」按钮已移除），可经 `decide` 命令调用 |
+| `pdf.selection.intent` | jEV + 规则兜底（阈值 scoped jEV/`jev-latest` 0.75） | 已注册，暂未接 UI（原 PDF 选区「智能操作」按钮已移除），可经 `decide` 命令调用 |
 | `paper.auto-tag` | 纯 jEV | 已注册；由后续论文入库流程调用 |
 | `file-tree.click` | 纯规则（前端本地） | 文件树点击 `selectFileNode` |
 
@@ -140,14 +171,15 @@ jEV 智能高亮的 HTTP 传输已统一到 `JevProvider::complete`：`features/
 - **不是所有判断都进决策层**：文件保存、标签页关闭、简单 UI 状态切换仍由 hook/store 直接处理。
 - **规则优先于 jEV**：能用规则确定的不要用 AI（jEV 有 token 成本与延迟）。
 - **用户可覆盖**：AI 只给默认建议；UI 上应保留其他选项供用户手动选择。
-- **可解释**：`Outcome` 必带 `provider` 与 `confidence`，便于调试与 fallback。
+- **可解释**：`Outcome` 必带中立信封 `{ action, status, provider, modelVersion }`，provider 专属的
+  `confidence` 在 `metadata` 里，便于调试与 fallback。
 - **未决**：
   - `pdf.smart-highlight` 仍以领域批处理直接调用 `JevProvider::complete`，未统一为通用
     `decide_batch`（通用批量需要 provider 理解按 state 合并 questions 的语义，暂不抽象）。
   - `paper.auto-tag` 尚无 UI 入口。
   - 决策结果缓存、按 decision 单独选择 provider 尚未实现。
-  - jEV 的 `choice` 置信度依赖响应里带 `confidence`/`probability`；缺失时按 `score/3`
-    归一，真实接口契约待验证。
+  - jEV 的 `choice` 置信度依赖响应里带 `confidence`/`probability`，缺失时回退到
+    `probabilities` 最大值、再退到 `score/3` 归一；越界选项原样透出，由 schema 决定是否接受。
 
 ## 文件
 
@@ -156,5 +188,6 @@ jEV 智能高亮的 HTTP 传输已统一到 `JevProvider::complete`：`features/
 | 核心引擎 | `crates/agentero-core/src/decision/`（types / registry / engine / providers） |
 | Host 装配 | `src-tauri/src/features/decision/`（mod / commands / schemas） |
 | jEV 传输 | `crates/agentero-core/src/decision/providers/jev.rs` |
+| System One 解码 | `crates/agentero-core/src/decision/providers/system_one.rs`（jEV/Clef 共用） |
 | 前端 hook | `src/hooks/use-decision.ts` |
 | 前端本地规则 | `src/lib/decision/registry.ts` |

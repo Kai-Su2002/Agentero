@@ -18,8 +18,8 @@ pub use providers::{JevCredentials, JevProvider, RuleProvider, JEV_MODEL};
 pub use registry::DecisionRegistry;
 pub use types::{
     DecisionOutcome, DecisionProvider, DecisionRequest, DecisionRouting, DecisionRule,
-    DecisionSchema, FnProviderConfig, ProviderCall, ProviderConfig, ProviderRequest, JEV_PROVIDER,
-    RULE_PROVIDER,
+    DecisionSchema, DecisionStatus, FallbackThreshold, FnProviderConfig, ProviderCall,
+    ProviderConfig, ProviderRequest, JEV_PROVIDER, RULE_PROVIDER,
 };
 
 #[cfg(test)]
@@ -59,9 +59,13 @@ mod tests {
         action: Value,
         confidence: Option<f64>,
     ) -> Arc<dyn DecisionProvider> {
+        let outcome = match confidence {
+            Some(confidence) => DecisionOutcome::decided(action, name).with_confidence(confidence),
+            None => DecisionOutcome::decided(action, name),
+        };
         Arc::new(StubProvider {
             name,
-            outcome: Ok(Some(DecisionOutcome::new(action, name, confidence))),
+            outcome: Ok(Some(outcome)),
         })
     }
 
@@ -69,6 +73,23 @@ mod tests {
         Arc::new(StubProvider {
             name,
             outcome: Ok(None),
+        })
+    }
+
+    fn versioned_stub(
+        name: &'static str,
+        action: Value,
+        confidence: Option<f64>,
+        model_version: &'static str,
+    ) -> Arc<dyn DecisionProvider> {
+        let outcome = match confidence {
+            Some(confidence) => DecisionOutcome::decided(action, name).with_confidence(confidence),
+            None => DecisionOutcome::decided(action, name),
+        }
+        .with_model_version(model_version);
+        Arc::new(StubProvider {
+            name,
+            outcome: Ok(Some(outcome)),
         })
     }
 
@@ -99,7 +120,8 @@ mod tests {
         let outcome = engine.decide(&request("t.rule")).await.expect("decide");
         assert_eq!(outcome.action.0, json!("matched"));
         assert_eq!(outcome.provider, RULE_PROVIDER);
-        assert_eq!(outcome.confidence, None);
+        assert_eq!(outcome.status, DecisionStatus::Decided);
+        assert_eq!(outcome.confidence(), None);
     }
 
     #[tokio::test]
@@ -120,7 +142,10 @@ mod tests {
     #[tokio::test]
     async fn low_confidence_primary_falls_back() {
         let schema = DecisionSchema::new("t.low", "test")
-            .routing(DecisionRouting::provider("primary").with_fallback(RULE_PROVIDER, Some(0.75)))
+            .routing(DecisionRouting::provider("primary").with_fallback(
+                RULE_PROVIDER,
+                Some(FallbackThreshold::for_provider("primary", 0.75)),
+            ))
             .rule(|_: &Value| Some(json!("rule")));
         let engine = DecisionEngine::builder()
             .provider(stub("primary", json!("weak"), Some(0.2)))
@@ -136,7 +161,10 @@ mod tests {
     #[tokio::test]
     async fn confident_primary_skips_fallback() {
         let schema = DecisionSchema::new("t.high", "test")
-            .routing(DecisionRouting::provider("primary").with_fallback(RULE_PROVIDER, Some(0.75)))
+            .routing(DecisionRouting::provider("primary").with_fallback(
+                RULE_PROVIDER,
+                Some(FallbackThreshold::for_provider("primary", 0.75)),
+            ))
             .rule(|_: &Value| Some(json!("rule")));
         let engine = DecisionEngine::builder()
             .provider(stub("primary", json!("strong"), Some(0.95)))
@@ -193,8 +221,12 @@ mod tests {
 
     #[tokio::test]
     async fn fallback_miss_keeps_weak_primary() {
-        let schema = DecisionSchema::new("t.keep", "test")
-            .routing(DecisionRouting::provider("primary").with_fallback("empty", Some(0.75)));
+        let schema = DecisionSchema::new("t.keep", "test").routing(
+            DecisionRouting::provider("primary").with_fallback(
+                "empty",
+                Some(FallbackThreshold::for_provider("primary", 0.75)),
+            ),
+        );
         let engine = DecisionEngine::builder()
             .provider(stub("primary", json!("weak"), Some(0.2)))
             .provider(empty_stub("empty"))
@@ -203,6 +235,122 @@ mod tests {
 
         let outcome = engine.decide(&request("t.keep")).await.expect("decide");
         assert_eq!(outcome.action.0, json!("weak"));
+    }
+
+    #[tokio::test]
+    async fn threshold_scoped_to_other_provider_does_not_fall_back() {
+        // A low confidence from a provider the threshold was not calibrated for
+        // must not trigger a confidence-based fallback.
+        let schema = DecisionSchema::new("t.scope", "test")
+            .routing(DecisionRouting::provider("primary").with_fallback(
+                RULE_PROVIDER,
+                Some(FallbackThreshold::for_provider("someone-else", 0.75)),
+            ))
+            .rule(|_: &Value| Some(json!("rule")));
+        let engine = DecisionEngine::builder()
+            .provider(stub("primary", json!("weak"), Some(0.1)))
+            .provider(Arc::new(RuleProvider::new()))
+            .register(schema)
+            .build();
+
+        let outcome = engine.decide(&request("t.scope")).await.expect("decide");
+        assert_eq!(outcome.action.0, json!("weak"));
+        assert_eq!(outcome.provider, "primary");
+    }
+
+    #[tokio::test]
+    async fn threshold_version_scope_must_match() {
+        let schema = DecisionSchema::new("t.version", "test")
+            .routing(DecisionRouting::provider("primary").with_fallback(
+                RULE_PROVIDER,
+                Some(FallbackThreshold::for_provider("primary", 0.75).model_version("v2")),
+            ))
+            .rule(|_: &Value| Some(json!("rule")));
+        let engine = DecisionEngine::builder()
+            .provider(versioned_stub("primary", json!("weak"), Some(0.1), "v1"))
+            .provider(Arc::new(RuleProvider::new()))
+            .register(schema)
+            .build();
+
+        // Advertised v1, threshold pinned to v2: calibration does not apply.
+        let outcome = engine.decide(&request("t.version")).await.expect("decide");
+        assert_eq!(outcome.action.0, json!("weak"));
+    }
+
+    #[tokio::test]
+    async fn missing_confidence_with_scoped_threshold_falls_back() {
+        let schema = DecisionSchema::new("t.noconf", "test")
+            .routing(DecisionRouting::provider("primary").with_fallback(
+                RULE_PROVIDER,
+                Some(FallbackThreshold::for_provider("primary", 0.75)),
+            ))
+            .rule(|_: &Value| Some(json!("rule")));
+        let engine = DecisionEngine::builder()
+            .provider(stub("primary", json!("uncalibrated"), None))
+            .provider(Arc::new(RuleProvider::new()))
+            .register(schema)
+            .build();
+
+        let outcome = engine.decide(&request("t.noconf")).await.expect("decide");
+        assert_eq!(outcome.action.0, json!("rule"));
+    }
+
+    #[tokio::test]
+    async fn non_finite_confidence_is_treated_as_missing() {
+        let mut provider_outcome = DecisionOutcome::decided(json!("nan"), "primary");
+        // serde_json cannot represent NaN, so a non-finite value degrades to
+        // null; `confidence()` must still report "no calibrated confidence".
+        provider_outcome.metadata.0 = json!({ "confidence": Value::from(f64::NAN) });
+        let provider = Arc::new(StubProvider {
+            name: "primary",
+            outcome: Ok(Some(provider_outcome)),
+        });
+
+        let schema = DecisionSchema::new("t.nan", "test")
+            .routing(DecisionRouting::provider("primary").with_fallback(
+                RULE_PROVIDER,
+                Some(FallbackThreshold::for_provider("primary", 0.75)),
+            ))
+            .rule(|_: &Value| Some(json!("rule")));
+        let engine = DecisionEngine::builder()
+            .provider(provider)
+            .provider(Arc::new(RuleProvider::new()))
+            .register(schema)
+            .build();
+
+        let outcome = engine.decide(&request("t.nan")).await.expect("decide");
+        assert_eq!(outcome.action.0, json!("rule"));
+    }
+
+    #[tokio::test]
+    async fn provider_timeout_uses_fallback_and_reports_status() {
+        // A transport failure (e.g. timeout) is an Err; with a fallback
+        // configured the deterministic provider still answers.
+        let schema = DecisionSchema::new("t.timeout", "test")
+            .routing(DecisionRouting::provider("slow").with_fallback(RULE_PROVIDER, None))
+            .rule(|_: &Value| Some(json!("rule")));
+        let engine = DecisionEngine::builder()
+            .provider(error_stub("slow"))
+            .provider(Arc::new(RuleProvider::new()))
+            .register(schema)
+            .build();
+
+        let outcome = engine.decide(&request("t.timeout")).await.expect("decide");
+        assert_eq!(outcome.action.0, json!("rule"));
+        assert_eq!(outcome.status, DecisionStatus::Decided);
+    }
+
+    #[tokio::test]
+    async fn no_opinion_without_default_reports_no_opinion() {
+        let schema = DecisionSchema::new("t.noop", "test").rule(|_: &Value| None);
+        let engine = DecisionEngine::builder()
+            .provider(Arc::new(RuleProvider::new()))
+            .register(schema)
+            .build();
+
+        let outcome = engine.decide(&request("t.noop")).await.expect("decide");
+        assert_eq!(outcome.status, DecisionStatus::NoOpinion);
+        assert_eq!(outcome.provider, "none");
     }
 
     #[tokio::test]

@@ -7,6 +7,9 @@
 > provider 的 `ProviderConfig`），而非裸 `DecisionRequest`；provider config 用
 > `FnProviderConfig` 闭包；纯前端规则另有同步的 `decideSync` 本地注册表；
 > `pdf.smart-highlight` 的批处理仍走 `JevProvider::complete`，暂未统一为 `decide_batch`。
+> 另：`DecisionOutcome` 只保留中立信封 `{ action, status, provider, modelVersion }`，
+> `confidence` / `probabilities` 放进 provider 专属 `metadata`；`fallback_threshold`
+> 由裸 `f64` 改为 provider/版本作用域内的 `FallbackThreshold`（见 §5.3）。
 
 ## 1. 背景与问题
 
@@ -104,16 +107,28 @@ pub struct DecisionRequest {
     pub state: serde_json::Value,
 }
 
+/// 中立信封：与具体 provider 的标定无关。
 pub struct DecisionOutcome {
     pub action: serde_json::Value,
+
+    /// 结果如何得来：decided / defaulted / no_opinion。
+    pub status: DecisionStatus,
+
+    /// 产出该 action 的 provider 名称。
     pub provider: String,
-    pub confidence: Option<f64>, // 仅 jEV/LLM 有值
+
+    /// provider 模型/配置版本；阈值作用域与调试用。
+    pub model_version: Option<String>,
+
+    /// provider 专属负载：confidence、probabilities 等。
+    /// 校准不可跨 provider 比较，故不设为顶层字段。
+    pub metadata: serde_json::Value,
 }
 ```
 
 ### 5.3 决策路由（DecisionRouting）
 
-`DecisionRouting` 描述一次决策应该由哪个 provider 执行、如何 fallback，而不是把 provider 名字硬编码进 schema 字段。
+`DecisionRouting` 描述一次决策应该由哪个 provider 执行、如何 fallback，而不是把 provider 名字硬编码进 schema 字段。fallback 阈值带**作用域**：不同 provider 的 `confidence` 标定不同，不能拿一个裸 `f64` 横跨所有 provider。
 
 ```rust
 pub struct DecisionRouting {
@@ -123,8 +138,16 @@ pub struct DecisionRouting {
     /// fallback provider 名称（可选）
     pub fallback: Option<String>,
 
-    /// 触发 fallback 的置信度阈值（仅当主 provider 返回 confidence 时生效）
-    pub fallback_threshold: Option<f64>,
+    /// 触发 fallback 的阈值，作用域限定到 provider / model_version
+    pub fallback_threshold: Option<FallbackThreshold>,
+}
+
+pub struct FallbackThreshold {
+    pub value: f64,
+    /// 该阈值为哪个 provider 的 confidence 标定
+    pub provider: String,
+    /// 可选：pin 到具体模型/配置版本
+    pub model_version: Option<String>,
 }
 ```
 
@@ -134,8 +157,10 @@ pub struct DecisionRouting {
 |---|---|---|---|
 | `"rule"` | `None` | `None` | 纯规则 |
 | `"jev"` | `None` | `None` | 纯 jEV |
-| `"jev"` | `Some("rule")` | `Some(0.75)` | jEV 置信度低时回退规则 |
+| `"jev"` | `Some("rule")` | `Some(scoped jev 0.75)` | jEV 置信度低时回退规则 |
 | `"rule"` | `Some("jev")` | `None` | 规则未命中时让 jEV 兜底 |
+
+阈值只在主结果的 `provider` / `model_version` 落在其作用域内时才生效；作用域外绝不触发基于置信度的 fallback。`ProviderRequest::model_version()` 声明请求面向的版本，provider 将其写入 `DecisionOutcome::model_version`，供作用域校验。
 
 ### 5.4 DecisionSchema
 
@@ -175,6 +200,8 @@ pub trait ProviderConfig: Send + Sync {
 pub struct ProviderRequest {
     pub provider: String,
     pub body: serde_json::Value,
+    /// 请求面向的模型/配置版本；provider 会写入 Outcome 供阈值作用域使用
+    pub model_version: Option<String>,
 }
 ```
 
@@ -197,8 +224,9 @@ pub struct ProviderRequest {
 
 - 复用现有 `reqwest::Client` 连接池。
 - 支持批量请求（batch + 并发），供高亮这类大量 questions 的场景使用。
-- 解析 jEV answer 时提取 `confidence`。
-- `score` 类型回答可通过 probability distribution 计算置信度。
+- 解析 answer 时把 `confidence` / `probabilities` 写入 `DecisionOutcome::metadata`（不设顶层字段）。
+- `score` 类型回答可通过 probability distribution 或 `score/3` 归一得到置信度。
+- 答案解码（`noul` / `choice` / `score` / 兜底值）与 Clef 共用 `providers/system_one.rs`，越界/缺失一律按“无意见”处理。
 
 ### 5.7 RuleProvider 实现要点
 
@@ -412,7 +440,7 @@ registerDecision({
    - 例如 PDF 智能菜单可以显示 jEV 推荐的 top action，但保留其他选项。
 
 4. **决策结果要可解释**
-   - Outcome 里必须带 `provider` 和 `confidence`。
+   - Outcome 里必须带 `provider`、`status`、`model_version`，`confidence` 等标定值在 `metadata` 中，且只与同 provider/版本可比。
    - 调试面板可以展示“为什么这个决策是这样”。
 
 5. **避免过度抽象**

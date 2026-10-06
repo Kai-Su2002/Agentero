@@ -64,7 +64,8 @@ impl DecisionEngine {
     ///
     /// Fallback is attempted when:
     /// - the primary provider returned no opinion (`Ok(None)`), or
-    /// - the primary returned a confidence below `fallback_threshold`, or
+    /// - the primary returned a confidence below `fallback_threshold` *and* the
+    ///   outcome is inside the threshold's provider/version calibration scope, or
     /// - the primary errored *and* a fallback is configured (errors are
     ///   swallowed so a deterministic fallback can still answer).
     ///
@@ -110,20 +111,25 @@ impl DecisionEngine {
         }
 
         Ok(match &schema.default_action {
-            Some(action) => DecisionOutcome::new(action.clone(), "default", None),
-            None => DecisionOutcome::new(Value::Null, "none", None),
+            Some(action) => DecisionOutcome::defaulted(action.clone()),
+            None => DecisionOutcome::no_opinion(),
         })
     }
 
     fn needs_fallback(&self, schema: &DecisionSchema, primary: &Option<DecisionOutcome>) -> bool {
         match primary {
             None => schema.routing.fallback.is_some(),
-            Some(outcome) => match schema.routing.fallback_threshold {
-                Some(threshold) => outcome
-                    .confidence
-                    .map(|confidence| confidence < threshold)
+            Some(outcome) => match &schema.routing.fallback_threshold {
+                // No threshold, or the threshold was calibrated for a different
+                // provider/version: a confidence-based fallback would compare
+                // incomparable numbers, so don't.
+                Some(threshold) if threshold.applies_to(outcome) => outcome
+                    .confidence()
+                    .map(|confidence| confidence < threshold.value)
+                    // Threshold scoped to this provider but no calibrated
+                    // confidence came back: treat as weak.
                     .unwrap_or(true),
-                None => false,
+                _ => false,
             },
         }
     }

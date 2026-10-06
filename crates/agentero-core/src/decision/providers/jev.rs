@@ -7,6 +7,7 @@
 //! so credentials and error handling live in exactly one place.
 
 use super::super::types::{DecisionOutcome, DecisionProvider, ProviderCall, JEV_PROVIDER};
+use super::system_one::interpret_answers;
 use crate::error::AppError;
 use crate::http;
 use async_trait::async_trait;
@@ -106,72 +107,26 @@ impl DecisionProvider for JevProvider {
             return Ok(None);
         };
         let request = config.build_request(call.state);
+        let model_version = request.model_version.clone();
         let response = self.complete(request.body).await?;
-        Ok(interpret_answers(&response)
-            .map(|(action, confidence)| DecisionOutcome::new(action, JEV_PROVIDER, confidence)))
-    }
-}
 
-/// Interpret a jEV response into `(action, confidence)`.
-///
-/// jEV answers may be `score` (numeric) or `choice` (an option key). We read the
-/// first answer and prefer an explicit option value; free-form answers pass
-/// through as-is. Confidence is taken from `confidence` / `probability`, else a
-/// 0..1 normalized `score` (criteria are 0..3 in the highlight vocabulary).
-fn interpret_answers(response: &Value) -> Option<(Value, Option<f64>)> {
-    let answers = response.get("answers")?.as_object()?;
-    let answer = answers.values().next()?;
+        let Some(answer) = interpret_answers(&response) else {
+            return Ok(None);
+        };
 
-    let confidence = answer
-        .get("confidence")
-        .and_then(Value::as_f64)
-        .or_else(|| answer.get("probability").and_then(Value::as_f64))
-        .or_else(|| {
-            answer
-                .get("score")
-                .and_then(Value::as_f64)
-                .map(|score| (score / 3.0).clamp(0.0, 1.0))
-        });
-
-    let action = answer
-        .get("choice")
-        .or_else(|| answer.get("value"))
-        .or_else(|| answer.get("label"))
-        .or_else(|| answer.get("answer"))
-        .cloned()
-        .unwrap_or_else(|| answer.clone());
-
-    Some((action, confidence))
-}
-
-#[cfg(test)]
-mod tests {
-    use super::interpret_answers;
-    use serde_json::json;
-
-    #[test]
-    fn interprets_choice_answer() {
-        let response = json!({
-            "answers": {
-                "intent": { "choice": "translate", "confidence": 0.9 }
-            }
-        });
-        let (action, confidence) = interpret_answers(&response).expect("answer");
-        assert_eq!(action, json!("translate"));
-        assert_eq!(confidence, Some(0.9));
-    }
-
-    #[test]
-    fn normalizes_score_confidence() {
-        let response = json!({ "answers": { "q": { "score": 3.0 } } });
-        let (action, confidence) = interpret_answers(&response).expect("answer");
-        assert_eq!(action, json!({ "score": 3.0 }));
-        assert_eq!(confidence, Some(1.0));
-    }
-
-    #[test]
-    fn missing_answers_returns_none() {
-        assert!(interpret_answers(&json!({ "answers": {} })).is_none());
-        assert!(interpret_answers(&json!({})).is_none());
+        // Calibration-sensitive values stay in `metadata`, scoped to the
+        // provider/version, so routing thresholds never compare them across
+        // providers.
+        let mut outcome = DecisionOutcome::decided(answer.action, JEV_PROVIDER);
+        if let Some(version) = model_version {
+            outcome = outcome.with_model_version(version);
+        }
+        if let Some(confidence) = answer.confidence {
+            outcome = outcome.with_confidence(confidence);
+        }
+        if let Some(probabilities) = answer.probabilities {
+            outcome = outcome.with_metadata("probabilities", probabilities);
+        }
+        Ok(Some(outcome))
     }
 }

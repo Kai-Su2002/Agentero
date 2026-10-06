@@ -24,7 +24,7 @@ impl DecisionProvider for RuleProvider {
     async fn decide(&self, call: ProviderCall<'_>) -> Result<Option<DecisionOutcome>, AppError> {
         for rule in call.rules {
             if let Some(action) = rule.apply(call.state) {
-                return Ok(Some(DecisionOutcome::new(action, RULE_PROVIDER, None)));
+                return Ok(Some(DecisionOutcome::decided(action, RULE_PROVIDER)));
             }
         }
         Ok(None)
