@@ -34,6 +34,12 @@ export const commands = {
 	 *  rejects the key (non-200 / non-200 code).
 	 */
 	easyScholarProbe: () => __TAURI_INVOKE<ApiResult<boolean>>("easy_scholar_probe"),
+/**
+ *  Probe the configured institution proxy (EZProxy/WebVPN) by fetching a
+ *  known paywalled DOI through the rewrite and checking the response is a
+ *  PDF. Returns a short human-readable result for the settings UI.
+ */
+	institutionProxyProbe: () => __TAURI_INVOKE<ApiResult<string>>("institution_proxy_probe"),
 	/**
 	 *  Query EasyScholar for a publication's rank data.
 	 *  Returns the full API response so the WebView can extract `officialRank.all`
@@ -1432,6 +1438,21 @@ export type AppSettings_Deserialize = {
 	githubMirrorEnabled?: boolean,
 	/**  e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`. */
 	githubMirrorBaseUrl?: string,
+	/**
+	 *  EZProxy/WebVPN prefix for paywalled PDF fallback, e.g.
+	 *  `https://webvpn.example.edu/login?url=`. Empty disables the layer.
+	 */
+	institutionProxyPrefix?: string,
+	/**
+	 *  Session cookie sent along with institution proxy requests (pasted from
+	 *  the browser). Empty = no cookie.
+	 */
+	institutionProxyCookie?: string,
+	/**
+	 *  Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+	 *  (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+	 */
+	institutionProxyType?: string,
 	paperTreeLabelMode?: string,
 	paperTreeSortMode?: string,
 	/**
@@ -1466,6 +1487,11 @@ export type AppSettings_Deserialize = {
 	/**  Loopback Streamable HTTP MCP server. Default off. */
 	mcpEnabled?: boolean,
 	mcpPort?: number,
+	/**
+	 *  Opt-in: expose paper full text (`paper_text_get`) through the MCP
+	 *  server. Default off — external clients only see metadata and NOTES.
+	 */
+	mcpExposePaperText?: boolean,
 	/**
 	 *  OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex) for the built-in
 	 *  `tunnel-client` supervisor. Empty = never configured.
@@ -1529,6 +1555,21 @@ export type AppSettings_Serialize = {
 	githubMirrorEnabled: boolean,
 	/**  e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`. */
 	githubMirrorBaseUrl: string,
+	/**
+	 *  EZProxy/WebVPN prefix for paywalled PDF fallback, e.g.
+	 *  `https://webvpn.example.edu/login?url=`. Empty disables the layer.
+	 */
+	institutionProxyPrefix: string,
+	/**
+	 *  Session cookie sent along with institution proxy requests (pasted from
+	 *  the browser). Empty = no cookie.
+	 */
+	institutionProxyCookie: string,
+	/**
+	 *  Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+	 *  (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+	 */
+	institutionProxyType: string,
 	paperTreeLabelMode: string,
 	paperTreeSortMode: string,
 	/**
@@ -1563,6 +1604,11 @@ export type AppSettings_Serialize = {
 	/**  Loopback Streamable HTTP MCP server. Default off. */
 	mcpEnabled: boolean,
 	mcpPort: number,
+	/**
+	 *  Opt-in: expose paper full text (`paper_text_get`) through the MCP
+	 *  server. Default off — external clients only see metadata and NOTES.
+	 */
+	mcpExposePaperText: boolean,
 	/**
 	 *  OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex) for the built-in
 	 *  `tunnel-client` supervisor. Empty = never configured.

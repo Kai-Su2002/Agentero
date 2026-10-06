@@ -75,6 +75,9 @@ export function clampEditorLineHeight(value: number): number {
 export const DEFAULT_SETTINGS: AppSettings = {
 	translatorBaseUrl: DEFAULT_TRANSLATOR_BASE_URL,
 	easyScholarKey: "",
+	institutionProxyPrefix: "",
+	institutionProxyCookie: "",
+	institutionProxyType: "ezproxy",
 	networkProxyEnabled: false,
 	networkProxyUrl: DEFAULT_NETWORK_PROXY_URL,
 	githubMirrorEnabled: false,
@@ -93,6 +96,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	connectorPort: 23119,
 	mcpEnabled: false,
 	mcpPort: 8765,
+	mcpExposePaperText: false,
 	mcpTunnelId: "",
 	mcpTunnelApiKey: "",
 	zoteroSyncDir: "",

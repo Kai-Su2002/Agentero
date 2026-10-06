@@ -153,6 +153,12 @@ export type AppSettings = {
 	translatorBaseUrl: string;
 	/** EasyScholar key for journal ranking and impact-factor lookups. */
 	easyScholarKey: string;
+	/** EZProxy/WebVPN prefix for paywalled PDF fallback ("" disables). */
+	institutionProxyPrefix: string;
+	/** Session cookie for institution proxy requests. */
+	institutionProxyCookie: string;
+	/** Gateway type: "ezproxy" | "wengine". */
+	institutionProxyType: string;
 	/** Process-wide HTTP(S)/SOCKS proxy for Host requests and Agent traffic. */
 	networkProxyEnabled: boolean;
 	networkProxyUrl: string;
@@ -224,6 +230,8 @@ export type AppSettings = {
 	 */
 	mcpEnabled: boolean;
 	mcpPort: number;
+	/** Opt-in: expose paper full text via MCP paper_text_get. */
+	mcpExposePaperText: boolean;
 	/**
 	 * OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex). Empty = not configured.
 	 */

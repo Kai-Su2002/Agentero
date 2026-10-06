@@ -1,4 +1,5 @@
 import { useTranslation } from "react-i18next";
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
 	Select,
@@ -115,6 +116,105 @@ export function GitHubMirrorRow({
 				/>
 			</div>
 		</SettingsRow>
+	);
+}
+
+/** Institution proxy (EZProxy/WebVPN) prefix + session cookie for paywalled
+ * PDF fallback, with a connection test that fetches a known paywalled DOI.
+ * Two stacked rows (prefix + cookie) so the control column never wraps. */
+export function InstitutionProxyRow({
+	htmlFor,
+	label,
+	description,
+	prefix,
+	cookie,
+	prefixPlaceholder,
+	cookiePlaceholder,
+	cookieLabel,
+	testLabel,
+	testingLabel,
+	onPrefixChange,
+	onCookieChange,
+	onCommit,
+	onTest,
+	testing,
+	result,
+}: {
+	htmlFor: string;
+	label: string;
+	description?: string;
+	prefix: string;
+	cookie: string;
+	prefixPlaceholder?: string;
+	cookiePlaceholder?: string;
+	cookieLabel: string;
+	testLabel: string;
+	testingLabel: string;
+	onPrefixChange: (v: string) => void;
+	onCookieChange: (v: string) => void;
+	onCommit: () => void;
+	onTest: () => void;
+	testing: boolean;
+	result?: string;
+}) {
+	return (
+		<>
+			<SettingsRow label={label} description={description} htmlFor={htmlFor}>
+				<div className="flex items-center gap-2">
+					<Input
+						id={htmlFor}
+						value={prefix}
+						onChange={(e) => onPrefixChange(e.target.value)}
+						onBlur={() => onCommit()}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") {
+								e.currentTarget.blur();
+							}
+						}}
+						placeholder={prefixPlaceholder}
+						spellCheck={false}
+						autoComplete="off"
+						disabled={!isTauri()}
+						className="h-8 w-64 max-w-[18rem] font-mono text-xs"
+					/>
+					<Button
+						type="button"
+						variant="outline"
+						size="xs"
+						disabled={!isTauri() || testing || !prefix.trim()}
+						onClick={onTest}
+					>
+						{testing ? testingLabel : testLabel}
+					</Button>
+				</div>
+			</SettingsRow>
+			<SettingsRow label={cookieLabel} htmlFor={`${htmlFor}-cookie`}>
+				<div className="flex items-center gap-2">
+					<Input
+						id={`${htmlFor}-cookie`}
+						value={cookie}
+						onChange={(e) => onCookieChange(e.target.value)}
+						onBlur={() => onCommit()}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") {
+								e.currentTarget.blur();
+							}
+						}}
+						placeholder={cookiePlaceholder}
+						spellCheck={false}
+						autoComplete="off"
+						type="password"
+						disabled={!isTauri()}
+						className="h-8 w-64 max-w-[18rem] font-mono text-xs"
+					/>
+					{result ? (
+						<span className="max-w-40 truncate text-xs text-muted-foreground">
+							{result}
+						</span>
+					) : null}
+				</div>
+			</SettingsRow>
+		</>
 	);
 }
 

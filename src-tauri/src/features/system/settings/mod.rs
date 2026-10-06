@@ -88,6 +88,18 @@ pub struct AppSettings {
     /// e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`.
     #[serde(default)]
     pub github_mirror_base_url: String,
+    /// EZProxy/WebVPN prefix for paywalled PDF fallback, e.g.
+    /// `https://webvpn.example.edu/login?url=`. Empty disables the layer.
+    #[serde(default)]
+    pub institution_proxy_prefix: String,
+    /// Session cookie sent along with institution proxy requests (pasted from
+    /// the browser). Empty = no cookie.
+    #[serde(default)]
+    pub institution_proxy_cookie: String,
+    /// Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+    /// (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+    #[serde(default)]
+    pub institution_proxy_type: String,
     #[serde(default = "default_paper_tree_label_mode")]
     pub paper_tree_label_mode: String,
     #[serde(default = "default_paper_tree_sort_mode")]
@@ -128,6 +140,10 @@ pub struct AppSettings {
     pub mcp_enabled: bool,
     #[serde(default = "default_mcp_port")]
     pub mcp_port: u16,
+    /// Opt-in: expose paper full text (`paper_text_get`) through the MCP
+    /// server. Default off — external clients only see metadata and NOTES.
+    #[serde(default)]
+    pub mcp_expose_paper_text: bool,
     /// OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex) for the built-in
     /// `tunnel-client` supervisor. Empty = never configured.
     #[serde(default)]
@@ -370,6 +386,9 @@ impl Default for AppSettings {
             network_proxy_url: default_network_proxy_url(),
             github_mirror_enabled: false,
             github_mirror_base_url: GITHUB_MIRROR_PRESETS[0].to_string(),
+            institution_proxy_prefix: String::new(),
+            institution_proxy_cookie: String::new(),
+            institution_proxy_type: "ezproxy".to_string(),
             paper_tree_label_mode: default_paper_tree_label_mode(),
             paper_tree_sort_mode: default_paper_tree_sort_mode(),
             paper_note_mode: default_paper_note_mode(),
@@ -383,6 +402,7 @@ impl Default for AppSettings {
             connector_enabled: false,
             connector_port: default_connector_port(),
             mcp_enabled: false,
+            mcp_expose_paper_text: false,
             mcp_port: default_mcp_port(),
             mcp_tunnel_id: String::new(),
             mcp_tunnel_api_key: String::new(),
@@ -868,6 +888,31 @@ impl AppSettingsStore {
         Some((id, key.to_string()))
     }
 
+    /// Resolve the configured institution proxy (prefix, cookie). None when
+    /// the prefix is unset.
+    pub fn institution_proxy(
+        &self,
+    ) -> Option<(
+        agentero_core::features::paper::import::download::InstitutionProxyKind,
+        String,
+        String,
+    )> {
+        let guard = self.inner.lock().ok()?;
+        let prefix = guard.institution_proxy_prefix.trim();
+        if prefix.is_empty() {
+            return None;
+        }
+        let kind =
+            agentero_core::features::paper::import::download::InstitutionProxyKind::from_setting(
+                &guard.institution_proxy_type,
+            );
+        Some((
+            kind,
+            prefix.to_string(),
+            guard.institution_proxy_cookie.trim().to_string(),
+        ))
+    }
+
     /// Resolve the configured EasyScholar key. Returns None when unset or when
     /// the stored value is a UI mask (`*`-only), so probes never send masks.
     pub fn easy_scholar_key(&self) -> Option<String> {
@@ -1044,6 +1089,26 @@ fn normalize(s: &mut AppSettings) {
     } else {
         GITHUB_MIRROR_PRESETS[0].to_string()
     };
+    s.institution_proxy_prefix = s
+        .institution_proxy_prefix
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    s.institution_proxy_cookie = s.institution_proxy_cookie.trim().to_string();
+    s.institution_proxy_type = if s.institution_proxy_type.eq_ignore_ascii_case("wengine") {
+        "wengine".to_string()
+    } else {
+        "ezproxy".to_string()
+    };
+    // Keep the core download fallback in sync on both load and set paths.
+    let kind = agentero_core::features::paper::import::download::InstitutionProxyKind::from_setting(
+        &s.institution_proxy_type,
+    );
+    agentero_core::features::paper::import::download::set_institution_proxy(
+        kind,
+        &s.institution_proxy_prefix,
+        &s.institution_proxy_cookie,
+    );
 
     const LABEL_MODES: &[&str] = &["title-author", "title", "author-year-title", "folder"];
     if !LABEL_MODES.contains(&s.paper_tree_label_mode.as_str()) {

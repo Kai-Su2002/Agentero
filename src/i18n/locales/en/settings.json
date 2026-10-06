@@ -127,6 +127,17 @@
 			"label": "GitHub mirror",
 			"description": "Choose a built-in public mirror for Skill import fallback when GitHub is unreachable."
 		},
+		"institutionProxy": {
+			"label": "Institution proxy",
+			"description": "WebVPN prefix for paywalled PDF download (leave empty to disable)",
+			"cookieLabel": "Proxy cookie",
+			"cookiePlaceholder": "Paste WebVPN cookie",
+			"typeLabel": "Gateway type",
+			"typeEzproxy": "EZProxy (login?url=)",
+			"typeWengine": "WebVPN (wengine)",
+			"test": "Test",
+			"testing": "Testing…"
+		},
 		"easyScholar": {
 			"section": "EasyScholar",
 			"keyLabel": "Key",
@@ -147,6 +158,10 @@
 			"invalidPort": "Port must be between 1 and 65535."
 		},
 		"mcp": {
+			"exposeText": {
+				"label": "Expose paper text (MCP)",
+				"description": "Opt-in for paper_text_get: external clients (e.g. ChatGPT) can read the PDF's page text. Off by default — full text then never leaves the vault."
+			},
 			"label": "MCP server",
 			"portLabel": "MCP port",
 			"invalidPort": "Port must be between 1 and 65535.",
