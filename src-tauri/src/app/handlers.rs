@@ -4,9 +4,11 @@
 //! branch does not duplicate the common list.
 
 /// Commands available on every platform (including iOS).
-/// Desktop-only extras are appended by the caller.
+/// Desktop-only extras are appended by the caller; `$extra` stays a raw token
+/// stream so individual entries can carry `#[cfg(...)]` (e.g. features that
+/// need the desktop PDFium stack and are absent on mobile targets).
 macro_rules! common_commands {
-    ($($extra:path),* $(,)?) => {
+    ($($extra:tt)*) => {
         ::tauri::generate_handler![
             crate::features::system::settings::commands::settings_get,
             crate::features::system::settings::commands::settings_set,
@@ -143,7 +145,7 @@ macro_rules! common_commands {
             crate::features::paper::discovery::recommend::commands::recommend_arxiv_last,
             crate::features::paper::discovery::recommend::commands::probe_embedding,
             crate::app::menu::set_locale,
-            $($extra),*
+            $($extra)*
         ]
     };
 }
@@ -233,8 +235,13 @@ pub fn attach_handlers(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<ta
             crate::features::compile::chktex_lint,
             crate::features::compile::root::resolve_latex_root,
             crate::features::jobs::commands::job_latex_compile_enqueue,
+            // jEV smart highlights need the desktop PDFium stack (see
+            // `features::jev`), so they are absent on mobile targets.
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             crate::features::jobs::commands::job_jev_smart_highlights_enqueue,
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             crate::features::jev::commands::jev_suggest_highlights,
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
             crate::features::jev::commands::jev_probe_health,
             crate::features::decision::commands::decide,
         ])

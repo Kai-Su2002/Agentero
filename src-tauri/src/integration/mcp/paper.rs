@@ -279,6 +279,7 @@ pub struct PaperTextOut {
 
 /// Extract page text for a paper's main PDF. `pages` selects 1-based pages
 /// (None = all); each page is truncated to `max_chars` characters.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
 pub fn text(
     vault: &Path,
     ref_: &str,
@@ -324,4 +325,18 @@ pub fn text(
             })
             .collect(),
     })
+}
+
+/// Mobile targets have no PDFium binding, so `paper_text_get` cannot extract
+/// page text; keep the command surface identical and fail at call time.
+#[cfg(any(target_os = "ios", target_os = "android"))]
+pub fn text(
+    _vault: &Path,
+    _ref_: &str,
+    _pages: Option<Vec<u32>>,
+    _max_chars: usize,
+) -> Result<PaperTextOut, AppError> {
+    Err(AppError::message(
+        "paper text extraction is unavailable on this platform",
+    ))
 }
