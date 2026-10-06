@@ -2,6 +2,7 @@
 
 #[cfg(feature = "desktop")]
 pub mod coolpapers;
+pub use agentero_core::features::paper::discovery::discover;
 pub mod feeds;
 #[cfg(feature = "desktop")]
 pub mod proxy;
