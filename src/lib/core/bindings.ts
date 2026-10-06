@@ -3165,6 +3165,10 @@ export type LayoutRemoteBox = {
 	score: number | null,
 	/**  `[x1, y1, x2, y2]` in rendered-image pixels (top-left origin). */
 	coordinate: [(number | null), (number | null), (number | null), (number | null)],
+	/**  OCR/content text for this box, when provided by the engine. */
+	text?: string | null,
+	/**  Caption text attached to a host without independent caption geometry. */
+	caption?: string | null,
 };
 
 export type LayoutRemotePageResult = {

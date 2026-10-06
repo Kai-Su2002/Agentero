@@ -105,7 +105,13 @@ describe("figure aggregation regressions", () => {
 		);
 		const panel = box("panel", "chart", 0.05, 0.5, 0.9, 0.15);
 		const noise = box("noise", "image", 0.1, 0.1, 0.2, 0.1, undefined, score);
-		expect(figures([panel, title, noise])).toEqual(figures([panel, title]));
+		const out = figures([panel, title, noise]);
+		expect(out.find((r) => r.id === "title")).toEqual(
+			figures([panel, title])[0],
+		);
+		expect(out.filter((r) => r.id === "noise")).toHaveLength(
+			score >= 0.3 ? 1 : 0,
+		);
 	});
 	it("does not let a low-score nearby panel or caption enlarge a real figure", () => {
 		const title = box(
@@ -190,8 +196,9 @@ describe("figure aggregation regressions", () => {
 			"Figure 1: Lower",
 		);
 		const out = figures([upper, body, lower, title]);
-		expect(out).toHaveLength(1);
-		expect(out[0].bbox.y).toBeCloseTo(0.36);
+		expect(out).toHaveLength(2);
+		expect(out.find((r) => r.id === "title")?.bbox.y).toBeCloseTo(0.36);
+		expect(out.find((r) => r.id === "upper")).toEqual(upper);
 	});
 });
 
@@ -215,7 +222,7 @@ it("does not bypass text barriers through the single-figure fallback", () => {
 		0.04,
 		"Figure 1",
 	);
-	expect(figures([panel, body, caption])).toHaveLength(0);
+	expect(figures([panel, body, caption])).toEqual([panel]);
 });
 
 it("recovers confident caption text without admitting low-score caption duplicates", () => {
@@ -246,5 +253,5 @@ it("does not reinterpret a prose cross-reference as a caption", () => {
 		...box("body", "text", 0.1, 0.33, 0.8, 0.05),
 		text: "Figure 5 contains the transfer performance versus cost.",
 	};
-	expect(figures([panel, body])).toHaveLength(0);
+	expect(figures([panel, body])).toEqual([panel]);
 });

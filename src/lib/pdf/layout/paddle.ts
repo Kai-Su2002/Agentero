@@ -17,6 +17,8 @@ export type LayoutRemoteBox = {
 	clsId: number;
 	label: string;
 	score: number;
+	text?: string | null;
+	caption?: string | null;
 	/** `[x1, y1, x2, y2]` in rendered-image pixels (top-left origin). */
 	coordinate: [number, number, number, number];
 };
@@ -135,6 +137,10 @@ export function paddleBoxesToRegions(args: {
 			kind,
 			label: box.label,
 			score: clamp01(box.score),
+			...(box.text?.trim() ? { text: box.text.trim() } : {}),
+			...(box.caption?.trim() || (kind === "figure_title" && box.text?.trim())
+				? { title: (box.caption || box.text)?.trim() }
+				: {}),
 			// Assigned after the whole page set is collected (top-to-bottom).
 			readingOrder: regions.length,
 			rect: { x, y, w: w * scaleX, h: h * scaleY },

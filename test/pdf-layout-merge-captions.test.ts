@@ -664,7 +664,7 @@ describe("figure_title must be fully inside host box", () => {
 		}
 	});
 
-	it("drops untitled figure panels", () => {
+	it("preserves reliable untitled figure panels", () => {
 		const orphan = region({
 			id: "orphan",
 			kind: "chart",
@@ -672,7 +672,7 @@ describe("figure_title must be fully inside host box", () => {
 			bbox: { x: 0.1, y: 0.1, w: 0.3, h: 0.3 },
 		});
 		const out = mergeCaptionsIntoHosts([orphan]);
-		expect(out.filter((r) => r.kind === "chart")).toHaveLength(0);
+		expect(out.filter((r) => r.kind === "chart")).toEqual([orphan]);
 	});
 });
 

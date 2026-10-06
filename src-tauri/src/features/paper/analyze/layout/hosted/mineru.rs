@@ -198,8 +198,25 @@ fn map_mineru_label(item_type: &str, text_level: Option<i64>) -> String {
         "footer" | "page_footer" => "footer".to_string(),
         "footnote" | "page_footnote" => "footnote".to_string(),
         "ref_text" | "reference" => "reference".to_string(),
+        "image_caption" | "table_caption" => "figure_title".to_string(),
         other => other.to_string(),
     }
+}
+
+/// Content List captions are arrays; text and intermediate spans are strings.
+fn mineru_text(value: Option<&Value>) -> Option<String> {
+    let text = match value? {
+        Value::String(text) => text.trim().to_string(),
+        Value::Array(parts) => parts
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => return None,
+    };
+    (!text.is_empty()).then_some(text)
 }
 
 /// `middle.json` → per-page sizes from `pdf_info[].page_size` (`[w, h]`).
@@ -278,9 +295,74 @@ fn build_pages(
                 nums[2] / 1000.0 * w,
                 nums[3] / 1000.0 * h,
             ],
+            text: mineru_text(item.get("text")).or_else(|| mineru_text(item.get("content"))),
+            caption: mineru_text(item.get("image_caption"))
+                .or_else(|| mineru_text(item.get("table_caption"))),
         });
     }
     Ok(pages)
+}
+
+/// Only intermediate caption blocks have independent geometry. Their bboxes
+/// already use page points, unlike the normalized Content List bboxes.
+fn append_middle_captions(pages: &mut [LayoutRemotePageResult], middle: &Value) {
+    let Some(source_pages) = middle.get("pdf_info").and_then(Value::as_array) else {
+        return;
+    };
+    for (page, source) in pages.iter_mut().zip(source_pages) {
+        // para_blocks contains the final reading order; preproc_blocks repeats
+        // those blocks in many results and is only a fallback for older output.
+        let blocks = source
+            .get("para_blocks")
+            .and_then(Value::as_array)
+            .filter(|blocks| !blocks.is_empty())
+            .or_else(|| source.get("preproc_blocks").and_then(Value::as_array));
+        let Some(blocks) = blocks else { continue };
+        let mut pending: Vec<&Value> = blocks.iter().rev().collect();
+        while let Some(block) = pending.pop() {
+            if let Some(children) = block.get("blocks").and_then(Value::as_array) {
+                pending.extend(children.iter().rev());
+            }
+            if !matches!(
+                block.get("type").and_then(Value::as_str),
+                Some("image_caption" | "table_caption")
+            ) {
+                continue;
+            }
+            let Some(bbox) = block.get("bbox").and_then(Value::as_array) else {
+                continue;
+            };
+            let nums: Vec<f64> = bbox.iter().filter_map(Value::as_f64).collect();
+            if bbox.len() != 4 || nums.len() != 4 || nums[2] <= nums[0] || nums[3] <= nums[1] {
+                continue;
+            }
+            let text = mineru_text(block.get("text")).or_else(|| {
+                let lines = block.get("lines")?.as_array()?;
+                let text = lines
+                    .iter()
+                    .filter_map(|line| line.get("spans")?.as_array())
+                    .map(|spans| {
+                        spans
+                            .iter()
+                            .filter_map(|span| span.get("content")?.as_str())
+                            .collect::<String>()
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                let text = text.trim();
+                (!text.is_empty()).then(|| text.to_string())
+            });
+            let Some(text) = text else { continue };
+            page.boxes.push(LayoutRemoteBox {
+                cls_id: -1,
+                label: "figure_title".to_string(),
+                score: 1.0,
+                coordinate: [nums[0], nums[1], nums[2], nums[3]],
+                text: Some(text),
+                caption: None,
+            });
+        }
+    }
 }
 
 /// Find a zip entry by candidate names — an exact entry name match wins
@@ -449,7 +531,8 @@ fn parse_result_zip(bytes: &[u8]) -> Result<LayoutRemoteAnalyzePdfResult, AppErr
     let middle: Value = serde_json::from_str(&middle_text)
         .map_err(|e| AppError::message(format!("MinerU result parse failed: middle: {e}")))?;
     let page_sizes = parse_middle_page_sizes(&middle)?;
-    let pages = build_pages(&content_list, &page_sizes)?;
+    let mut pages = build_pages(&content_list, &page_sizes)?;
+    append_middle_captions(&mut pages, &middle);
     let rendered_pages = page_sizes
         .iter()
         .map(|&(w, h)| (w.round() as u32, h.round() as u32))
@@ -777,6 +860,73 @@ mod tests {
         assert_eq!(map_mineru_label("header", None), "header");
         assert_eq!(map_mineru_label("footer", None), "footer");
         assert_eq!(map_mineru_label("discarded", None), "discarded");
+    }
+
+    #[test]
+    fn preserves_content_text_and_captions_without_inventing_title_boxes() {
+        let content = json!([
+            {"type":"text", "page_idx":0, "bbox":[10,20,500,50], "text":"Fig. 1 | Overview."},
+            {"type":"image", "page_idx":0, "bbox":[10,100,500,500], "image_caption":["Fig. 1 | Overview.", "Panel details."]},
+            {"type":"table", "page_idx":0, "bbox":[500,100,900,500], "table_caption":["Table 1. Results."]},
+            {"type":"chart", "page_idx":0, "bbox":[10,600,500,900], "image_caption":[], "content":"Chart text"}
+        ]);
+        let pages = build_pages(&content, &[(600.0, 800.0)]).unwrap();
+        let boxes = serde_json::to_value(&pages[0].boxes).unwrap();
+        assert_eq!(boxes[0]["text"], "Fig. 1 | Overview.");
+        assert_eq!(boxes[1]["caption"], "Fig. 1 | Overview.\nPanel details.");
+        assert_eq!(boxes[2]["caption"], "Table 1. Results.");
+        assert_eq!(boxes[3]["text"], "Chart text");
+        assert_eq!(boxes[3].get("caption"), Some(&Value::Null));
+        assert_eq!(boxes[1].get("text"), Some(&Value::Null));
+        assert_eq!(pages[0].boxes.len(), 4);
+        assert!(pages[0].boxes.iter().all(|b| b.label != "figure_title"));
+    }
+
+    fn result_zip_fixture(content: &Value, middle: &Value) -> Vec<u8> {
+        use std::io::Write;
+        use zip::write::SimpleFileOptions;
+        let mut cursor = std::io::Cursor::new(Vec::new());
+        {
+            let mut writer = zip::ZipWriter::new(&mut cursor);
+            for (name, value) in [("content_list.json", content), ("layout.json", middle)] {
+                writer
+                    .start_file(name, SimpleFileOptions::default())
+                    .unwrap();
+                writer
+                    .write_all(&serde_json::to_vec(value).unwrap())
+                    .unwrap();
+            }
+            writer.finish().unwrap();
+        }
+        cursor.into_inner()
+    }
+
+    #[test]
+    fn extracts_nested_caption_geometry_in_page_points() {
+        let caption = json!({"type":"image_caption", "bbox":[60,410,540,450], "lines":[
+            {"spans":[{"content":"Fig. 2 | "},{"content":"Overview."}]},
+            {"spans":[{"content":"Panel details."}]}
+        ]});
+        let middle = json!({"pdf_info":[
+            {"page_idx":0,"page_size":[600,800],"para_blocks":[]},
+            {"page_idx":1,"page_size":[600,800],"para_blocks":[
+                {"type":"image", "bbox":[50,50,550,450], "blocks":[
+                    {"type":"image_body","bbox":[50,50,550,400]}, caption.clone(),
+                    {"type":"image_caption","lines":[{"spans":[{"content":"No box"}]}]},
+                    {"type":"image_caption","bbox":[90,80,20,10],"text":"Invalid box"}
+                ]},
+                {"type":"table", "blocks":[{"type":"table_caption","bbox":[60,500,540,530],"text":"Table 1. Results."}]}
+            ],"preproc_blocks":[caption]}
+        ]});
+        let result = parse_result_zip(&result_zip_fixture(&json!([]), &middle)).unwrap();
+        assert!(result.pages[0].boxes.is_empty());
+        let boxes = &result.pages[1].boxes;
+        assert_eq!(boxes.len(), 2);
+        assert_eq!(boxes[0].label, "figure_title");
+        assert_eq!(boxes[0].coordinate, [60.0, 410.0, 540.0, 450.0]);
+        let wire = serde_json::to_value(boxes).unwrap();
+        assert_eq!(wire[0]["text"], "Fig. 2 | Overview.\nPanel details.");
+        assert_eq!(wire[1]["text"], "Table 1. Results.");
     }
 
     #[test]

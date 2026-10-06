@@ -60,6 +60,9 @@ export type PdfLayoutRegion = {
 	 * For formulas: the model `formula_number` box geometry (no text parse).
 	 */
 	titleBbox?: PdfAskNormalizedRect;
+	/** Caption on another page; never union these coordinates into the figure. */
+	captionPageIndex?: number;
+	captionBbox?: PdfAskNormalizedRect;
 	/**
 	 * Semantic role of a caption box (from text / geometry).
 	 * Used so "Table 2: …" mislabeled as figure_title still binds to tables,
