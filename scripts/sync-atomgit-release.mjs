@@ -50,6 +50,41 @@ export async function digest(stream) {
 	return { size, sha256: hash.digest("hex") };
 }
 
+// A fixed total transfer timeout kills large assets: GitHub runners push the
+// ~120 MB AppImage to AtomGit at roughly 100 KB/s, so a 10-minute cap can never
+// finish it (#694). Abort only when no bytes move for this long instead; the
+// job-level timeout still bounds the overall run.
+const TRANSFER_STALL_TIMEOUT = 300_000;
+
+class StallError extends Error {
+	constructor() {
+		super("AtomGit transfer stalled");
+		this.name = "StallError";
+	}
+}
+
+export function stallWatchdog(timeout = TRANSFER_STALL_TIMEOUT) {
+	const controller = new AbortController();
+	let timer;
+	const progress = () => {
+		clearTimeout(timer);
+		timer = setTimeout(() => controller.abort(new StallError()), timeout);
+	};
+	progress();
+	return {
+		signal: controller.signal,
+		progress,
+		stop: () => clearTimeout(timer),
+	};
+}
+
+async function* trackProgress(source, progress) {
+	for await (const chunk of source) {
+		progress();
+		yield chunk;
+	}
+}
+
 export function selectRelease(releases, tag) {
 	// The GitHub "get release by tag name" endpoint returns published releases
 	// only. While the build jobs upload assets the release is still a draft, so
@@ -126,19 +161,24 @@ export class AtomGit {
 	async remoteDigest(tag, name, registering = false) {
 		console.log(`Checking AtomGit bytes: ${name}`);
 		return retry(async () => {
-			const response = await this.request(
-				`${this.base}/releases/${encode(tag)}/attach_files/${encode(name)}/download`,
-				{
-					headers: { Authorization: `Bearer ${this.token}` },
-					signal: AbortSignal.timeout(600_000),
-				},
-			);
-			if (registering && [400, 404].includes(response.status)) {
-				throw new Error("AtomGit attachment is not downloadable yet");
+			const watchdog = stallWatchdog();
+			try {
+				const response = await this.request(
+					`${this.base}/releases/${encode(tag)}/attach_files/${encode(name)}/download`,
+					{
+						headers: { Authorization: `Bearer ${this.token}` },
+						signal: watchdog.signal,
+					},
+				);
+				if (registering && [400, 404].includes(response.status)) {
+					throw new Error("AtomGit attachment is not downloadable yet");
+				}
+				if (!response.ok)
+					throw new HttpError("AtomGit download", response.status);
+				return await digest(trackProgress(response.body, watchdog.progress));
+			} finally {
+				watchdog.stop();
 			}
-			if (!response.ok)
-				throw new HttpError("AtomGit download", response.status);
-			return digest(response.body);
 		});
 	}
 
@@ -175,20 +215,22 @@ export class AtomGit {
 			}
 			const stream = createReadStream(file);
 			console.log(`Uploading: ${asset.name} (${expected.size} bytes)`);
+			const watchdog = stallWatchdog();
 			try {
 				const response = await this.request(info.url, {
 					method: "PUT",
 					// Only OBS-provided headers go to the signed URL, never our PAT.
 					headers: { "Content-Length": String(expected.size), ...info.headers },
-					body: stream,
+					body: trackProgress(stream, watchdog.progress),
 					duplex: "half",
 					redirect: "error",
-					signal: AbortSignal.timeout(600_000),
+					signal: watchdog.signal,
 				});
 				await response.body?.cancel();
 				if (!response.ok)
 					throw new HttpError("AtomGit upload", response.status);
 			} finally {
+				watchdog.stop();
 				stream.destroy();
 			}
 			// Upload success is not sufficient: verify registered, downloadable bytes.

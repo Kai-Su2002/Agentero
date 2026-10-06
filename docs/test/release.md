@@ -32,6 +32,7 @@
 - GitHub Release `published` / `edited` 事件会再次同步当前说明和附件；仅当来源是 GitHub 当前最新稳定版且所有附件校验通过，才标记 AtomGit `latest`。手动补传旧稳定版不会抢占最新版本；新建的历史版本保留 `pre`。
 - `scripts/sync-atomgit-release.mjs` 逐文件下载、上传并回读校验大小和 SHA-256，包括安装包、APK、CLI、`.sig`、`.sha256`、`latest.json`；GitHub 自动生成的 Source code 归档不是上传附件，不在此列表中。
 - 重跑时相同内容跳过；同名不同内容的附件按 ID 删除后重新上传。发生中断可再次运行，不删除目标仓库其他附件。网络错误有限重试，任何附件失败会令 job 失败；只有全部成功才更新最终说明和状态。跨 tag 的同步串行执行。
+- 上传与回读校验不使用固定总时长上限（AtomGit 带宽可能低到 ~100 KB/s，120 MB 的 AppImage 会超过任何固定上限而必然超时，见 #694）；只有连续 5 分钟没有任何字节流动才判定为停滞并重试，整体时长由 job 的 `timeout-minutes`（当前 180）约束。
 - `latest.json` **原样镜像**，其中 URL 仍指向 GitHub。后续待办：landing 双源下载、应用 updater AtomGit 优先及下载失败回退、AtomGit 专用更新清单／稳定入口。本次不切换客户端更新源。
 
 补传／重试：GitHub Actions → **Sync release to AtomGit** → **Run workflow** → 填入已有、附件构建完成的 tag（如 `v0.11.3`）。无需重新编译。工作流须先进入默认分支；通过 `GITHUB_TOKEN` 触发的 Release 修改不会派生新的工作流，自动化改说明后需显式调用 reusable workflow 或手动补同步。

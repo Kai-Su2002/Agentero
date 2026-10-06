@@ -32,7 +32,10 @@ concurrency:
 jobs:
   sync:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Uploading every asset and then re-downloading it to verify runs at
+    # AtomGit's ~100 KB/s: a release with a 120 MB AppImage needs well over an
+    # hour (#694). Keep headroom below GitHub's 360-minute hard limit.
+    timeout-minutes: 180
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
