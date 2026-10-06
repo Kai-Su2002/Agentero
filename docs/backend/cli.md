@@ -169,9 +169,12 @@ agentero discover arxiv -c cs.LG --top 20 --max-candidates 200 --json
 | `--since` / `--until` | 提交日期窗口（`YYYY-MM-DD`，映射到 `submittedDate`） |
 | `--top` | 短名单条数（默认 8） |
 | `--max-candidates` | 排序前抓取的候选上限（默认 100，封顶 200） |
+| `--out` | 把完整短名单 JSON 写到文件 |
+| `--no-dedup` | 关闭「已入库去重」 |
 
 - **至少给一个 `--keyword` 或 `--category`**，否则报 `usage`（只给日期会扫无界切片）。
 - 打分纯词法、可复现、离线可跑；`matches` 里的 `field` / `count` / `weight` / `contribution` 就是「为什么推它」。
+- **已入库去重**：解析到 vault 时，候选里 arXiv id 已在 catalog 的会被**排序前**剔除（`excluded` 计数）；命令仍保持 vault-free——解析不到 vault 就静默跳过去重，只有显式传了无效 `--vault` 才报错。`--no-dedup` 可关闭。
 - 输出是可直接消费的短名单（`_shortlist.json` 的收敛版）；Agent 拿到后自行判断题相关性，再走 `import id` 入库。
 - 与桌面广场的 arXiv Daily **不同**：后者是「读我的库 → 今天该读什么」的库画像 embedding 排序，依赖 catalog 与 embedding 端点；本命令是 query-first、零依赖，供 headless / 管线使用。
 

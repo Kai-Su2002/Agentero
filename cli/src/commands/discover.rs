@@ -6,13 +6,16 @@
 
 use crate::error::CliError;
 use crate::output::to_value;
-use crate::resolve::GlobalOpts;
+use crate::resolve::{resolve_vault, GlobalOpts};
 use crate::style::{format_table, truncate_chars};
 use agentero_core::features::paper::discovery::discover::{
-    discover_arxiv, DiscoverQuery, DEFAULT_MAX_CANDIDATES, DEFAULT_TOP,
+    discover_arxiv, known_arxiv_ids, DiscoverQuery, DEFAULT_MAX_CANDIDATES, DEFAULT_TOP,
 };
 use clap::Subcommand;
 use serde_json::{json, Value};
+use std::collections::HashSet;
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Subcommand)]
 pub enum DiscoverCmd {
@@ -40,6 +43,12 @@ pub enum DiscoverCmd {
         /// Max candidates to fetch before ranking.
         #[arg(long = "max-candidates", value_name = "N", default_value_t = DEFAULT_MAX_CANDIDATES)]
         max_candidates: usize,
+        /// Write the full shortlist JSON to this file (creation is idempotent).
+        #[arg(long = "out", value_name = "FILE", value_hint = clap::ValueHint::FilePath)]
+        out: Option<PathBuf>,
+        /// Do not drop papers already in the library catalog.
+        #[arg(long = "no-dedup")]
+        no_dedup: bool,
     },
 }
 
@@ -52,40 +61,58 @@ pub async fn run(cmd: DiscoverCmd, globals: &GlobalOpts) -> Result<Value, CliErr
             until,
             top,
             max_candidates,
+            out,
+            no_dedup,
         } => {
             run_arxiv(
                 globals,
-                keywords,
-                categories,
-                since,
-                until,
-                top,
-                max_candidates,
+                ArxivInputs {
+                    keywords,
+                    categories,
+                    since,
+                    until,
+                    top,
+                    max_candidates,
+                    out,
+                    no_dedup,
+                },
             )
             .await
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn run_arxiv(
-    globals: &GlobalOpts,
+struct ArxivInputs {
     keywords: Vec<String>,
     categories: Vec<String>,
     since: Option<String>,
     until: Option<String>,
     top: usize,
     max_candidates: usize,
-) -> Result<Value, CliError> {
+    out: Option<PathBuf>,
+    no_dedup: bool,
+}
+
+async fn run_arxiv(globals: &GlobalOpts, inputs: ArxivInputs) -> Result<Value, CliError> {
     let query = DiscoverQuery {
-        keywords,
-        categories,
-        since,
-        until,
-        top: Some(top),
-        max_candidates: Some(max_candidates),
+        keywords: inputs.keywords,
+        categories: inputs.categories,
+        since: inputs.since,
+        until: inputs.until,
+        top: Some(inputs.top),
+        max_candidates: Some(inputs.max_candidates),
     };
-    let data = discover_arxiv(&query).await?;
+    let exclude = dedup_ids(globals, inputs.no_dedup)?;
+    let data = discover_arxiv(&query, &exclude).await?;
+
+    if let Some(path) = &inputs.out {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        fs::write(path, serde_json::to_string_pretty(&data)?)?;
+    }
 
     let rows: Vec<Vec<String>> = data
         .items
@@ -100,15 +127,41 @@ async fn run_arxiv(
             ]
         })
         .collect();
-    let lines = if data.items.is_empty() {
+    let mut lines = if data.items.is_empty() {
         vec![globals.style.dim("(no candidates)")]
     } else {
         format_table(globals.style, &["#", "SCORE", "arXiv ID", "TITLE"], &rows)
     };
+    lines.push(globals.style.dim(&format!(
+        "scanned {} · excluded {} · shortlisted {}",
+        data.candidates_scanned,
+        data.excluded,
+        data.items.len()
+    )));
 
     let mut out = to_value(&data)?;
     if let Some(obj) = out.as_object_mut() {
         obj.insert("lines".into(), json!(lines));
     }
     Ok(out)
+}
+
+/// Library arXiv ids to drop from the shortlist.
+///
+/// Discovery is vault-free, so a resolvable vault enables novelty filtering but
+/// its absence is not an error — unless the user explicitly passed `--vault`.
+fn dedup_ids(globals: &GlobalOpts, no_dedup: bool) -> Result<HashSet<String>, CliError> {
+    if no_dedup {
+        return Ok(HashSet::new());
+    }
+    match resolve_vault(globals) {
+        Ok(vault) => Ok(known_arxiv_ids(&vault)?),
+        Err(err) => {
+            if globals.vault_flag.is_some() {
+                Err(err)
+            } else {
+                Ok(HashSet::new())
+            }
+        }
+    }
 }

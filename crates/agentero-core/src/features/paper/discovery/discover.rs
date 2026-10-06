@@ -11,6 +11,8 @@
 //! much each contributed (title hits weigh more than abstract hits).
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::Path;
 
 use crate::error::AppError;
 use crate::features::scholar_api::sources::arxiv;
@@ -88,17 +90,27 @@ pub struct DiscoverResult {
     pub query: DiscoverQuery,
     /// The raw arXiv `search_query` expression, for transparency/replay.
     pub search_query: String,
-    /// Candidates fetched before ranking.
+    /// Candidates fetched before novelty filtering.
     pub candidates_scanned: usize,
+    /// Candidates dropped because they are already known (e.g. in the library).
+    pub excluded: usize,
     pub computed_at: String,
     pub items: Vec<DiscoverItem>,
 }
 
 /// Fetch + rank arXiv candidates for `query`.
 ///
-/// Network-only: does not touch the Vault or catalog, so it works headless and
-/// without an embedding provider configured.
-pub async fn discover_arxiv(query: &DiscoverQuery) -> Result<DiscoverResult, AppError> {
+/// `exclude_ids` drops candidates already known to the caller (typically the
+/// library's arXiv ids) *before* ranking, so the shortlist fills with fresh
+/// papers instead of being eaten by a truncated `top`. Pass an empty set for a
+/// pure network discovery run.
+///
+/// Network-only otherwise: does not touch the Vault or catalog, so it works
+/// headless and without an embedding provider configured.
+pub async fn discover_arxiv(
+    query: &DiscoverQuery,
+    exclude_ids: &HashSet<String>,
+) -> Result<DiscoverResult, AppError> {
     let search_query = build_search_query(query)?;
     let max_candidates = query
         .max_candidates
@@ -108,16 +120,49 @@ pub async fn discover_arxiv(query: &DiscoverQuery) -> Result<DiscoverResult, App
 
     let papers = arxiv::query_atom(&search_query, 0, max_candidates).await?;
     let candidates_scanned = papers.len();
-    let items = rank(papers, &query.keywords, top);
+
+    let (kept, excluded) = drop_known(papers, exclude_ids);
+    let items = rank(kept, &query.keywords, top);
 
     Ok(DiscoverResult {
         source: "arxiv".to_string(),
         query: query.clone(),
         search_query,
         candidates_scanned,
+        excluded,
         computed_at: crate::time::now_rfc3339_millis(),
         items,
     })
+}
+
+/// Split candidates into "kept" and "already known" (dropped). Papers with no
+/// arXiv id are always kept — novelty cannot be judged.
+fn drop_known(papers: Vec<ApiPaper>, exclude: &HashSet<String>) -> (Vec<ApiPaper>, usize) {
+    if exclude.is_empty() {
+        return (papers, 0);
+    }
+    let mut kept = Vec::with_capacity(papers.len());
+    let mut dropped = 0usize;
+    for paper in papers {
+        match paper.identifiers.arxiv_id.as_deref() {
+            Some(id) if exclude.contains(id) => dropped += 1,
+            _ => kept.push(paper),
+        }
+    }
+    (kept, dropped)
+}
+
+/// arXiv ids already present in the vault's catalog, for novelty filtering.
+///
+/// Returns an empty set when the catalog has no arXiv papers.
+pub fn known_arxiv_ids(vault_root: &Path) -> Result<HashSet<String>, AppError> {
+    let papers = crate::features::paper::catalog::papers::list_all_unique_by_id(vault_root)?;
+    Ok(papers
+        .into_iter()
+        .filter_map(|paper| paper.arxiv_id)
+        .map(|id| id.trim().to_string())
+        .filter(|id| !id.is_empty())
+        .collect())
 }
 
 /// Compose the arXiv `search_query` expression from keywords / categories /
@@ -376,5 +421,23 @@ mod tests {
         )];
         let ranked = rank(candidates, &["world model".to_string()], 8);
         assert!(!ranked[0].matches.is_empty());
+    }
+
+    #[test]
+    fn drop_known_removes_library_ids_only() {
+        let candidates = vec![
+            paper("known", "a", "", "2026-08-01T00:00:00Z"),
+            paper("fresh", "b", "", "2026-08-01T00:00:00Z"),
+        ];
+        let exclude: HashSet<String> = ["known".to_string()].into_iter().collect();
+        let (kept, dropped) = drop_known(candidates, &exclude);
+        assert_eq!(dropped, 1);
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].identifiers.arxiv_id.as_deref(), Some("fresh"));
+
+        // Empty exclude is a no-op.
+        let single = vec![paper("x", "t", "", "2026-08-01T00:00:00Z")];
+        let (kept, dropped) = drop_known(single, &HashSet::new());
+        assert_eq!((kept.len(), dropped), (1, 0));
     }
 }
