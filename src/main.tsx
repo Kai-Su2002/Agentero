@@ -17,6 +17,7 @@ import {
 	loadSettings,
 	subscribeSettings,
 } from "@/lib/settings";
+import { warnIfNoProxyForDownload } from "@/lib/settings/proxy-guard";
 import { initSettingsStore } from "@/lib/settings/react-store";
 import { applyNativeWindowTheme } from "@/lib/shell/native-window-theme";
 import { initShellLayoutFromPrefs } from "@/lib/shell/ui-store";
@@ -250,11 +251,13 @@ async function checkForStartupUpdate(): Promise<void> {
 				description: i18n.t("settings:about.update.toastDescription"),
 				actionLabel: i18n.t("settings:about.update.downloadInstall"),
 				onAction: () => {
-					void installAvailableUpdate().then((next) => {
-						if (next.phase === "error") {
-							notifyError(i18n.t("settings:about.update.installFailed"));
-						}
-					});
+					void warnIfNoProxyForDownload()
+						.then(() => installAvailableUpdate())
+						.then((next) => {
+							if (next.phase === "error") {
+								notifyError(i18n.t("settings:about.update.installFailed"));
+							}
+						});
 				},
 			},
 		);

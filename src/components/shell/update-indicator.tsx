@@ -8,6 +8,7 @@ import {
 } from "@/components/ui/tooltip";
 import { notifyError } from "@/lib/core/notify";
 import { cn } from "@/lib/core/utils";
+import { warnIfNoProxyForDownload } from "@/lib/settings/proxy-guard";
 import {
 	getUpdateSnapshot,
 	installAvailableUpdate,
@@ -72,11 +73,13 @@ export function UpdateIndicator() {
 
 	const onInstall = () => {
 		if (busy) return;
-		void installAvailableUpdate().then((next) => {
-			if (next.phase === "error") {
-				notifyError(t("about.update.installFailed"));
-			}
-		});
+		void warnIfNoProxyForDownload()
+			.then(() => installAvailableUpdate())
+			.then((next) => {
+				if (next.phase === "error") {
+					notifyError(t("about.update.installFailed"));
+				}
+			});
 	};
 
 	return (

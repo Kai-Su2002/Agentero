@@ -50,7 +50,8 @@ export function notifyWarning(
 	return toast.warning(text, {
 		description: opts.description,
 		id: opts.id,
-		duration: opts.duration ?? 6000,
+		duration: opts.duration ?? (opts.action ? 20_000 : 6000),
+		action: opts.action,
 	});
 }
 

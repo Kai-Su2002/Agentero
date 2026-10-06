@@ -68,6 +68,7 @@
 - 安装前会重新拉取一次远端 manifest（`refreshStaleUpdate`）：应用长期驻留导致缓存的 Update 落后于最新 Release 时，直接改装最新版；re-check 失败（离线等）则回退安装缓存清单，不会因此中断（#481）。
 - 更新包由 Tauri Updater 使用内置公钥验证签名，并根据当前系统/架构从 GitHub Release 的 `latest.json` 选择产物。
 - 更新检查与下载复用通用页的「网络代理」设置（`src/lib/update/service.ts` 在每次检查时读取，下载沿用检查时的代理）：Updater 插件自带 HTTP 客户端，不走 Host `core::http::client_builder`，因此必须显式传入。该客户端只支持 HTTP(S) 代理，SOCKS 代理需另配 HTTP 端口。
+- 下载前做一次代理检测（`src/lib/settings/proxy-guard.ts`）：应用代理与系统代理都未配置时弹 Toast 提醒（带「打开网络设置」跳转「通用 → 网络代理」），非阻塞、仍继续下载；About 页「安装并重启」与 CLI 安装、标题栏「新版本」标签、启动更新 Toast 四个下载入口都经过该检测。
 - 浏览器预览、`pnpm tauri dev`、移动端不检查更新；设置页会说明该限制。
 - 只有 GitHub **已发布**的稳定版 Release 可作为更新源；Draft 和 prerelease 不会推送给普通稳定版用户。
 
