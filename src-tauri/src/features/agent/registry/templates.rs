@@ -550,3 +550,24 @@ pub fn template_from_id(id: &str) -> AgentTemplate {
 pub fn template_info(id: &str) -> Option<AgentTemplateInfo> {
     builtin_templates().into_iter().find(|t| t.id == id)
 }
+
+/// Interactive host CLI for a template, when the Agent ships one.
+///
+/// Usually the same binary as `detect_command`, but some agents differ
+/// (Antigravity's `agy`) and some have no user-facing CLI at all (ZCode's only
+/// entrypoint is the ACP adapter). `None` hides the Settings "open in terminal"
+/// action for that row.
+pub fn interactive_cli(info: &AgentTemplateInfo) -> Option<&str> {
+    if info.id == AgentTemplate::Zcode.as_str() {
+        return None;
+    }
+    if info.id == AgentTemplate::AntigravityAcp.as_str() {
+        // The Antigravity IDE/CLI ships `agy`; the managed `.par` is the ACP
+        // server, not a user-facing CLI.
+        return Some("agy");
+    }
+    info.detect_command
+        .as_deref()
+        .map(str::trim)
+        .filter(|command| !command.is_empty())
+}

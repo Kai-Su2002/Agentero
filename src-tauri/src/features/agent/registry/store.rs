@@ -11,7 +11,7 @@ use crate::features::agent::registry::bundled;
 use crate::features::agent::registry::discovery::probe_command;
 use crate::features::agent::registry::lifecycle;
 use crate::features::agent::registry::templates::{
-    catalog_templates, template_from_id, template_info,
+    catalog_templates, interactive_cli, template_from_id, template_info,
 };
 use std::collections::HashMap;
 use std::fs;
@@ -488,6 +488,13 @@ impl AgentRegistry {
                     .as_ref()
                     .is_some_and(|d| d != &info.command);
                 let can_install = lifecycle::supports_lifecycle(&info.id);
+                // Resolve the interactive CLI so the row only offers the
+                // terminal action when the binary is actually available (e.g.
+                // Antigravity's separate `agy`, not the managed `.par`).
+                let cli_command = interactive_cli(&info).and_then(|command| {
+                    resolve_command_in_agent_env(command, &environment)
+                        .map(|path| path.display().to_string())
+                });
                 // Offer ACP install when host is present but ACP entry is missing.
                 let offer_install = binary_available
                     && !acp_command_available
@@ -506,6 +513,7 @@ impl AgentRegistry {
                     install_hint: info.install_hint,
                     install_command: info.install_command,
                     login_command: info.login_command,
+                    cli_command,
                     offer_install,
                     can_install,
                     adapter_distinct,

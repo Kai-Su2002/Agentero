@@ -1,5 +1,5 @@
 #[cfg(not(target_os = "ios"))]
-use crate::app::terminal::open_terminal_confirm_login;
+use crate::app::terminal::{open_terminal_agent_cli, open_terminal_confirm_login};
 use crate::core::error::{map_err, ApiResult};
 #[cfg(not(target_os = "ios"))]
 use crate::features::agent::acp::client::{
@@ -9,7 +9,7 @@ use crate::features::agent::doctor::{
     diagnose_host, install_node, HostDoctorReport, NodeInstallResult,
 };
 use crate::features::agent::doctor_agents::{diagnose_agents, AgentAcpDiagnostic};
-use crate::features::agent::registry::template_info;
+use crate::features::agent::registry::{interactive_cli, template_info};
 use crate::features::agent::{AgentRegistry, AgentWarmGate};
 #[cfg(not(target_os = "ios"))]
 use std::collections::HashMap;
@@ -93,6 +93,37 @@ pub fn doctor_open_agent_login_terminal(
     let environment = login_command_environment(registry.inner(), &template_id);
     let command = resolve_login_command(command, &environment);
     match open_terminal_confirm_login(&command) {
+        Ok(()) => ApiResult::ok(()),
+        Err(error) => map_err(error),
+    }
+}
+
+/// Open the installed Agent's interactive host CLI in a terminal.
+///
+/// Uses the template's interactive CLI (`registry::interactive_cli`), which is
+/// usually `detect_command` but can differ (Antigravity's `agy`). The command is
+/// resolved against the registered Agent env like
+/// [`doctor_open_agent_login_terminal`].
+#[cfg(not(target_os = "ios"))]
+#[tauri::command]
+#[specta::specta]
+pub fn doctor_open_agent_cli_terminal(
+    registry: State<'_, AgentRegistry>,
+    template_id: String,
+) -> ApiResult<()> {
+    let Some(info) = template_info(&template_id) else {
+        return map_err(crate::core::error::AppError::message(
+            "unknown agent template",
+        ));
+    };
+    let Some(binary) = interactive_cli(&info) else {
+        return map_err(crate::core::error::AppError::message(
+            "agent template does not define a CLI command",
+        ));
+    };
+    let environment = login_command_environment(registry.inner(), &template_id);
+    let command = resolve_login_command(binary, &environment);
+    match open_terminal_agent_cli(&command) {
         Ok(()) => ApiResult::ok(()),
         Err(error) => map_err(error),
     }

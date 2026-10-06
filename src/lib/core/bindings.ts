@@ -34,11 +34,11 @@ export const commands = {
 	 *  rejects the key (non-200 / non-200 code).
 	 */
 	easyScholarProbe: () => __TAURI_INVOKE<ApiResult<boolean>>("easy_scholar_probe"),
-/**
- *  Probe the configured institution proxy (EZProxy/WebVPN) by fetching a
- *  known paywalled DOI through the rewrite and checking the response is a
- *  PDF. Returns a short human-readable result for the settings UI.
- */
+	/**
+	 *  Probe the configured institution proxy (EZProxy/WebVPN) by fetching a
+	 *  known paywalled DOI through the rewrite and checking the response is a
+	 *  PDF. Returns a short human-readable result for the settings UI.
+	 */
 	institutionProxyProbe: () => __TAURI_INVOKE<ApiResult<string>>("institution_proxy_probe"),
 	/**
 	 *  Query EasyScholar for a publication's rank data.
@@ -84,6 +84,15 @@ export const commands = {
 	doctorCheckAgents: () => typedError<ApiResult<AgentAcpDiagnostic_Serialize[]>, string>(__TAURI_INVOKE("doctor_check_agents")),
 	/**  Open the template-owned CLI login command in a confirm-to-run terminal. */
 	doctorOpenAgentLoginTerminal: (templateId: string) => __TAURI_INVOKE<ApiResult<null>>("doctor_open_agent_login_terminal", { templateId }),
+	/**
+	 *  Open the installed Agent's interactive host CLI in a terminal.
+	 * 
+	 *  Uses the template's interactive CLI (`registry::interactive_cli`), which is
+	 *  usually `detect_command` but can differ (Antigravity's `agy`). The command is
+	 *  resolved against the registered Agent env like
+	 *  [`doctor_open_agent_login_terminal`].
+	 */
+	doctorOpenAgentCliTerminal: (templateId: string) => __TAURI_INVOKE<ApiResult<null>>("doctor_open_agent_cli_terminal", { templateId }),
 	doctorCheckNetwork: () => typedError<ApiResult<NetworkDoctorReport_Serialize>, string>(__TAURI_INVOKE("doctor_check_network")),
 	/**  Request cooperative cancellation for a currently streaming ACP session. */
 	agentCancelRun: (sessionId: string) => __TAURI_INVOKE<ApiResult<boolean>>("agent_cancel_run", { sessionId }),
@@ -1893,6 +1902,13 @@ export type CatalogEntry_Deserialize = {
 	installCommand?: string | null,
 	/**  Host CLI OAuth/login command from the template. */
 	loginCommand?: string | null,
+	/**
+	 *  Interactive host CLI for the Settings "open in terminal" action.
+	 *  Locally this is the resolved absolute path when the binary is available
+	 *  (may differ from `resolved_path`, e.g. Antigravity `agy`); `None` hides
+	 *  the action. Remote scans leave it `None`.
+	 */
+	cliCommand?: string | null,
 	/**  Host CLI present but ACP entrypoint missing — Settings may offer ACP install. */
 	offerInstall?: boolean,
 	/**  Silent install/update via `agent_run_tool_lifecycle` is available (local). */
@@ -1939,6 +1955,13 @@ export type CatalogEntry_Serialize = {
 	installCommand?: string | null,
 	/**  Host CLI OAuth/login command from the template. */
 	loginCommand?: string | null,
+	/**
+	 *  Interactive host CLI for the Settings "open in terminal" action.
+	 *  Locally this is the resolved absolute path when the binary is available
+	 *  (may differ from `resolved_path`, e.g. Antigravity `agy`); `None` hides
+	 *  the action. Remote scans leave it `None`.
+	 */
+	cliCommand?: string | null,
 	/**  Host CLI present but ACP entrypoint missing — Settings may offer ACP install. */
 	offerInstall: boolean,
 	/**  Silent install/update via `agent_run_tool_lifecycle` is available (local). */

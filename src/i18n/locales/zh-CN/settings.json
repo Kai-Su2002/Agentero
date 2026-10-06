@@ -323,6 +323,8 @@
 		"updateAgent": "升级",
 		"updateAgentAria": "升级 {{name}} Agent CLI",
 		"updateAgentTitle": "升级 Agent CLI",
+		"openCliAria": "在终端打开 {{name}} CLI",
+		"openCliTitle": "打开终端执行 {{command}}",
 		"updateSuccess": "已升级 {{name}}",
 		"lifecycleWaiting": "正在等待安装器…",
 		"lifecycleInstalling": "正在运行安装器…",
@@ -772,6 +774,11 @@
 			"clear": "清除缓存",
 			"clearDone": "缓存已清除",
 			"clearFailed": "清除论文全文缓存失败。"
+		},
+		"downloadProxyNotice": {
+			"title": "未配置网络代理",
+			"description": "CLI 与应用更新都从 GitHub 下载。若当前网络无法访问 GitHub，请先在「通用 → 网络代理」中配置代理后重试。",
+			"openSettings": "打开网络设置"
 		},
 		"update": {
 			"available": "版本 {{version}} 已可用",

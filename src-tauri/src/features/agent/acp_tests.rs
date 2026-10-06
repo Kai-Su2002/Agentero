@@ -4,7 +4,7 @@ mod acp_live {
     use crate::features::agent::list_acp_sessions;
     use crate::features::agent::models::{AgentDescriptor, AgentTemplate, CatalogAcpStatus};
     use crate::features::agent::registry::discovery::resolve_command;
-    use crate::features::agent::registry::templates::catalog_templates;
+    use crate::features::agent::registry::templates::{catalog_templates, interactive_cli};
     use crate::features::agent::AgentRegistry;
     use agent_client_protocol::schema::v1::{
         PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
@@ -33,6 +33,21 @@ mod acp_live {
             last_probe_error: None,
             last_probed_at: None,
         }
+    }
+
+    #[test]
+    fn interactive_cli_tracks_the_host_cli() {
+        let cats = catalog_templates();
+        let find = |id: &str| cats.iter().find(|entry| entry.id == id).expect("template");
+        // Most agents expose the same binary as the "installed" badge.
+        assert_eq!(interactive_cli(find("codex-acp")), Some("codex"));
+        assert_eq!(interactive_cli(find("pi")), Some("pi"));
+        // Antigravity's CLI is `agy`; the managed `.par` is ACP-only.
+        if let Some(antigravity) = cats.iter().find(|entry| entry.id == "antigravity-acp") {
+            assert_eq!(interactive_cli(antigravity), Some("agy"));
+        }
+        // ZCode ships no user-facing CLI, so the terminal action is hidden.
+        assert_eq!(interactive_cli(find("zcode")), None);
     }
 
     #[test]

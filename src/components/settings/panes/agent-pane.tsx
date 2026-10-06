@@ -28,6 +28,7 @@ import { useAgentToolLifecycle } from "@/hooks/use-agent-tool-lifecycle";
 import {
 	type AgentTemplate,
 	type CatalogEntry,
+	openAgentCliTerminal,
 	upsertAgent,
 } from "@/lib/agent";
 import { errorText } from "@/lib/core/error";
@@ -127,6 +128,19 @@ export function AgentPane({
 
 	const busy = loading;
 
+	const onOpenCli = useCallback(
+		(templateId: string) => {
+			if (!isTauri()) {
+				notifyError(t("agent.desktopOnly"));
+				return;
+			}
+			void openAgentCliTerminal(templateId).catch((e) =>
+				notifyError(errorText(e)),
+			);
+		},
+		[t],
+	);
+
 	return (
 		<>
 			<PageTitle title={t("agent.title")} />
@@ -177,6 +191,7 @@ export function AgentPane({
 					lifecycle={lifecycle}
 					openUninstallDialog={openUninstallDialog}
 					onLogin={openLoginTerminal}
+					onOpenCli={onOpenCli}
 					onEditCustom={handleAddCustom}
 				/>
 				<AgentCustomForm busy={loading} onSubmit={handleAddCustom} />

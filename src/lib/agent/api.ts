@@ -484,6 +484,14 @@ export async function openAgentLoginTerminal(
 	);
 }
 
+/** Open the installed Agent's interactive host CLI in a confirm-to-run terminal. */
+export async function openAgentCliTerminal(templateId: string): Promise<void> {
+	await callApi(
+		() => commands.doctorOpenAgentCliTerminal(templateId),
+		AGENT_CALL_OPTS,
+	);
+}
+
 export type ToolLifecycleAction = "install" | "update" | "uninstall";
 
 /**

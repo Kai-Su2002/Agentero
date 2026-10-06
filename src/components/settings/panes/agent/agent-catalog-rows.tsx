@@ -48,6 +48,7 @@ export function AgentCatalogRows({
 	lifecycle,
 	openUninstallDialog,
 	onLogin,
+	onOpenCli,
 	onEditCustom,
 }: {
 	catalog: CatalogScanResponse | null;
@@ -57,6 +58,7 @@ export function AgentCatalogRows({
 	lifecycle: AgentToolLifecycle;
 	openUninstallDialog: (target: UninstallTarget) => void;
 	onLogin: (templateId: string) => Promise<boolean>;
+	onOpenCli: (templateId: string) => void;
 	onEditCustom: (draft: CustomAgentFormDraft) => Promise<boolean>;
 }) {
 	const { t } = useTranslation(["settings", "agent", "common"]);
@@ -82,6 +84,7 @@ export function AgentCatalogRows({
 					lifecycle={lifecycle}
 					openUninstallDialog={openUninstallDialog}
 					onLogin={onLogin}
+					onOpenCli={onOpenCli}
 				/>
 			))}
 			{customAgents.map((agent) => (
@@ -106,6 +109,7 @@ function AgentCatalogEntryRow({
 	lifecycle,
 	openUninstallDialog,
 	onLogin,
+	onOpenCli,
 }: {
 	entry: CatalogEntry;
 	probing: boolean;
@@ -113,6 +117,7 @@ function AgentCatalogEntryRow({
 	lifecycle: AgentToolLifecycle;
 	openUninstallDialog: (target: UninstallTarget) => void;
 	onLogin: (templateId: string) => Promise<boolean>;
+	onOpenCli: (templateId: string) => void;
 }) {
 	const { t } = useTranslation(["settings", "agent", "common"]);
 	const {
@@ -129,10 +134,12 @@ function AgentCatalogEntryRow({
 		entry.acpStatus === "failed" &&
 		isAgentAuthFailure(entry.lastProbeError) &&
 		Boolean(entry.loginCommand?.trim());
-	// Install/ACP-only gaps gate “Use default”; Update/Uninstall can sit beside it.
+	// Installed host CLI with a user-facing entrypoint → offer it in a terminal.
+	const openCli = entry.binaryAvailable && Boolean(entry.cliCommand);
+	// Install/ACP-only gaps gate “Use default”; Update/CLI/Uninstall can sit beside it.
 	const needsInstall = installAgent || installAcp;
 	const hasLifecycleAction =
-		needsInstall || updateAgent || uninstallAgent || loginAgent;
+		needsInstall || updateAgent || uninstallAgent || loginAgent || openCli;
 	const notInstalled = !entry.binaryAvailable;
 	const rowInstalling = lifecycleBusyIds.has(entry.templateId);
 	const rowBusyAction = lifecycleBusyIds.get(entry.templateId);
@@ -294,6 +301,22 @@ function AgentCatalogEntryRow({
 								<ArrowUpCircle className="size-3" />
 							)}
 							{t("agent.updateAgent")}
+						</Button>
+					) : null}
+					{openCli ? (
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon-xs"
+							className="size-7"
+							aria-label={t("agent.openCliAria", { name: entry.name })}
+							title={t("agent.openCliTitle", {
+								command: entry.cliCommand ?? entry.command,
+							})}
+							disabled={rowInstalling || !isTauri()}
+							onClick={() => onOpenCli(entry.templateId)}
+						>
+							<Terminal className="size-3.5" aria-hidden />
 						</Button>
 					) : null}
 					{uninstallAgent ? (

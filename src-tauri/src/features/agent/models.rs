@@ -236,6 +236,12 @@ pub struct CatalogEntry {
     /// Host CLI OAuth/login command from the template.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_command: Option<String>,
+    /// Interactive host CLI for the Settings "open in terminal" action.
+    /// Locally this is the resolved absolute path when the binary is available
+    /// (may differ from `resolved_path`, e.g. Antigravity `agy`); `None` hides
+    /// the action. Remote scans leave it `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_command: Option<String>,
     /// Host CLI present but ACP entrypoint missing — Settings may offer ACP install.
     #[serde(default)]
     pub offer_install: bool,

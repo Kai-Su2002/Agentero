@@ -323,6 +323,8 @@
 		"updateAgent": "Update",
 		"updateAgentAria": "Update {{name}} agent CLI",
 		"updateAgentTitle": "Update agent CLI",
+		"openCliAria": "Open {{name}} CLI in terminal",
+		"openCliTitle": "Open terminal for {{command}}",
 		"updateSuccess": "Updated {{name}}",
 		"lifecycleWaiting": "Waiting for installer…",
 		"lifecycleInstalling": "Running installer…",
@@ -772,6 +774,11 @@
 			"clear": "Clear cache",
 			"clearDone": "Cache cleared",
 			"clearFailed": "Couldn't clear the paper full-text cache."
+		},
+		"downloadProxyNotice": {
+			"title": "No network proxy configured",
+			"description": "CLI downloads and app updates come from GitHub. If this network can't reach GitHub, configure a proxy in General → Network proxy and try again.",
+			"openSettings": "Open network settings"
 		},
 		"update": {
 			"available": "Version {{version}} is ready",
