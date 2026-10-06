@@ -287,13 +287,7 @@ function OnboardingDialog({ onVaultCreated }: { onVaultCreated: () => void }) {
 					) : null}
 				</div>
 
-				<div
-					className={cn(
-						"px-6 py-5",
-						stepper.current.id !== "agent" &&
-							"agentero-scroll max-h-[24rem] overflow-y-auto",
-					)}
-				>
+				<div className="agentero-scroll max-h-[24rem] overflow-y-auto px-6 py-5">
 					<AnimatePresence mode="wait" initial={false}>
 						<motion.div
 							key={stepper.current.id}
