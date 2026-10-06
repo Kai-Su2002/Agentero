@@ -148,7 +148,8 @@
 		"kindFigure": "图",
 		"kindTable": "表",
 		"kindEquation": "公式",
-		"kindAlgorithm": "算法"
+		"kindAlgorithm": "算法",
+		"kindReference": "参考文献"
 	},
 	"figures": {
 		"title": "解析",

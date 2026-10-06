@@ -114,6 +114,8 @@ export type PdfViewerInnerProps = PdfViewerProps & {
 export type ScreenPoint = {
 	x: number;
 	y: number;
+	top?: number;
+	bottom?: number;
 };
 
 /** Screen anchor for a floating card, including which side to open on. */
@@ -187,6 +189,8 @@ export type CrossrefPreviewState = {
 	region: PdfAskNormalizedRect;
 	/** Rendered region crop; null while in flight. */
 	image: PromptImage | null;
+	/** 1:1 on-screen display size in CSS pixels matching the document's zoom. */
+	targetSize?: { width: number; height: number };
 };
 
 export type VisualDraftEditorState = {

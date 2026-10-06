@@ -10,7 +10,12 @@
  * 3. Single label at the dest coordinate, or link-text extraction + caption
  *    match as a last resort.
  * Layout analysis supplies the region bbox; the crop is rendered on demand.
- * Links the maps or layout cannot resolve show nothing.
+ *
+ * Citations without sidecar metadata fall back to a crop of the bibliography
+ * entry the link jumps to (`lib/pdf/destination-crop`). A link counts as a
+ * citation when its own dest name says so (`cite.*`, `mk:refN`, …) or when it
+ * covers a number inside a `[…]` group of numbers (`lib/pdf/link-text`)
+ * *and* the destination line opens that entry. Anything else shows nothing.
  *
  * Its own hook because the preview is a self-contained hover state machine that
  * runs an async crop — kept separate from `usePdfCitations` (citations resolve
@@ -24,7 +29,6 @@ import type {
 	PdfEngine,
 	PdfLinkAnnoObject,
 	PdfPageObject,
-	Rect,
 } from "@embedpdf/models";
 import type { useDocumentManagerCapability } from "@embedpdf/plugin-document-manager/react";
 import {
@@ -34,19 +38,36 @@ import {
 	useRef,
 	useState,
 } from "react";
-import { pageElByIndex, rectRightScreen } from "@/components/viewer/pdf/coords";
+import {
+	pageElByIndex,
+	rectBottomCenterScreen,
+} from "@/components/viewer/pdf/coords";
 import { EPHEMERAL_PREVIEW_HIDE_MS } from "@/components/viewer/pdf/floating-hover";
 import { useStickyHoverHide } from "@/components/viewer/pdf/hooks/use-sticky-hover-hide";
 import { getLinkDestination } from "@/components/viewer/pdf/layers/citation-links";
 import { renderPdfRegionPromptImage } from "@/components/viewer/pdf/region-crop";
-import type { CrossrefPreviewState } from "@/components/viewer/pdf/types";
+import type {
+	CrossrefPreviewState,
+	ScreenPoint,
+} from "@/components/viewer/pdf/types";
+import type { PromptImage } from "@/lib/agent/api";
+import { LruCache } from "@/lib/core/lru-cache";
 import {
+	type CitationDestKeyMap,
+	type CitationLinkKeyList,
 	type CrossrefDestLabelMap,
 	type CrossrefDestMap,
+	type CrossrefKind,
 	type CrossrefKindMap,
 	type CrossrefLinkLabelList,
 	citationDestKey,
+	citationRefNumber,
+	destinationInPageBox,
+	isOtherNamedLink,
+	type LinkRectLike,
+	matchCitationLinkKey,
 	matchCrossrefLinkLabel,
+	type PageOrigin,
 } from "@/lib/pdf/citation-dest-keys";
 import { schedulePdfDestMapsBuild } from "@/lib/pdf/citation-dest-map";
 import {
@@ -54,59 +75,32 @@ import {
 	pickCrossrefRegion,
 	pickCrossrefRegionByLabel,
 } from "@/lib/pdf/crossref-resolve";
+import { pickDestinationRegion } from "@/lib/pdf/destination-crop";
 import { getLayoutDocumentResult } from "@/lib/pdf/layout";
-
-/** Longest edge of the preview crop (px). */
-const CROSSREF_CROP_MAX_EDGE = 520;
-
-/** Whether two PDF rects overlap in page coordinates. */
-function rectsOverlap(a: Rect, b: Rect): boolean {
-	return (
-		a.origin.x < b.origin.x + b.size.width &&
-		a.origin.x + a.size.width > b.origin.x &&
-		a.origin.y < b.origin.y + b.size.height &&
-		a.origin.y + a.size.height > b.origin.y
-	);
-}
+import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
+import {
+	linkLabelText,
+	type PageTextRect,
+	parseBracketCitation,
+} from "@/lib/pdf/link-text";
 
 /**
- * Expand a rect by a small margin so adjacent text runs (e.g. "Table" and "1,")
- * are captured even if their bounding boxes only barely touch the link rect.
+ * Preview crops render at zoom × devicePixelRatio so they match the page 1:1,
+ * never below 2× (crisp when zoomed out) nor above 4×, and never longer than
+ * this many pixels on either edge.
  */
-function expandRect(rect: Rect, marginPt: number): Rect {
-	return {
-		origin: {
-			x: rect.origin.x - marginPt,
-			y: rect.origin.y - marginPt,
-		},
-		size: {
-			width: rect.size.width + marginPt * 2,
-			height: rect.size.height + marginPt * 2,
-		},
-	};
-}
+const PREVIEW_CROP_MIN_SCALE = 2;
+const PREVIEW_CROP_MAX_SCALE = 4;
+const PREVIEW_CROP_MAX_EDGE_PX = 1600;
 
 /**
- * Read the text covered by a link annotation's rect on a specific page. Used as
- * a fallback when the PDF destination only points at a page (ACS `/FitR`) so we
- * can infer "Figure 1" / "Table 1" from the link text itself.
+ * Hover previews re-read the same pages and re-render the same crops as the
+ * pointer moves across a citation list. Keep the last few per document.
  */
-async function extractLinkText(
-	engine: PdfEngine,
-	document: PdfDocumentObject,
-	page: PdfPageObject,
-	linkRect: Rect,
-): Promise<string> {
-	const rects = await engine.getPageTextRects(document, page).toPromise();
-	// Link rects from some publishers tightly enclose only part of a word or
-	// omit adjacent punctuation/digits. A 2 pt margin catches "Table" + "1,"
-	// without pulling in the surrounding sentence.
-	const hitRect = expandRect(linkRect, 2);
-	const overlapping = rects.filter((r) => rectsOverlap(r.rect, hitRect));
-	// PDF coords: origin bottom-left; sort top-to-bottom for natural reading order.
-	overlapping.sort((a, b) => b.rect.origin.y - a.rect.origin.y);
-	return overlapping.map((r) => r.content).join(" ");
-}
+const TEXT_RECTS_CACHE_PAGES = 8;
+const CROP_CACHE_ENTRIES = 24;
+
+type PageTextRects = readonly PageTextRect[];
 
 type DocumentManagerCapability = ReturnType<
 	typeof useDocumentManagerCapability
@@ -129,6 +123,11 @@ export type UsePdfCrossrefPreviewOptions = {
 	 * sibling ephemeral overlays (citation preview).
 	 */
 	onPreviewShow?: () => void;
+	/**
+	 * Returns true when an in-text link resolves to structured citation metadata,
+	 * in which case usePdfCitations renders its rich card and crossref preview stands down.
+	 */
+	hasCitationMatch?: (link: PdfLinkAnnoObject) => boolean;
 };
 
 export type PdfCrossrefPreview = {
@@ -139,7 +138,10 @@ export type PdfCrossrefPreview = {
 	markCrossrefHoverEnter: () => void;
 	/** Drop the preview immediately (overlay exclusivity / suppress). */
 	clearCrossrefPreview: () => void;
-	handleCrossrefLinkHover: (link: PdfLinkAnnoObject | null) => void;
+	handleCrossrefLinkHover: (
+		link: PdfLinkAnnoObject | null,
+		clientPoint?: ScreenPoint | null,
+	) => void;
 };
 
 export function usePdfCrossrefPreview({
@@ -151,9 +153,12 @@ export function usePdfCrossrefPreview({
 	engineRef,
 	docCapRef,
 	onPreviewShow,
+	hasCitationMatch,
 }: UsePdfCrossrefPreviewOptions): PdfCrossrefPreview {
 	const onPreviewShowRef = useRef(onPreviewShow);
 	onPreviewShowRef.current = onPreviewShow;
+	const hasCitationMatchRef = useRef(hasCitationMatch);
+	hasCitationMatchRef.current = hasCitationMatch;
 	const [crossrefPreview, setCrossrefPreview] =
 		useState<CrossrefPreviewState | null>(null);
 	const hideCrossrefPreview = useCallback(() => setCrossrefPreview(null), []);
@@ -190,8 +195,55 @@ export function usePdfCrossrefPreview({
 	 * own dest name (`mk:tbl1` / `mk:fig3`) still uniquely identifies the float.
 	 */
 	const crossrefLinksRef = useRef<CrossrefLinkLabelList | null>(null);
+	/** Visible page box origins, to map destinations into page space. */
+	const pageOriginsRef = useRef<readonly PageOrigin[] | null>(null);
+	const citesMapRef = useRef<CitationDestKeyMap | null>(null);
+	const citationLinksRef = useRef<CitationLinkKeyList | null>(null);
+	/** Links whose own dest name is neither a cite nor a float (by rect). */
+	const otherNamedLinksRef = useRef<readonly LinkRectLike[] | null>(null);
 	/** Monotonic token so a stale crop never lands over a newer hover. */
 	const renderTokenRef = useRef(0);
+	const activeLinkRef = useRef<PdfLinkAnnoObject | null>(null);
+	/** Page text / rendered crops of `cachedDocRef`'s document. */
+	const cachedDocRef = useRef<PdfDocumentObject | null>(null);
+	const textRectsCacheRef = useRef(
+		new LruCache<number, Promise<PageTextRects>>(TEXT_RECTS_CACHE_PAGES),
+	);
+	const cropCacheRef = useRef(
+		new LruCache<string, PromptImage>(CROP_CACHE_ENTRIES),
+	);
+
+	/** Drop cached page data when the viewer swaps to another document object. */
+	const cachesFor = useCallback((document: PdfDocumentObject) => {
+		if (cachedDocRef.current !== document) {
+			cachedDocRef.current = document;
+			textRectsCacheRef.current.clear();
+			cropCacheRef.current.clear();
+		}
+		return {
+			textRects: textRectsCacheRef.current,
+			crops: cropCacheRef.current,
+		};
+	}, []);
+
+	/** `getPageTextRects`, shared across hovers of the same page. */
+	const pageTextRects = useCallback(
+		(
+			engine: PdfEngine,
+			document: PdfDocumentObject,
+			page: PdfPageObject,
+		): Promise<PageTextRects> => {
+			const cache = cachesFor(document).textRects;
+			const cached = cache.get(page.index);
+			if (cached) return cached;
+			const pending = engine.getPageTextRects(document, page).toPromise();
+			cache.set(page.index, pending);
+			// Failed reads must not stick.
+			pending.catch(() => cache.delete(page.index));
+			return pending;
+		},
+		[cachesFor],
+	);
 
 	const sourceBytesRef = useRef<ArrayBuffer | null>(sourceBytes);
 	sourceBytesRef.current = sourceBytes;
@@ -201,6 +253,10 @@ export function usePdfCrossrefPreview({
 		crossrefKindsRef.current = null;
 		crossrefLabelsRef.current = null;
 		crossrefLinksRef.current = null;
+		pageOriginsRef.current = null;
+		citesMapRef.current = null;
+		citationLinksRef.current = null;
+		otherNamedLinksRef.current = null;
 		if (!paperAbsPath) return;
 		return schedulePdfDestMapsBuild({
 			paperAbsPath,
@@ -211,6 +267,10 @@ export function usePdfCrossrefPreview({
 				crossrefKindsRef.current = maps.crossrefKinds;
 				crossrefLabelsRef.current = maps.crossrefLabels;
 				crossrefLinksRef.current = maps.crossrefLinks;
+				pageOriginsRef.current = maps.pageOrigins;
+				citesMapRef.current = maps.cites;
+				citationLinksRef.current = maps.citationLinks;
+				otherNamedLinksRef.current = maps.otherNamedLinks;
 			},
 		});
 	}, [paperAbsPath]);
@@ -218,6 +278,10 @@ export function usePdfCrossrefPreview({
 	// Reset the preview when the active PDF document changes.
 	// biome-ignore lint/correctness/useExhaustiveDependencies: docId is the effect trigger, not a value read inside the effect.
 	useEffect(() => {
+		activeLinkRef.current = null;
+		cachedDocRef.current = null;
+		textRectsCacheRef.current.clear();
+		cropCacheRef.current.clear();
 		crossrefHoverSurfaceRef.current = false;
 		setCrossrefPreview(null);
 	}, [docId]);
@@ -237,7 +301,8 @@ export function usePdfCrossrefPreview({
 				pageIndex: number;
 				bbox: { x: number; y: number; w: number; h: number };
 			},
-			kind: import("@/lib/pdf/citation-dest-keys").CrossrefKind,
+			kind: CrossrefKind,
+			clientPoint?: ScreenPoint | null,
 		) => {
 			cancelCrossrefHide();
 			// Treat show as an active hover surface so mount-under-cursor skips
@@ -246,28 +311,53 @@ export function usePdfCrossrefPreview({
 			const pageEl = pageElByIndex(hostRef.current, link.pageIndex);
 			if (!pageEl) return;
 			onPreviewShowRef.current?.();
+
+			const document = docCapRef.current?.getDocument(docId) ?? null;
+			const targetPage = document?.pages[region.pageIndex];
+			const pageWidthPt = targetPage?.size.width ?? 612;
+			const pageHeightPt = targetPage?.size.height ?? 792;
+			const zoom = zoomRef.current && zoomRef.current > 0 ? zoomRef.current : 1;
+			const targetWidth = Math.round(region.bbox.w * pageWidthPt * zoom);
+			const targetHeight = Math.round(region.bbox.h * pageHeightPt * zoom);
+			const screen =
+				clientPoint ?? rectBottomCenterScreen(pageEl, link.rect, zoom);
+			const dpr =
+				typeof window === "undefined" ? 1 : window.devicePixelRatio || 1;
+			const cropScale = Math.min(
+				PREVIEW_CROP_MAX_SCALE,
+				Math.max(PREVIEW_CROP_MIN_SCALE, zoom * dpr),
+			);
+			const { x, y, w, h } = region.bbox;
+			const cropKey = [region.pageIndex, x, y, w, h, cropScale]
+				.map((n) => Math.round(n * 1e4))
+				.join(":");
+			const crops = document ? cachesFor(document).crops : null;
+			const cachedImage = crops?.get(cropKey) ?? null;
+
 			setCrossrefPreview({
-				screen: rectRightScreen(pageEl, link.rect, zoomRef.current),
+				screen,
 				kind,
 				page: region.pageIndex + 1,
 				region: region.bbox,
-				image: null,
+				image: cachedImage,
+				targetSize: { width: targetWidth, height: targetHeight },
 			});
 
 			// Crop the region asynchronously; drop the result if a newer hover
 			// (or a document close) superseded it.
 			const token = ++renderTokenRef.current;
 			const engine = engineRef.current;
-			const document = docCapRef.current?.getDocument(docId) ?? null;
-			if (!engine || !document) return;
+			if (cachedImage || !engine || !document || !crops) return;
 			void renderPdfRegionPromptImage({
 				engine,
 				document,
 				pageIndex: region.pageIndex,
 				region: region.bbox,
-				maxEdgePx: CROSSREF_CROP_MAX_EDGE,
+				scaleFactor: cropScale,
+				maxEdgePx: PREVIEW_CROP_MAX_EDGE_PX,
 			})
 				.then((image) => {
+					crops.set(cropKey, image);
 					if (renderTokenRef.current !== token) return;
 					setCrossrefPreview((prev) =>
 						prev && prev.image === null ? { ...prev, image } : prev,
@@ -283,29 +373,124 @@ export function usePdfCrossrefPreview({
 			docCapRef,
 			cancelCrossrefHide,
 			crossrefHoverSurfaceRef,
+			cachesFor,
+		],
+	);
+
+	/**
+	 * Crop the bibliography entry (or `[8–12]` range of entries) a citation
+	 * link jumps to. `requireEntry` (text-recognized citations) shows nothing
+	 * unless the destination really has entry `entryIndex` / an entry of the
+	 * range.
+	 */
+	const showDestinationCrop = useCallback(
+		(
+			link: PdfLinkAnnoObject,
+			destination: { pageIndex: number; pdfX: number | null; pdfY: number },
+			regions: readonly PdfLayoutRegion[],
+			target: {
+				entryIndex: number | null;
+				endEntryIndex?: number | null;
+				requireEntry: boolean;
+			},
+			clientPoint?: ScreenPoint | null,
+		) => {
+			const document = docCapRef.current?.getDocument(docId) ?? null;
+			const targetPage = document?.pages[destination.pageIndex];
+			if (!document || !targetPage) {
+				clearCrossrefPreview();
+				return;
+			}
+			const show = (textRects?: readonly PageTextRect[]) => {
+				const region = pickDestinationRegion({
+					pageIndex: destination.pageIndex,
+					pdfX: destination.pdfX,
+					pdfY: destination.pdfY,
+					pageWidthPt: targetPage.size.width,
+					pageHeightPt: targetPage.size.height,
+					regions,
+					textRects,
+					entryIndex: target.entryIndex,
+					endEntryIndex: target.endEntryIndex,
+				});
+				if (target.requireEntry && !region.entryMatched) {
+					clearCrossrefPreview();
+					return;
+				}
+				showPreview(link, region, "reference", clientPoint);
+			};
+			const engine = engineRef.current;
+			if (!engine) {
+				show();
+				return;
+			}
+			cancelCrossrefHide();
+			const token = ++renderTokenRef.current;
+			void pageTextRects(engine, document, targetPage)
+				.then((textRects) => {
+					if (renderTokenRef.current === token) show(textRects);
+				})
+				.catch(() => {
+					if (renderTokenRef.current === token) show();
+				});
+		},
+		[
+			docId,
+			docCapRef,
+			engineRef,
+			cancelCrossrefHide,
+			clearCrossrefPreview,
+			showPreview,
+			pageTextRects,
 		],
 	);
 
 	const handleCrossrefLinkHover = useCallback(
-		(link: PdfLinkAnnoObject | null) => {
+		(link: PdfLinkAnnoObject | null, clientPoint?: ScreenPoint | null) => {
 			if (!link) {
-				scheduleCrossrefHide();
+				activeLinkRef.current = null;
+				clearCrossrefPreview();
 				return;
 			}
-			const destination = getLinkDestination(link.target);
-			if (!destination) {
-				scheduleCrossrefHide();
+			if (activeLinkRef.current !== link) {
+				activeLinkRef.current = link;
+				clearCrossrefPreview();
+			}
+			// If structured citation lookup resolved this link, usePdfCitations
+			// will render its rich metadata card — do not override with a crop preview.
+			if (hasCitationMatchRef.current?.(link)) {
+				clearCrossrefPreview();
+				return;
+			}
+			const rawDestination = getLinkDestination(link.target);
+			if (!rawDestination) {
+				clearCrossrefPreview();
 				return;
 			}
 
-			const coord = citationDestKey(destination.pageIndex, destination.pdfY);
+			// Map keys use raw user-space coordinates; geometry uses page space.
+			// A link naming a section / theorem / footnote may land on the same
+			// coordinate as a float or bibliography anchor; only its own text
+			// can then make it a preview.
+			const coord = isOtherNamedLink(
+				otherNamedLinksRef.current,
+				link.pageIndex,
+				link.rect,
+			)
+				? null
+				: citationDestKey(rawDestination.pageIndex, rawDestination.pdfY);
+			const destination = destinationInPageBox(
+				rawDestination,
+				pageOriginsRef.current,
+			);
 			const regions = getLayoutDocumentResult(docId)?.regions ?? [];
 			const document = docCapRef.current?.getDocument(docId) ?? null;
 			const pageHeightPt =
 				document?.pages[destination.pageIndex]?.size.height ?? null;
 
 			// Fast path: unambiguous destination (standard hyperref /XYZ).
-			const unambiguousKind = crossrefMapRef.current?.get(coord);
+			const unambiguousKind =
+				coord != null ? crossrefMapRef.current?.get(coord) : undefined;
 			if (unambiguousKind) {
 				const region = pickCrossrefRegion(
 					regions,
@@ -315,7 +500,7 @@ export function usePdfCrossrefPreview({
 					unambiguousKind,
 				);
 				if (region) {
-					showPreview(link, region, unambiguousKind);
+					showPreview(link, region, unambiguousKind, clientPoint);
 					return;
 				}
 			}
@@ -336,7 +521,7 @@ export function usePdfCrossrefPreview({
 					linkLabel,
 				);
 				if (region) {
-					showPreview(link, region, linkLabel.kind);
+					showPreview(link, region, linkLabel.kind, clientPoint);
 					return;
 				}
 			}
@@ -344,89 +529,159 @@ export function usePdfCrossrefPreview({
 			// Fallback: ambiguous or page-only destination without a link-name
 			// hit. Infer the kind/number from the link text and match layout
 			// regions by caption title.
-			const kinds = crossrefKindsRef.current?.get(coord);
-			if (!kinds || kinds.length === 0) {
-				scheduleCrossrefHide();
+			const kinds =
+				coord != null ? crossrefKindsRef.current?.get(coord) : undefined;
+			if (kinds && kinds.length > 0) {
+				// If the destination name itself embeds an unambiguous label (e.g.
+				// ACS `mk:fig1` / `mk:tbl1`) and it is the only label at this
+				// coordinate, skip text extraction entirely.
+				const labels =
+					coord != null ? crossrefLabelsRef.current?.get(coord) : undefined;
+				if (labels && labels.length === 1) {
+					const label = labels[0];
+					if (label) {
+						const region = pickCrossrefRegionByLabel(
+							regions,
+							destination.pageIndex,
+							label,
+						);
+						if (region) {
+							showPreview(link, region, label.kind, clientPoint);
+							return;
+						}
+					}
+				}
+			}
+
+			// The link's own dest name is exact; the coordinate map can collide
+			// across destinations sharing one anchor, so it only backs it up.
+			const citeKey =
+				matchCitationLinkKey(
+					citationLinksRef.current,
+					link.pageIndex,
+					link.rect,
+				) ??
+				(coord != null ? citesMapRef.current?.get(coord) : null) ??
+				null;
+			const citeEntry: {
+				entryIndex: number | null;
+				endEntryIndex?: number | null;
+				requireEntry: boolean;
+			} = {
+				entryIndex: citeKey ? citationRefNumber(citeKey) : null,
+				requireEntry: false,
+			};
+
+			const engine = engineRef.current;
+			const page = document?.pages[link.pageIndex];
+			if (engine && document && page) {
+				cancelCrossrefHide();
+				const token = ++renderTokenRef.current;
+				void pageTextRects(engine, document, page)
+					.then((rects) => {
+						if (renderTokenRef.current !== token) return;
+						const label = extractCrossrefLabel(linkLabelText(rects, link.rect));
+						if (label && (!kinds || kinds.includes(label.kind))) {
+							const region = pickCrossrefRegionByLabel(
+								regions,
+								destination.pageIndex,
+								label,
+							);
+							if (region) {
+								showPreview(link, region, label.kind, clientPoint);
+								return;
+							}
+						}
+						const bracket = parseBracketCitation(rects, link.rect);
+						if (citeKey != null) {
+							// A `[8–12]` around the link widens the crop to the range
+							// (when it agrees with the dest name's own number).
+							const range = bracket?.range;
+							const named = citeEntry.entryIndex;
+							const useRange =
+								range &&
+								(named == null || (named >= range.start && named <= range.end));
+							showDestinationCrop(
+								link,
+								destination,
+								regions,
+								useRange
+									? {
+											entryIndex: range.start,
+											endEntryIndex: range.end,
+											requireEntry: false,
+										}
+									: citeEntry,
+								clientPoint,
+							);
+							return;
+						}
+						// No citation dest name: only a `[…]` number group counts,
+						// and the destination must open that entry.
+						if (bracket) {
+							showDestinationCrop(
+								link,
+								destination,
+								regions,
+								{
+									entryIndex: bracket.range?.start ?? bracket.entry,
+									endEntryIndex: bracket.range?.end ?? null,
+									requireEntry: true,
+								},
+								clientPoint,
+							);
+							return;
+						}
+						clearCrossrefPreview();
+					})
+					.catch(() => {
+						if (renderTokenRef.current !== token) return;
+						if (citeKey != null) {
+							showDestinationCrop(
+								link,
+								destination,
+								regions,
+								citeEntry,
+								clientPoint,
+							);
+						} else {
+							clearCrossrefPreview();
+						}
+					});
 				return;
 			}
 
-			// If the destination name itself embeds an unambiguous label (e.g.
-			// ACS `mk:fig1` / `mk:tbl1`) and it is the only label at this
-			// coordinate, skip text extraction entirely.
-			const labels = crossrefLabelsRef.current?.get(coord);
-			if (labels && labels.length === 1) {
-				const label = labels[0];
-				const region = pickCrossrefRegionByLabel(
+			// If engine or text extraction is unavailable:
+			if (kinds && kinds.length === 1) {
+				const region = pickCrossrefRegion(
 					regions,
 					destination.pageIndex,
-					label,
+					destination.pdfY,
+					pageHeightPt,
+					kinds[0],
 				);
 				if (region) {
-					showPreview(link, region, label.kind);
+					showPreview(link, region, kinds[0], clientPoint);
 					return;
 				}
 			}
 
-			const engine = engineRef.current;
-			const page = document?.pages[link.pageIndex];
-			if (!engine || !document || !page) {
-				// No text extraction possible; if there is only one kind at this
-				// coordinate, make a best-effort region guess.
-				if (kinds.length === 1) {
-					const region = pickCrossrefRegion(
-						regions,
-						destination.pageIndex,
-						destination.pdfY,
-						pageHeightPt,
-						kinds[0],
-					);
-					if (region) {
-						showPreview(link, region, kinds[0]);
-						return;
-					}
-				}
-				scheduleCrossrefHide();
+			if (citeKey != null) {
+				showDestinationCrop(link, destination, regions, citeEntry, clientPoint);
 				return;
 			}
 
-			cancelCrossrefHide();
-			// Keep the card empty/spinner-free until the async resolution lands.
-			const token = ++renderTokenRef.current;
-			void extractLinkText(engine, document, page, link.rect)
-				.then((text) => {
-					if (renderTokenRef.current !== token) return;
-					const label = extractCrossrefLabel(text);
-					if (!label) {
-						scheduleCrossrefHide();
-						return;
-					}
-					if (!kinds.includes(label.kind)) {
-						scheduleCrossrefHide();
-						return;
-					}
-					const region = pickCrossrefRegionByLabel(
-						regions,
-						destination.pageIndex,
-						label,
-					);
-					if (!region) {
-						scheduleCrossrefHide();
-						return;
-					}
-					showPreview(link, region, label.kind);
-				})
-				.catch(() => {
-					if (renderTokenRef.current !== token) return;
-					scheduleCrossrefHide();
-				});
+			clearCrossrefPreview();
 		},
 		[
 			docId,
 			engineRef,
 			docCapRef,
 			cancelCrossrefHide,
-			scheduleCrossrefHide,
+			clearCrossrefPreview,
 			showPreview,
+			showDestinationCrop,
+			pageTextRects,
 		],
 	);
 

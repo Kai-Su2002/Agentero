@@ -36,6 +36,7 @@ import {
 	PDFHexString,
 	PDFName,
 	PDFNumber,
+	type PDFPage,
 	PDFString,
 } from "pdf-lib";
 
@@ -62,7 +63,7 @@ export function linkRectKey(
 /** Max centre-point distance (pt) when matching a hovered link to a parsed one. */
 const LINK_RECT_MATCH_TOLERANCE_PT = 3;
 
-type LinkRectLike = {
+export type LinkRectLike = {
 	pageIndex: number;
 	x: number;
 	y: number;
@@ -134,27 +135,58 @@ export function matchCitationLinkKey(
 	return matchLinkByRect(links, pageIndex, rect)?.key ?? null;
 }
 
+/** Whether the hovered link names a destination that is not a cite / float. */
+export function isOtherNamedLink(
+	links: readonly LinkRectLike[] | null | undefined,
+	pageIndex: number,
+	rect: HoverRect,
+): boolean {
+	return matchLinkByRect(links, pageIndex, rect) != null;
+}
+
 /**
  * Candidate sidecar ids / rawKeys for a PDF destination name. Hyperref
- * `cite.<key>` passes through; ACS `mk:refN` also tries `ref-N` / `refN`
- * (S2-parsed sidecars use `id: "ref-N"` without a `rawKey`).
+ * `cite.<key>` passes through; ACS `mk:refN` and Springer `ch<N>CR<N>` / `CR<N>`
+ * also try `ref-N` / `refN` / `N` (S2 / crossref parses use `id: "ref-N"`).
  */
 export function citationSidecarKeysForDest(destKey: string): string[] {
 	const keys = [destKey];
 	const mk = /^mk:ref(\d+)$/i.exec(destKey);
 	if (mk) {
-		const n = mk[1];
+		const n = mk[1] ?? "";
 		keys.push(`ref-${n}`, `ref${n}`);
+	}
+	const cr = /^(?:ch\d*)?cr(\d+)$/i.exec(destKey);
+	if (cr) {
+		const n = cr[1] ?? "";
+		keys.push(`ref-${n}`, `ref${n}`, n);
+	}
+	const bib = /^bib(\d{3,})$/i.exec(destKey);
+	if (bib) {
+		const n = String(Number.parseInt(bib[1] ?? "", 10));
+		keys.push(`ref-${n}`, `ref${n}`, n);
 	}
 	return keys;
 }
 
-/** Parse the numeric bibliography index from an ACS `mk:refN` key. */
+/** Parse the numeric bibliography index from an ACS `mk:refN`, Springer `ch<N>CR<N>`, or ACM `Bib0001` key. */
 export function citationRefNumber(destKey: string): number | null {
 	const mk = /^mk:ref(\d+)$/i.exec(destKey);
-	if (!mk) return null;
-	const n = Number.parseInt(mk[1] ?? "", 10);
-	return Number.isNaN(n) ? null : n;
+	if (mk) {
+		const n = Number.parseInt(mk[1] ?? "", 10);
+		return Number.isNaN(n) ? null : n;
+	}
+	const cr = /^(?:ch\d*)?cr(\d+)$/i.exec(destKey);
+	if (cr) {
+		const n = Number.parseInt(cr[1] ?? "", 10);
+		return Number.isNaN(n) ? null : n;
+	}
+	const bib = /^bib(\d{3,})$/i.exec(destKey);
+	if (bib) {
+		const n = Number.parseInt(bib[1] ?? "", 10);
+		return Number.isNaN(n) ? null : n;
+	}
+	return null;
 }
 
 /** Build an ACS-style dest key for bibliography index N. */
@@ -276,7 +308,12 @@ export function expandCitationLinkCluster(
 export type CitationDestKeyMap = ReadonlyMap<string, string>;
 
 /** Kind of numbered object a cross-reference points at. */
-export type CrossrefKind = "figure" | "table" | "equation" | "algorithm";
+export type CrossrefKind =
+	| "figure"
+	| "table"
+	| "equation"
+	| "algorithm"
+	| "reference";
 
 /** `pageIndex:pdfY` → kind of the numbered object at that destination. */
 export type CrossrefDestMap = ReadonlyMap<string, CrossrefKind>;
@@ -372,7 +409,43 @@ export type PdfDestMaps = {
 	 * every bibliography entry on a page shares one `/FitR` coordinate.
 	 */
 	citationLinks: CitationLinkKeyList;
+	/**
+	 * Lower-left corner of each page's visible box (CropBox ∩ MediaBox), in
+	 * PDF user space. Destinations and annotation rects are in user space;
+	 * EmbedPDF page sizes and text rects are relative to this box, so a page
+	 * whose box does not start at (0, 0) needs the shift — see
+	 * {@link destinationInPageBox}.
+	 */
+	pageOrigins: readonly PageOrigin[];
+	/**
+	 * Links whose own named destination is neither a citation nor a numbered
+	 * float (sections, theorems, footnotes, …). Their target coordinate may
+	 * coincide with a float or bibliography anchor, so coordinate lookups must
+	 * not claim them.
+	 */
+	otherNamedLinks: readonly LinkRectLike[];
 };
+
+/** Lower-left corner of a page's visible box in PDF user space. */
+export type PageOrigin = { x: number; y: number };
+
+/**
+ * Shift a PDF destination (user space, as PDFium reports it) into its page's
+ * visible box, the space EmbedPDF page sizes, text rects and layout regions
+ * use. Identity for the usual box at (0, 0) and when origins are unknown.
+ * Coordinate map keys (`citationDestKey`) stay in raw user space.
+ */
+export function destinationInPageBox<
+	T extends { pageIndex: number; pdfX: number | null; pdfY: number },
+>(destination: T, origins: readonly PageOrigin[] | null | undefined): T {
+	const origin = origins?.[destination.pageIndex];
+	if (!origin || (origin.x === 0 && origin.y === 0)) return destination;
+	return {
+		...destination,
+		pdfX: destination.pdfX != null ? destination.pdfX - origin.x : null,
+		pdfY: destination.pdfY - origin.y,
+	};
+}
 
 // ---- Pluggable destination-name parsers ----
 
@@ -486,10 +559,39 @@ export const acsCrossrefParser: CrossrefNameParser = (name) => {
 	return null;
 };
 
+/**
+ * Springer / LNCS and related publisher destinations. Emits `ch<N>Fig<M>` / `Fig<M>`,
+ * `ch<N>Tab<M>` / `Tab<M>`, `ch<N>Eq<M>` / `Eq<M>`, `ch<N>Alg<M>` / `Alg<M>`.
+ */
+export const springerCrossrefParser: CrossrefNameParser = (name) => {
+	const fig = /^(?:ch\d*)?fig(\d+)[a-z]?$/i.exec(name);
+	if (fig) {
+		const n = Number.parseInt(fig[1] ?? "", 10);
+		return Number.isNaN(n) ? null : { kind: "figure", number: n };
+	}
+	const tbl = /^(?:ch\d*)?tab(\d+)[a-z]?$/i.exec(name);
+	if (tbl) {
+		const n = Number.parseInt(tbl[1] ?? "", 10);
+		return Number.isNaN(n) ? null : { kind: "table", number: n };
+	}
+	const eq = /^(?:ch\d*)?eq(\d+)[a-z]?$/i.exec(name);
+	if (eq) {
+		const n = Number.parseInt(eq[1] ?? "", 10);
+		return Number.isNaN(n) ? null : { kind: "equation", number: n };
+	}
+	const alg = /^(?:ch\d*)?alg(\d+)[a-z]?$/i.exec(name);
+	if (alg) {
+		const n = Number.parseInt(alg[1] ?? "", 10);
+		return Number.isNaN(n) ? null : { kind: "algorithm", number: n };
+	}
+	return null;
+};
+
 /** Built-in cross-reference name parsers, tried in order. */
 export const defaultCrossrefNameParsers: CrossrefNameParser[] = [
 	hyperrefCrossrefParser,
 	acsCrossrefParser,
+	springerCrossrefParser,
 ];
 
 /** Standard hyperref citation name: `cite.<bibtexKey>`. */
@@ -508,10 +610,21 @@ export const acsCitationParser: CitationNameParser = (name) => {
 	return null;
 };
 
+/**
+ * Springer / LNCS citation names: `ch<N>CR<M>` or `CR<M>`. Also handles
+ * ACM numbered bibliography destinations like `Bib0001`.
+ */
+export const springerCitationParser: CitationNameParser = (name) => {
+	if (/^(?:ch\d*)?cr\d+$/i.test(name)) return name;
+	if (/^bib\d{3,}$/i.test(name)) return name;
+	return null;
+};
+
 /** Built-in citation name parsers, tried in order. */
 export const defaultCitationNameParsers: CitationNameParser[] = [
 	hyperrefCitationParser,
 	acsCitationParser,
+	springerCitationParser,
 ];
 
 // ---- Pluggable destination-coordinate resolvers ----
@@ -734,6 +847,8 @@ export async function buildPdfDestMaps(
 		crossrefLabels: new Map(),
 		crossrefLinks: [],
 		citationLinks: [],
+		pageOrigins: [],
+		otherNamedLinks: [],
 	};
 	const doc = await PDFDocument.load(bytes, { updateMetadata: false });
 	const context = doc.context;
@@ -755,6 +870,7 @@ export async function buildPdfDestMaps(
 	const crossLabelsByCoord = new Map<string, CrossrefDestLabel[]>();
 	const crossrefLinks: CrossrefLinkLabel[] = [];
 	const citationLinks: CitationLinkKey[] = [];
+	const otherNamedLinks: LinkRectLike[] = [];
 
 	const crossrefParsers = options.crossrefParsers ?? defaultCrossrefNameParsers;
 	const citationParsers = options.citationParsers ?? defaultCitationNameParsers;
@@ -832,20 +948,10 @@ export async function buildPdfDestMaps(
 	for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
 		const page = pages[pageIndex];
 		if (!page) continue;
-		const pageHeight = page.getHeight();
-		// EmbedPDF uses CropBox origin when present (else MediaBox / 0,0).
-		const cropBox = page.node.CropBox();
-		const mediaBox = page.node.MediaBox();
-		const boxArr = (cropBox ?? mediaBox)?.asArray() ?? [];
-		const boxNum = (index: number): number => {
-			const raw = boxArr[index];
-			if (raw == null) return 0;
-			const looked = context.lookup(raw);
-			if (looked instanceof PDFNumber) return looked.asNumber();
-			return 0;
-		};
-		const boxOriginX = boxNum(0);
-		const boxOriginY = boxNum(1);
+		const box = visiblePageBox(page);
+		const pageHeight = box.height;
+		const boxOriginX = box.x;
+		const boxOriginY = box.y;
 
 		const annotsRef = page.node.get(PDFName.of("Annots"));
 		if (!annotsRef) continue;
@@ -863,7 +969,7 @@ export async function buildPdfDestMaps(
 
 			const citationKey = parseCitationKey(destName);
 			const crossMatch = citationKey ? null : parseCrossref(destName);
-			if (!citationKey && (!crossMatch || crossMatch.number == null)) continue;
+			if (crossMatch && crossMatch.number == null) continue;
 
 			const rect = context.lookup(annot.get(PDFName.of("Rect")));
 			if (!(rect instanceof PDFArray) || rect.asArray().length < 4) continue;
@@ -900,6 +1006,14 @@ export async function buildPdfDestMaps(
 					h: device.h,
 					label: { kind: crossMatch.kind, number: crossMatch.number },
 				});
+			} else {
+				otherNamedLinks.push({
+					pageIndex,
+					x: device.x,
+					y: device.y,
+					w: device.w,
+					h: device.h,
+				});
 			}
 		}
 	}
@@ -911,7 +1025,33 @@ export async function buildPdfDestMaps(
 		crossrefLabels: crossLabelsByCoord,
 		crossrefLinks,
 		citationLinks,
+		pageOrigins: pages.map((page) => {
+			const box = visiblePageBox(page);
+			return { x: box.x, y: box.y };
+		}),
+		otherNamedLinks,
 	};
+}
+
+/**
+ * The box PDFium renders and EmbedPDF measures: CropBox clipped to MediaBox
+ * (pdf-lib's `getCropBox` alone may report a CropBox larger than, and offset
+ * from, the MediaBox).
+ */
+function visiblePageBox(page: PDFPage): {
+	x: number;
+	y: number;
+	width: number;
+	height: number;
+} {
+	const media = page.getMediaBox();
+	const crop = page.getCropBox();
+	const x = Math.max(media.x, crop.x);
+	const y = Math.max(media.y, crop.y);
+	const right = Math.min(media.x + media.width, crop.x + crop.width);
+	const top = Math.min(media.y + media.height, crop.y + crop.height);
+	if (right <= x || top <= y) return media;
+	return { x, y, width: right - x, height: top - y };
 }
 
 /**

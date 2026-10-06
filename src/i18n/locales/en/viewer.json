@@ -148,7 +148,8 @@
 		"kindFigure": "Figure",
 		"kindTable": "Table",
 		"kindEquation": "Equation",
-		"kindAlgorithm": "Algorithm"
+		"kindAlgorithm": "Algorithm",
+		"kindReference": "Reference"
 	},
 	"figures": {
 		"title": "Analysis",

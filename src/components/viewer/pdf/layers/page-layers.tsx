@@ -68,6 +68,7 @@ import { PDF_VISUAL_REGION_FRAME_CLASS } from "@/components/viewer/pdf/layers/vi
 import { commentForVisibleTranslation } from "@/components/viewer/pdf/marks-index";
 import type {
 	PageAnnotationComment,
+	ScreenPoint,
 	SelectionCommentDraft,
 } from "@/components/viewer/pdf/types";
 import { cn } from "@/lib/core/utils";
@@ -455,7 +456,10 @@ export type PdfPageHandlers = {
 	onCardHoverLeave: () => void;
 	onCitationActivate: (link: PdfLinkAnnoObject) => void;
 	onTextLinkActivate: (url: string) => void;
-	onCitationHover: (link: PdfLinkAnnoObject | null) => void;
+	onCitationHover: (
+		link: PdfLinkAnnoObject | null,
+		clientPoint?: ScreenPoint | null,
+	) => void;
 	onRegionSelect: (page: number, region: PdfAskNormalizedRect) => void;
 	/** Click a figure / table / algorithm / formula hit target → crop + draft card. */
 	onLayoutRegionClick: (region: PdfLayoutRegion) => void;
