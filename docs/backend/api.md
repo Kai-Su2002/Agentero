@@ -2374,7 +2374,7 @@ CLI 不再暴露 usage 命令；查询与清理通过桌面端设置 / Host API 
 | `feeds_mark_imported` | 标记本机已入库 |
 | `feeds_resolve_body` | 打开详情时抓全文 → Markdown |
 
-### 3.10.5 广场 arXiv 推荐（catalog `embed_cache` / `arxiv_rec_state`）
+### 3.10.5 广场 arXiv 推荐（catalog `embed_cache` / `discovery_runs`）
 
 用 Vault 论文库摘要当语料，对当天 arXiv 新论文做 embedding 相似度 + 时间衰减排序。规格见 [../development/plaza.md](../development/plaza.md) §3.4。
 
@@ -2383,8 +2383,8 @@ CLI 不再暴露 usage 命令；查询与清理通过桌面端设置 / Host API 
 | `recommend_arxiv` | `{ vaultPath, categories?, topN?, force? }` → 排序结果。`categories` 缺省取上次运行、再缺省取 `cs.AI/cs.CL/cs.LG/cs.CV/stat.ML`；`topN` 默认 20（clamp 1–100） |
 | `recommend_arxiv_last` | `{ vaultPath }` → 上次结果或 `null`，只读不算 |
 
-- **陈旧短路**：非 `force` 且 `computed_at` 为当天、分类集合一致时，直接返回存量，不发任何网络请求。所以 `vault:opened` 的预热调用通常是零成本的。
-- **缓存**：`embed_cache(text_hash, model, dim, vector)` 按 sha256(title+abstract)+model 存小端 f32 向量，语料只 embed 一次；主键含 model，所以换 embedding 模型不会读到旧向量。`arxiv_rec_state` 单行存上次运行，**不按 model 建键**：切换 embedding 来源后的当天首次运行仍会复用存量结果，除非 `force`（既存行为）。均在 catalog schema v6。
+- **陈旧短路**：非 `force` 且命中缓存键、`computed_at` 为当天、结果非空时，直接返回存量，不发任何网络请求。所以 `vault:opened` 的预热调用通常是零成本的。
+- **缓存**：`embed_cache(text_hash, model, dim, vector)` 按 sha256(title+abstract)+model 存小端 f32 向量，语料只 embed 一次；主键含 model，所以换 embedding 模型不会读到旧向量。运行结果落在多行表 `discovery_runs`（schema v8），`key = sha256(source|model|topN|分类)`：换 model / `topN` / 分类都是独立槽位，`recommend_arxiv_last` 取最新一行。旧的单行 `arxiv_rec_state`（v6）保留给旧库、不再写入。
 - **凭据**：读设置 `embedding`。`source`（`"builtin"` | `"custom"`）决定用哪一套：非 `custom` 且本次构建注入了内置 provider key 时用构建期网关三元组，否则用已存的 Base URL / API Key / Model；空配置会返回 `recommend.no_embedding`。请求都是 `POST {baseUrl}/embeddings`（OpenAI 兼容）。见 [builtin-provider.md](builtin-provider.md) §Embedding。
 - **结构化错误**（前端转空态）：`recommend.no_embedding` 端点未配置（自定义来源缺字段，或构建无内置 key 且未填 BYOK）、`recommend.empty_corpus` 库里没摘要、`recommend.no_candidates` 分类下无新论文。
 

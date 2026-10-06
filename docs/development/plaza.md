@@ -205,14 +205,16 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 | 向量 | `POST {baseUrl}/embeddings`（batch，OpenAI 兼容），凭据取自设置 → Agent → Embedding：`source` 为 `builtin`（默认，需构建期注入了内置 provider key）时用内置网关三元组，为 `custom` 时用用户自填的 Base URL / API Key / Model | `core::http::client_builder`；请求形状抄 `translate_openai_compatible` |
 | 打分 | 归一化后 cosine；语料权重 `w_i = 1/(1+log10(i+1))` 归一化 → `score = Σ sim·w`，降序取 Top-20 | — |
 
-**缓存进 `catalog.sqlite`（schema v6）**，不新建库：
+**缓存进 `catalog.sqlite`**，不新建库：
 
 | 表 | 作用 |
 |---|---|
 | `embed_cache(text_hash, model, dim, vector)` | 摘要向量，key = sha256(title+abstract) + model；**语料只 embed 一次**，之后每天只为新增摘要付费。`vector` 是小端 f32 |
-| `arxiv_rec_state(id=1, computed_at, categories_json, results_json)` | 上次运行结果，页面/vault 打开可直接渲染 |
+| `discovery_runs(key, source, computed_at, params_json, results_json)` | **多行**运行结果，一行一个 `(source, model, categories, top_n)` 组合（schema v8）。`recommend_arxiv_last` 取 `computed_at` 最新一行；旧的单行 `arxiv_rec_state`（v6）保留给旧库、不再写入 |
 
-**陈旧判定**：非 `force` 且 `computed_at` 是**当天**且分类集合未变 → 直接返回存量，完全不碰网络。换分类、跨天、或点刷新才重算。
+**缓存键**：`key = sha256(source | model | top_n | 分类集合)`。换分类 / 换 embedding 模型 / 改 `top_n` 都是不同槽位，互不覆盖，也不会出现「请求 50 条返回缓存的 20 条」。
+
+**陈旧判定**：非 `force` 且命中该键、`computed_at` 是**当天**、结果非空 → 直接返回存量，完全不碰网络。跨天、键不符、或点刷新才重算。未配置 model 时（算不出键）回退读最新一行做当天短路，保证页面/预热在端点暂不可用时仍能渲染存量。
 
 **命令**：`recommend_arxiv`（算，含 stale 短路）、`recommend_arxiv_last`（只读存量）。`AppSettingsStore` 必须在 `.await` 之前读（managed state 不能跨 await）。
 
@@ -222,7 +224,7 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 
 **页面**（`src/components/plaza/plaza-arxiv-rec-view.tsx`）
 
-- **header**：分类 chip 多选（默认 `ARXIV_FEED_CHIPS`，与订阅共用常量）+ 上次计算时间 + 刷新按钮。**不进 app settings** —— 分类就是页面状态，持久化在 `arxiv_rec_state`。
+- **header**：分类 chip 多选（默认 `ARXIV_FEED_CHIPS`，与订阅共用常量）+ 上次计算时间 + 刷新按钮。**不进 app settings** —— 分类就是页面状态，持久化在 `discovery_runs.params_json`。
 - **body**：卡片列表（标题 / arXiv id / 分数 / 摘要三行截断），右上角**阅读**（在应用内打开远程 PDF，不写盘）+ 外链 + 一键入库（走 `lookupSubmit`，与订阅同一条魔棒路线）。
 - **空态分三种**并给对应出路：未配置 embedding（构建没有内置 key，且用户也没填自定义端点）→ 「打开 Agent 设置」按钮；库里没摘要 → 引导先导入论文；分类下无新论文 → 提示换分类。
 
@@ -230,8 +232,8 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 
 - 首次或大库的整库 embedding 会慢一次（上千篇），之后靠 `embed_cache` 只增量；候选每天仅数十篇。接受首启一次性成本，换掉「每次都重算」。
 - 分类/Top-N 不做设置项：Top-20 是常量，分类留在 header。少一层配置面板。
-- `embed_cache` 主键是 `(text_hash, model)`，所以换 embedding 模型是缓存 miss、整库重 embed 一次（不是维度混用）；打分处的维度不匹配记 0 分只是防御性兜底。换来源后建议点一次刷新，见下条。
-- **`arxiv_rec_state` 不按 model 建键**：当天已排序的结果在切换 embedding 来源后的首次运行仍会被复用（陈旧短路只看 `computed_at` 是否当天 + 分类集合是否一致），除非 `force`。既存行为，未随内置 provider 一起改。
+- `embed_cache` 主键是 `(text_hash, model)`，所以换 embedding 模型是缓存 miss、整库重 embed 一次（不是维度混用）；打分处的维度不匹配记 0 分只是防御性兜底。
+- **运行结果按 model / top_n / 分类建键**（v8 `discovery_runs`）：切换 embedding 来源或改 `top_n` 后当天首次运行就是 miss、正常重算，不再复用旧结果（旧单行 `arxiv_rec_state` 的已知问题已修）。
 - **隐私**：摘要会发给当前 embedding 来源的端点。`source: "custom"` 时是用户自己配置的 BYOK 端点；`source: "builtin"`（构建注入了内置 provider key 时的默认）时是产品方自己的网关 `https://api.qiyuanchen.top/v1`——也就是说**新装用户在默认配置下就会把库内摘要发到该网关**，要避开必须显式切到 custom 并留空（功能随之禁用）。构建没有内置 key 时行为回到从前：未配置则整个功能静默不跑。详见 [`../backend/builtin-provider.md`](../backend/builtin-provider.md)。
 
 ### 3.5 ModelScope 论文（已实现）
@@ -273,7 +275,7 @@ papers.cool 给几乎所有链接都加了 `target="_blank"`（单个分区页�
 
 | 模块 | 关系 |
 |---|---|
-| Library | arXiv Daily 读 `paper_list` 当语料；缓存表 `embed_cache` / `arxiv_rec_state` 落在 catalog（schema v6），不动 `papers` 表 |
+| Library | arXiv Daily 读 `paper_list` 当语料；缓存表 `embed_cache` / `discovery_runs` 落在 catalog（v6 + v8），不动 `papers` 表 |
 | 魔棒 / 入库 | **已复用** `lookup_import_batch`：喂上游 URL，见 §3.2.1。订阅论文卡走同一条 |
 | 订阅 | 独立 XDG `feeds.sqlite`，不进 catalog；见 [`plaza-feeds.md`](plaza-feeds.md) |
 | PDF\|NOTES | 推荐打开本地论文时走现有阅读布局 |

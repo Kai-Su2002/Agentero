@@ -8,6 +8,9 @@
 //! - v6: arXiv recommendation caches (`embed_cache`, `arxiv_rec_state`)
 //! - v7: data migration — normalize timestamp columns to canonical RFC 3339
 //!   millis (string `ORDER BY updated_at` breaks on mixed precision/offsets)
+//! - v8: multi-row discovery runs (`discovery_runs`) keyed by
+//!   source/model/categories/top_n, superseding the single-row
+//!   `arxiv_rec_state` (kept for old DBs; no longer written)
 
 use crate::error::AppError;
 use rusqlite::Connection;
@@ -17,7 +20,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Current catalog schema version written to `schema_meta`.
-pub const SCHEMA_VERSION: i32 = 7;
+pub const SCHEMA_VERSION: i32 = 8;
 
 const DDL_V1: &str = r#"
 CREATE TABLE IF NOT EXISTS schema_meta (
@@ -124,6 +127,24 @@ CREATE TABLE IF NOT EXISTS arxiv_rec_state (
     categories_json TEXT NOT NULL,
     results_json    TEXT NOT NULL
 );
+"#;
+
+/// Schema v8: multi-row discovery runs.
+///
+/// One row per `(source, model, categories, top_n)` combination so different
+/// queries coexist instead of overwriting each other. `key` is a stable hash of
+/// those inputs; `params_json` stores them verbatim for cache reads (and for
+/// "last run" fallbacks). Supersedes the single-row `arxiv_rec_state`, which is
+/// left in place for old databases but no longer written.
+const MIGRATE_V7_TO_V8: &str = r#"
+CREATE TABLE IF NOT EXISTS discovery_runs (
+    key          TEXT PRIMARY KEY NOT NULL,
+    source       TEXT NOT NULL,
+    computed_at  TEXT NOT NULL,
+    params_json  TEXT NOT NULL,
+    results_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_discovery_runs_computed_at ON discovery_runs(computed_at DESC);
 "#;
 
 /// Absolute path to `{vault}/.agentero/catalog.sqlite`.
@@ -360,6 +381,19 @@ fn migrate(conn: &Connection) -> Result<(), AppError> {
         set_schema_version(conn, 7)?;
     }
 
+    let version = schema_version(conn).unwrap_or(0);
+    if version < 8 {
+        for stmt in MIGRATE_V7_TO_V8.split(';') {
+            let s = stmt.trim();
+            if s.is_empty() {
+                continue;
+            }
+            conn.execute_batch(&format!("{s};"))
+                .map_err(|e| AppError::message(format!("catalog migrate v8: {e}")))?;
+        }
+        set_schema_version(conn, 8)?;
+    }
+
     Ok(())
 }
 
@@ -427,15 +461,24 @@ mod tests {
             .unwrap();
         assert_eq!(has_zotero, 2);
 
-        // v6 recommendation cache tables exist
+        // v6 recommendation caches + v8 multi-row discovery runs exist
         let has_rec_tables: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('embed_cache', 'arxiv_rec_state')",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name IN ('embed_cache', 'arxiv_rec_state', 'discovery_runs')",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(has_rec_tables, 2);
+        assert_eq!(has_rec_tables, 3);
+
+        let discovery_runs_ok: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('discovery_runs') WHERE name IN ('key', 'source', 'params_json', 'results_json')",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(discovery_runs_ok, 4);
 
         // Idempotent second open
         drop(conn);
@@ -480,8 +523,10 @@ mod tests {
             .unwrap();
         }
 
-        let conn = ensure_catalog(&dir).expect("migrate v7");
-        assert_eq!(schema_version(&conn).unwrap(), 7);
+        // Reopening from v6 replays the remaining migrations (v7 normalization,
+        // then v8 discovery_runs) up to current.
+        let conn = ensure_catalog(&dir).expect("migrate past v6");
+        assert_eq!(schema_version(&conn).unwrap(), SCHEMA_VERSION);
 
         let get = |path: &str, col: &str| {
             let sql = format!("SELECT {col} FROM papers WHERE path = '{path}'");
@@ -545,7 +590,7 @@ mod tests {
         .unwrap();
         drop(conn);
         let conn = ensure_catalog(&dir).expect("re-migrate");
-        assert_eq!(schema_version(&conn).unwrap(), 7);
+        assert_eq!(schema_version(&conn).unwrap(), SCHEMA_VERSION);
         let get = |path: &str, col: &str| {
             let sql = format!("SELECT {col} FROM papers WHERE path = '{path}'");
             conn.query_row(&sql, [], |r| r.get::<_, String>(0)).unwrap()

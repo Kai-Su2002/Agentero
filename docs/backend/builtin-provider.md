@@ -216,7 +216,7 @@
 2. **模板空格待 A/B**：arXiv Hunyuan-MT 技术报告渲染为 `…explanation. <source_text>`（**有**空格），实现用的是模型文档模板的无空格形式。值得一次真实对比再定。
 3. **`temperature = 0.2`** 沿用仓库惯例；技术报告没有规定解码参数。
 4. **多段翻译没有全局 deadline**：最坏墙钟时间是 `ceil(n/3) × timeout`（`timeout` 默认 30s，钳制 1–30s）。整篇 PDF 的一批最多十几段，实测前不设总闸。
-5. **`arxiv_rec_state` 不按 model 建键**：当日已排序结果在切换 embedding 来源后的首次运行会被复用，除非 `force`。既存行为，本次不改（详见 [../development/plaza.md](../development/plaza.md) §3.4）。
+5. ~~**`arxiv_rec_state` 不按 model 建键**~~ **已修**（schema v8 `discovery_runs`）：运行结果键含 model / top_n / 分类，切换 embedding 来源后当天首次运行即重算，不再复用旧结果（详见 [../development/plaza.md](../development/plaza.md) §3.4）。
 6. **目标语言只有 en / zh-CN**：扩到 Hunyuan-MT 的 37 语言需要同时改 `TR_TARGETS`、前端 `TranslateTargetLang` union 与目标语言选择器，并在 `hunyuan_target_name` 补映射。
 7. **内嵌 key → per-install activation token**：由网关签发、可吊销、可做 per-user 配额；客户端 provider 形状不变。这是内嵌 key 可提取问题的真正解法。
 8. **新手引导没有「Agentero 内置」这一档**：`translate` / `layout` 两个引导步只有「填自己的 Key」与「用免费引擎 / 本地模型」二选一。`translate-step.tsx` 的「用系统默认」原先写入静态前端默认值、会覆盖 Host 解析出的内置默认，现已改为按可用性解析（与 `default_translate_provider()` 一致），因此一路点过引导不再丢失内置默认；但引导界面本身仍未把内置作为显式选项呈现。见 [../frontend/onboarding.md](../frontend/onboarding.md)。
