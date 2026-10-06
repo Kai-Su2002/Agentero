@@ -36,7 +36,7 @@ src-tauri/src/
     web/        # agentero-web 通用网页代理（allowlist + web_proxy_allow_host，网页论文 iframe 划词用）
     pdf/        # export
     markdown/   # wiki commands、search
-    system/     # settings、builtin（构建期内置 provider 凭证）
+    system/     # settings、builtin（构建期内置 provider 凭证）、desktop_apps（本地桌面应用检测）
     decision/   # 决策层装配（DecisionEngine + providers + schemas）
     agent/ jobs/ lifecycle（job 事件）
   integration/  # connector、mcp、remote、bridge、sync（desktop-only）
@@ -121,6 +121,7 @@ src-tauri/src/
 | 云同步（S3） | [sync.md](sync.md) |
 | 搜索 | [search.md](search.md) |
 | 设置 | [settings.md](settings.md) |
+| 本地桌面应用检测 | [desktop-apps.md](desktop-apps.md) |
 | 翻译 | [translate.md](translate.md) |
 | 内置 Provider（构建期凭证） | [builtin-provider.md](builtin-provider.md) |
 | 日志 | [logging.md](logging.md) |

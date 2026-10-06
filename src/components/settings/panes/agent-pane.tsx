@@ -3,6 +3,7 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentCommonRows } from "@/components/settings/agent-common-rows";
 import { AgentModelPicker } from "@/components/settings/agent-model-picker";
+import { DesktopAppsSection } from "@/components/settings/desktop-apps-rows";
 import {
 	AgentCatalogRows,
 	RemoteAgentCatalogRow,
@@ -199,6 +200,8 @@ export function AgentPane({
 			<p className="mt-2 mb-3 px-0.5 text-muted-foreground text-xs leading-relaxed">
 				{t("agent.commonAgentsHint")}
 			</p>
+
+			<DesktopAppsSection />
 
 			<AgentPersonalPromptBlock settings={settings} patch={patch} />
 

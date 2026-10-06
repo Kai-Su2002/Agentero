@@ -52,6 +52,8 @@ fn export_typescript_bindings() {
             crate::features::agent::commands::doctor_open_agent_login_terminal,
             crate::features::agent::commands::doctor_open_agent_cli_terminal,
             crate::features::system::network::commands::doctor_check_network,
+            crate::features::system::desktop_apps::commands::desktop_apps_probe,
+            crate::features::system::desktop_apps::commands::desktop_app_open,
             crate::features::agent::commands::agent_cancel_run,
             crate::features::jobs::commands::job_parse_refs_enqueue,
             crate::features::jobs::commands::job_parse_body_enqueue,

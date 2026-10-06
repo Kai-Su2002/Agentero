@@ -298,6 +298,16 @@
 		"desktopHint": "Run `pnpm tauri dev` to scan agents on this machine.",
 		"commonAgents": "Common agents",
 		"commonAgentsHint": "If ACP fails, try configuring a proxy under General.",
+		"desktopApps": {
+			"section": "Local desktop apps",
+			"hint": "These popular desktop apps do not support ACP yet, so they cannot be connected as Agents here.",
+			"scanning": "Detecting…",
+			"unsupported": "Not supported yet",
+			"open": "Open {{name}}",
+			"chatgpt": "ChatGPT",
+			"qwenwork": "QwenWork",
+			"workbuddy": "WorkBuddy"
+		},
 		"defaultAgent": {
 			"section": "Default agent",
 			"label": "Default Agent",
