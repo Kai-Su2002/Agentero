@@ -41,7 +41,9 @@ import {
 import {
 	applyCachedHistoryTitles,
 	getCachedHistoryTitle,
+	getOverriddenHistoryTitle,
 	setCachedHistoryTitle,
+	setUserHistoryTitle,
 } from "@/lib/agent/history-title-cache";
 import {
 	displayHistoryTitle,
@@ -152,7 +154,7 @@ export async function hydrateSessionTitles(
 			if (cached) {
 				setSessionHistory((prev) =>
 					prev.map((s) =>
-						s.id === item.id && s.agentId === item.agentId
+						s.id === item.id && s.agentId === item.agentId && !s.titleLocked
 							? { ...s, title: cached }
 							: s,
 					),
@@ -182,7 +184,9 @@ export async function hydrateSessionTitles(
 			setCachedHistoryTitle(selectedAgentId, providerSessionId, title);
 			setSessionHistory((prev) =>
 				prev.map((s) =>
-					s.id === item.id && s.agentId === item.agentId ? { ...s, title } : s,
+					s.id === item.id && s.agentId === item.agentId && !s.titleLocked
+						? { ...s, title }
+						: s,
 				),
 			);
 		} catch {
@@ -198,6 +202,7 @@ export function sessionsNeedingTitleHydration(
 ): AgentSessionRecord[] {
 	return sessions.filter((session) => {
 		if (session.agentId !== agentId) return false;
+		if (session.titleLocked) return false;
 		if (session.lines.length > 0 && titleFromSessionLines(session.lines)) {
 			return false;
 		}
@@ -209,6 +214,31 @@ export function sessionsNeedingTitleHydration(
 			isSessionIdPrefixTitle(title, providerId)
 		);
 	});
+}
+
+/** Rename a history row and persist the title as a user override (#710). */
+export function renameHistorySessionTitle(
+	item: Pick<
+		AgentSessionRecord,
+		"id" | "agentId" | "providerSessionId" | "title"
+	>,
+	nextTitle: string,
+): string | null {
+	const cleaned = nextTitle.trim();
+	if (!cleaned) return null;
+	const title = displayHistoryTitle(cleaned, "");
+	if (!title) return null;
+	setUserHistoryTitle(item.agentId, item.id, title, item.providerSessionId);
+	agentSessionStore
+		.getState()
+		.setSessions((prev) =>
+			prev.map((session) =>
+				session.id === item.id && session.agentId === item.agentId
+					? { ...session, title, titleLocked: true }
+					: session,
+			),
+		);
+	return title;
 }
 
 type MergeImportedSessionsResult = {
@@ -252,15 +282,27 @@ export function mergeImportedSessions(
 		// Never seed with the session-id prefix: that blocks HistorySessionList's
 		// user-prompt fallback (#484) because displayHistoryTitle treats any
 		// non-empty string as a real title.
+		// User renames (#710) always win via titleLocked / override cache.
 		const fromLines = current ? titleFromSessionLines(current.lines) : "";
 		const priorTitle = current?.title?.trim() ?? "";
 		const priorIsIdPlaceholder =
 			Boolean(priorTitle) &&
 			(isSessionIdPrefixTitle(priorTitle, session.sessionId) ||
 				(current != null && isSessionIdPrefixTitle(priorTitle, current.id)));
-		const title = acpTitle
-			? displayHistoryTitle(acpTitle, "")
-			: fromLines || (priorTitle && !priorIsIdPlaceholder ? priorTitle : "");
+		const overridden =
+			getOverriddenHistoryTitle(
+				selectedAgentId,
+				current?.id ?? session.sessionId,
+				session.sessionId,
+			) ||
+			(current?.titleLocked && priorTitle && !priorIsIdPlaceholder
+				? priorTitle
+				: null);
+		const title = overridden
+			? overridden
+			: acpTitle
+				? displayHistoryTitle(acpTitle, "")
+				: fromLines || (priorTitle && !priorIsIdPlaceholder ? priorTitle : "");
 
 		if (current) {
 			const record: AgentSessionRecord = {
@@ -271,6 +313,7 @@ export function mergeImportedSessions(
 						: ("external" as const),
 				agentName,
 				title,
+				titleLocked: Boolean(overridden) || current.titleLocked,
 				startedAt: current.startedAt || startedAt,
 				providerSessionId: session.sessionId,
 			};
@@ -285,13 +328,14 @@ export function mergeImportedSessions(
 			agentId: selectedAgentId,
 			source: "external" as const,
 			title,
+			...(overridden ? { titleLocked: true as const } : {}),
 			agentName,
 			startedAt,
 			lines: [],
 			status: "completed" as const,
 			providerSessionId: session.sessionId,
 		};
-		if (!acpTitle) {
+		if (!acpTitle && !overridden) {
 			hydrationCandidates.push(record);
 		}
 		return record;

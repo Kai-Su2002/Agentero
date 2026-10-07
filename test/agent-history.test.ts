@@ -3,12 +3,16 @@ import {
 	hydrateSessionTitles,
 	isSessionIdPrefixTitle,
 	mergeImportedSessions,
+	renameHistorySessionTitle,
 	sanitizeChatLines,
 	sessionsNeedingTitleHydration,
 	titleFromLoadedHistory,
 } from "@/components/agent/hooks/use-agent-history";
 import * as agentApi from "@/lib/agent";
-import type { AgentSessionRecord } from "@/lib/agent/agent-session-store";
+import {
+	type AgentSessionRecord,
+	agentSessionStore,
+} from "@/lib/agent/agent-session-store";
 import type { AcpSessionInfo } from "@/lib/agent/api";
 import * as titleCache from "@/lib/agent/history-title-cache";
 
@@ -264,6 +268,38 @@ describe("mergeImportedSessions", () => {
 		expect(sessions[0].title).toBe("Earlier hydrated title");
 		expect(hydrationCandidates).toHaveLength(0);
 	});
+
+	it("keeps a user-renamed title over a newer ACP title (#710)", () => {
+		vi.spyOn(titleCache, "getOverriddenHistoryTitle").mockReturnValue(
+			"My rename",
+		);
+		const prev = [
+			makeRecord({
+				id: "s1",
+				source: "external",
+				title: "My rename",
+				titleLocked: true,
+				lines: [],
+				providerSessionId: "s1",
+			}),
+		];
+		const chatSessions = [
+			makeAcpSession({ sessionId: "s1", title: "ACP pushed title" }),
+		];
+
+		const { sessions, hydrationCandidates } = mergeImportedSessions(
+			prev,
+			chatSessions,
+			"agent-1",
+			"Agent",
+			"zh-CN",
+		);
+
+		expect(sessions[0].title).toBe("My rename");
+		expect(sessions[0].titleLocked).toBe(true);
+		expect(hydrationCandidates).toHaveLength(0);
+		vi.mocked(titleCache.getOverriddenHistoryTitle).mockRestore();
+	});
 });
 
 describe("sessionsNeedingTitleHydration", () => {
@@ -281,9 +317,38 @@ describe("sessionsNeedingTitleHydration", () => {
 				lines: [{ id: "l1", kind: "user" as const, text: "hello" }],
 			}),
 			makeRecord({ id: "d", title: "Real title" }),
+			makeRecord({ id: "e", title: "", titleLocked: true }),
 		];
 		const need = sessionsNeedingTitleHydration(sessions, "agent-1");
 		expect(need.map((s) => s.id)).toEqual(["a", "ses_abcdxxxx"]);
+	});
+});
+
+describe("renameHistorySessionTitle", () => {
+	it("locks the title in the session store and writes an override (#710)", () => {
+		const setUser = vi
+			.spyOn(titleCache, "setUserHistoryTitle")
+			.mockImplementation(() => {});
+		const item = makeRecord({
+			id: "s1",
+			title: "Old",
+			providerSessionId: "prov-1",
+		});
+		agentSessionStore.setState({ sessions: [item], activeTabId: "s1" });
+
+		expect(renameHistorySessionTitle(item, "  New title  ")).toBe("New title");
+		expect(setUser).toHaveBeenCalledWith(
+			"agent-1",
+			"s1",
+			"New title",
+			"prov-1",
+		);
+		const updated = agentSessionStore
+			.getState()
+			.sessions.find((session) => session.id === "s1");
+		expect(updated?.title).toBe("New title");
+		expect(updated?.titleLocked).toBe(true);
+		setUser.mockRestore();
 	});
 });
 

@@ -159,6 +159,11 @@ export type ChatSessionHistoryItem = {
 	/** Durable ACP provider session id used to resume this conversation. */
 	providerSessionId?: string | null;
 	/**
+	 * When true, the title was set by the user (#710) and must not be replaced
+	 * by ACP `session/list` titles or `session_info_update` pushes.
+	 */
+	titleLocked?: boolean;
+	/**
 	 * When false, never pass sessionId to runOnce (no ACP session/resume).
 	 * Used for PDF visual-trace pin chats whose multi-turn context lives in
 	 * local lines + prompt history, not provider sessions.
