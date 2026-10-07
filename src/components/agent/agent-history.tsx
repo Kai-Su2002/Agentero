@@ -1,4 +1,4 @@
-import { History, Plus } from "lucide-react";
+import { History, Pencil, Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
@@ -6,12 +6,6 @@ import {
 	renameHistorySessionTitle,
 } from "@/components/agent/hooks/use-agent-history";
 import { Button } from "@/components/ui/button";
-import {
-	ContextMenu,
-	ContextMenuContent,
-	ContextMenuItem,
-	ContextMenuTrigger,
-} from "@/components/ui/context-menu";
 import {
 	Dialog,
 	DialogContent,
@@ -31,6 +25,12 @@ import {
 import type { ChatLine, ChatSessionHistoryItem } from "@/lib/agent/chat-state";
 import { displayHistoryTitle } from "@/lib/agent/prompt-display";
 import { cn } from "@/lib/core/utils";
+
+const HISTORY_STATUS_DOT = {
+	running: "bg-primary motion-safe:animate-pulse",
+	failed: "bg-destructive",
+	cancelled: "bg-muted-foreground",
+} as const;
 
 function historyRowLabel(item: ChatSessionHistoryItem): string {
 	const firstUserLine = item.lines.find(
@@ -90,40 +90,63 @@ export function HistorySessionList({
 				{sessionHistory.map((item) => {
 					const isActive = item.id === activeTabId;
 					const label = historyRowLabel(item);
+					const statusDot =
+						item.status === "completed"
+							? null
+							: HISTORY_STATUS_DOT[item.status];
+					const statusLabel = t(`history.status.${item.status}`);
 					return (
-						<ContextMenu key={item.id}>
-							<ContextMenuTrigger asChild>
-								<button
-									type="button"
-									disabled={submitting}
-									className={cn(
-										"flex w-full flex-col gap-1 rounded-md px-2 py-2 text-left outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
-										isActive
-											? "bg-muted text-foreground"
-											: "hover:bg-muted/70 focus-visible:bg-muted/70",
-									)}
-									onClick={() => onOpen(item)}
-								>
-									<span className="text-muted-foreground text-xs leading-none">
-										{item.agentName} · {t(`history.status.${item.status}`)}
-									</span>
-									<span className="line-clamp-2 font-medium text-sm leading-snug">
+						<div key={item.id} className="group relative">
+							<button
+								type="button"
+								disabled={submitting}
+								className={cn(
+									"flex w-full flex-col gap-1 rounded-md py-2 pr-8 pl-2 text-left outline-none transition-colors focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50",
+									isActive
+										? "bg-muted text-foreground"
+										: "group-hover:bg-muted/70 focus-visible:bg-muted/70",
+								)}
+								onClick={() => onOpen(item)}
+							>
+								<span className="flex min-w-0 items-start gap-1.5">
+									{statusDot ? (
+										<span
+											className="mt-1 inline-flex size-3 shrink-0 items-center justify-center"
+											title={statusLabel}
+										>
+											<span
+												role="img"
+												aria-label={statusLabel}
+												className={cn("size-1.5 rounded-full", statusDot)}
+											/>
+										</span>
+									) : null}
+									<span className="line-clamp-2 min-w-0 font-medium text-sm leading-snug">
 										{label}
 									</span>
-									<span className="text-muted-foreground text-xs leading-none">
-										{item.startedAt}
-									</span>
-								</button>
-							</ContextMenuTrigger>
-							<ContextMenuContent>
-								<ContextMenuItem
-									disabled={submitting}
-									onSelect={() => beginRename(item)}
-								>
-									{t("history.rename")}
-								</ContextMenuItem>
-							</ContextMenuContent>
-						</ContextMenu>
+								</span>
+								<span className="text-muted-foreground text-xs leading-none">
+									{item.startedAt}
+								</span>
+							</button>
+							<button
+								type="button"
+								className={cn(
+									// Center with auto margins. A translate would be replaced by
+									// Button's active:translate-y-px and the icon would jump.
+									"pointer-events-none absolute inset-y-0 right-1 z-10 my-auto flex size-6 items-center justify-center rounded-[min(var(--radius-md),10px)] text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring",
+									"group-hover:pointer-events-auto group-hover:opacity-100",
+									"focus-visible:pointer-events-auto focus-visible:opacity-100",
+									"disabled:pointer-events-none",
+								)}
+								aria-label={t("history.rename")}
+								title={t("history.rename")}
+								disabled={submitting}
+								onClick={() => beginRename(item)}
+							>
+								<Pencil className="size-3" aria-hidden />
+							</button>
+						</div>
 					);
 				})}
 			</div>
@@ -220,7 +243,7 @@ export function SidebarHistoryTrailing({
 						<History className="size-3.5" />
 					</Button>
 				</PopoverTrigger>
-				<PopoverContent align="end" className="w-80 p-0">
+				<PopoverContent align="end" className="w-80 gap-0 p-0">
 					<PopoverHeader className="border-b px-3 py-2">
 						<PopoverTitle className="font-medium text-sm leading-none">
 							{t("history.title")}
