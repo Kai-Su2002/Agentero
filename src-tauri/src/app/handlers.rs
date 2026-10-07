@@ -4,15 +4,18 @@
 //! branch does not duplicate the common list.
 
 /// Commands available on every platform (including iOS).
-/// Desktop-only extras are appended by the caller.
+/// Desktop-only extras are appended by the caller; `$extra` stays a raw token
+/// stream so individual entries can carry `#[cfg(...)]` (e.g. features that
+/// need the desktop PDFium stack and are absent on mobile targets).
 macro_rules! common_commands {
-    ($($extra:path),* $(,)?) => {
+    ($($extra:tt)*) => {
         ::tauri::generate_handler![
             crate::features::system::settings::commands::settings_get,
             crate::features::system::settings::commands::settings_set,
             crate::features::system::settings::commands::network_system_proxy,
             crate::features::system::settings::commands::list_system_fonts,
             crate::features::system::settings::commands::easy_scholar_probe,
+            crate::features::system::settings::commands::institution_proxy_probe,
             crate::features::system::settings::commands::easy_scholar_get_rank,
             crate::features::system::builtin::builtin_provider_status,
             crate::features::paper::analyze::layout::model_assets::commands::layout_model_status,
@@ -34,6 +37,8 @@ macro_rules! common_commands {
             crate::features::agent::commands::doctor_install_node,
             crate::features::agent::commands::doctor_check_agents,
             crate::features::system::network::commands::doctor_check_network,
+            crate::features::system::desktop_apps::commands::desktop_apps_probe,
+            crate::features::system::desktop_apps::commands::desktop_app_open,
             crate::features::agent::commands::agent_cancel_run,
             crate::features::jobs::commands::job_parse_refs_enqueue,
             crate::features::jobs::commands::job_parse_body_enqueue,
@@ -140,7 +145,7 @@ macro_rules! common_commands {
             crate::features::paper::discovery::recommend::commands::recommend_arxiv_last,
             crate::features::paper::discovery::recommend::commands::probe_embedding,
             crate::app::menu::set_locale,
-            $($extra),*
+            $($extra)*
         ]
     };
 }
@@ -166,6 +171,7 @@ pub fn attach_handlers(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<ta
             crate::features::agent::commands::agent_load_session,
             crate::features::agent::commands::agent_warm,
             crate::features::agent::commands::doctor_open_agent_login_terminal,
+            crate::features::agent::commands::doctor_open_agent_cli_terminal,
             crate::integration::remote::commands::remote_connect,
             crate::integration::remote::commands::remote_ssh_config_hosts,
             crate::integration::remote::commands::remote_disconnect,
@@ -229,6 +235,15 @@ pub fn attach_handlers(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<ta
             crate::features::compile::chktex_lint,
             crate::features::compile::root::resolve_latex_root,
             crate::features::jobs::commands::job_latex_compile_enqueue,
+            // jEV smart highlights need the desktop PDFium stack (see
+            // `features::jev`), so they are absent on mobile targets.
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            crate::features::jobs::commands::job_jev_smart_highlights_enqueue,
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            crate::features::jev::commands::jev_suggest_highlights,
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            crate::features::jev::commands::jev_probe_health,
+            crate::features::decision::commands::decide,
         ])
     }
     #[cfg(target_os = "ios")]

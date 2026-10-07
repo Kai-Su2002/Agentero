@@ -54,6 +54,22 @@ export function rectRightScreen(
 	};
 }
 
+export function rectBottomCenterScreen(
+	pageEl: HTMLElement,
+	rect: Rect,
+	zoom: number,
+): { x: number; y: number; top: number; bottom: number } {
+	const box = pageEl.getBoundingClientRect();
+	const bottom = box.top + (rect.origin.y + rect.size.height) * zoom;
+	const top = box.top + rect.origin.y * zoom;
+	return {
+		x: box.left + (rect.origin.x + rect.size.width / 2) * zoom,
+		y: bottom,
+		top,
+		bottom,
+	};
+}
+
 /**
  * Build a normalized {@link PdfAskAnchor} from an EmbedPDF text selection.
  * EmbedPDF reports rects in PDF page coordinates (points); dividing by the page

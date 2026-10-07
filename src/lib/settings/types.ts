@@ -88,6 +88,40 @@ export const AUTO_UPDATE_INTERNAL_LINKS: AutoUpdateInternalLinks[] = [
 	"always",
 ];
 
+/** PDF continuous-scroll direction (EmbedPDF scroll strategy). */
+export type PdfScrollStrategy = "vertical" | "horizontal";
+
+export const PDF_SCROLL_STRATEGIES: readonly PdfScrollStrategy[] = [
+	"vertical",
+	"horizontal",
+] as const;
+
+export function isPdfScrollStrategy(v: unknown): v is PdfScrollStrategy {
+	return (
+		typeof v === "string" &&
+		(PDF_SCROLL_STRATEGIES as readonly string[]).includes(v)
+	);
+}
+
+/**
+ * PDF page layout (EmbedPDF spread mode): one page per row (`none`), or
+ * two-page spreads paired from page 1 (`odd`) / after a standalone cover
+ * (`even`).
+ */
+export type PdfSpreadMode = "none" | "odd" | "even";
+
+export const PDF_SPREAD_MODES: readonly PdfSpreadMode[] = [
+	"none",
+	"odd",
+	"even",
+] as const;
+
+export function isPdfSpreadMode(v: unknown): v is PdfSpreadMode {
+	return (
+		typeof v === "string" && (PDF_SPREAD_MODES as readonly string[]).includes(v)
+	);
+}
+
 /**
  * How NOTES.md is initialized when a paper is imported.
  * - `standard`: built-in structured skeleton
@@ -119,6 +153,12 @@ export type AppSettings = {
 	translatorBaseUrl: string;
 	/** EasyScholar key for journal ranking and impact-factor lookups. */
 	easyScholarKey: string;
+	/** EZProxy/WebVPN prefix for paywalled PDF fallback ("" disables). */
+	institutionProxyPrefix: string;
+	/** Session cookie for institution proxy requests. */
+	institutionProxyCookie: string;
+	/** Gateway type: "ezproxy" | "wengine". */
+	institutionProxyType: string;
 	/** Process-wide HTTP(S)/SOCKS proxy for Host requests and Agent traffic. */
 	networkProxyEnabled: boolean;
 	networkProxyUrl: string;
@@ -141,6 +181,16 @@ export type AppSettings = {
 	paperTreeSortMode: PaperTreeSortMode;
 	/** Default `ask`: external local renames are previewed before Markdown writes. */
 	autoUpdateInternalLinks: AutoUpdateInternalLinks;
+	/**
+	 * PDF reader continuous-scroll direction. `vertical` (default) stacks pages
+	 * in a column; `horizontal` lays them in a row.
+	 */
+	pdfScrollStrategy: PdfScrollStrategy;
+	/**
+	 * PDF reader page layout: `none` (default) = one page per row, `odd`/`even`
+	 * = two-page spreads (paired from page 1 / after a standalone cover).
+	 */
+	pdfSpreadMode: PdfSpreadMode;
 	/**
 	 * How NOTES.md is initialized on paper import. `custom` copies the vault
 	 * template `.agentero/templates/NOTES.md`. Default: built-in skeleton.
@@ -180,6 +230,8 @@ export type AppSettings = {
 	 */
 	mcpEnabled: boolean;
 	mcpPort: number;
+	/** Opt-in: expose paper full text via MCP paper_text_get. */
+	mcpExposePaperText: boolean;
 	/**
 	 * OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex). Empty = not configured.
 	 */
@@ -199,11 +251,6 @@ export type AppSettings = {
 	 * increase rate-limit risk.
 	 */
 	batchImportConcurrency: number;
-	/**
-	 * Prefill the Markdown export dialog's "Agentero watermark" checkbox.
-	 * Default **off**; per-export choice can still override.
-	 */
-	exportWatermarkEnabled: boolean;
 	/**
 	 * Anonymous product analytics (app version + device info) via PostHog.
 	 * Default **on**; takes effect from the next launch.
@@ -300,7 +347,71 @@ export type AppSettings = {
 	translate: TranslateSettings;
 	/** PDF layout-analysis backend (local ONNX or remote PP-StructureV3). */
 	layout: LayoutSettings;
+	/**
+	 * Config reminders dismissed with "don't remind me again". Ids come from
+	 * {@link CONFIG_REMINDER_IDS}; unknown values are dropped on normalize.
+	 */
+	dismissedReminders: ConfigReminderId[];
+	/**
+	 * Decision-layer provider (System One: TypeSafe jEV / Cloudflare Clef /
+	 * compatible). `provider` selects a preset; base URL + model are editable so
+	 * the OpenAI Decisions API can be configured once its contract ships.
+	 */
+	decision: DecisionSettings;
 };
+
+/**
+ * Decision-layer provider ids. `custom` accepts any System One endpoint.
+ * `openai` is a config slot for the (not yet public) OpenAI Decisions API.
+ */
+export type DecisionProviderId = "jev" | "clef" | "openai" | "custom";
+
+export const DECISION_PROVIDER_IDS: readonly DecisionProviderId[] = [
+	"jev",
+	"clef",
+	"openai",
+	"custom",
+] as const;
+
+export function isDecisionProviderId(v: unknown): v is DecisionProviderId {
+	return (
+		typeof v === "string" &&
+		(DECISION_PROVIDER_IDS as readonly string[]).includes(v)
+	);
+}
+
+/** Decision-layer provider settings (System One: jEV / Clef / compatible). */
+export type DecisionSettings = {
+	/** Selected vendor preset. */
+	provider: DecisionProviderId;
+	/** API key; masked (`*`) when echoed back from the Host. */
+	apiKey: string;
+	/** System One endpoint, e.g. `https://api.typesafe.ai/v1/systemone`. */
+	baseUrl: string;
+	/** Model id injected into every request, e.g. `jev-latest` or `clef`. */
+	model: string;
+	/** Enable the experimental smart-highlight action in the PDF toolbar. */
+	smartHighlight: boolean;
+};
+
+/**
+ * Config reminders the app may surface once per session; "don't remind again"
+ * persists the id in {@link AppSettings.dismissedReminders}.
+ * - `layout-local-model`: local ONNX layout analysis costs memory / CPU.
+ * - `network-proxy`: a network request failed while no proxy is configured.
+ */
+export const CONFIG_REMINDER_IDS = [
+	"layout-local-model",
+	"network-proxy",
+] as const;
+export type ConfigReminderId = (typeof CONFIG_REMINDER_IDS)[number];
+
+export function isConfigReminderId(value: unknown): value is ConfigReminderId {
+	return (
+		typeof value === "string" &&
+		(CONFIG_REMINDER_IDS as readonly string[]).includes(value)
+	);
+}
 
 /** PDF selection Ask (question popover) agent/model prefs. */
 export type PdfAskSettings = {

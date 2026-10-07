@@ -13,7 +13,7 @@ use crate::features::agent::acp::client::{
 };
 use crate::features::agent::acp::updates::{
     emit_session_config_options, models_from_config_options, models_from_session_models_value,
-    richer_models_event,
+    richer_models_event, store_richer_models,
 };
 use crate::features::agent::models::{AgentDescriptor, WarmResult};
 use crate::features::agent::runtime::events::AgentEventEmitter;
@@ -108,6 +108,7 @@ pub async fn warm_agent(
         session_id: session_id.clone(),
         agent_id: agent_id.clone(),
         usage: usage_out.clone(),
+        models: models_out.clone(),
     };
     let registry = new_registry();
     let terminals = acp_terminals(Some(cwd.clone()));
@@ -291,7 +292,7 @@ impl WarmSetupCtx {
         );
         if let Some(ev) = models_event {
             if let Ok(mut g) = self.models_out.lock() {
-                *g = Some(ev);
+                store_richer_models(&mut g, ev);
             }
         }
 

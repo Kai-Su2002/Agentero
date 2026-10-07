@@ -9,6 +9,7 @@ import {
 } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentLogo } from "@/components/agent/agent-logo";
+import { DesktopAppLogo } from "@/components/agent/desktop-app-logo";
 import {
 	catalogNeedsProbe,
 	patchCatalogProbe,
@@ -23,7 +24,13 @@ import {
 	scanCatalog,
 } from "@/lib/agent/api";
 import { errorText } from "@/lib/core/error";
+import { isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
+import {
+	DESKTOP_APP_IDS,
+	type DesktopAppStatus,
+	probeDesktopApps,
+} from "@/lib/system/desktop-apps";
 
 /** Imperative handle so the wizard header can trigger a rescan. */
 export type AgentStepHandle = {
@@ -87,6 +94,9 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 		const [scanning, setScanning] = useState(false);
 		const [error, setError] = useState<string | null>(null);
 		const [busyId, setBusyId] = useState<string | null>(null);
+		const [desktopApps, setDesktopApps] = useState<
+			Record<string, DesktopAppStatus>
+		>({});
 		const mountedRef = useRef(true);
 
 		useEffect(() => {
@@ -94,6 +104,22 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 			return () => {
 				mountedRef.current = false;
 			};
+		}, []);
+
+		// Best-effort: show popular desktop apps that lack ACP support so users
+		// understand why they cannot be picked as an agent.
+		useEffect(() => {
+			if (!isTauri()) return;
+			void (async () => {
+				try {
+					const list = await probeDesktopApps();
+					if (mountedRef.current) {
+						setDesktopApps(Object.fromEntries(list.map((s) => [s.id, s])));
+					}
+				} catch {
+					// Onboarding keeps working without detection results.
+				}
+			})();
 		}, []);
 
 		const runScan = useCallback(async () => {
@@ -349,6 +375,37 @@ export const AgentStep = forwardRef<AgentStepHandle>(
 						})}
 					</ul>
 				)}
+
+				<div className="space-y-2">
+					<p className="px-0.5 text-muted-foreground text-xs">
+						{t("agent.desktopApps.title")}
+					</p>
+					<ul className="grid grid-cols-4 gap-3">
+						{DESKTOP_APP_IDS.map((id) => {
+							const installed = desktopApps[id]?.installed ?? false;
+							return (
+								<li key={id}>
+									<div
+										className={cn(
+											"flex w-full flex-col items-center gap-2 rounded-xl border bg-background p-3 text-center",
+											!installed && "opacity-60",
+										)}
+									>
+										<div className="flex size-14 items-center justify-center">
+											<DesktopAppLogo id={id} className="size-12" />
+										</div>
+										<p className="w-full truncate font-medium text-sm">
+											{t(`agent.desktopApps.${id}`)}
+										</p>
+										<p className="w-full text-caption text-muted-foreground leading-tight">
+											{t("agent.desktopApps.unsupported")}
+										</p>
+									</div>
+								</li>
+							);
+						})}
+					</ul>
+				</div>
 			</div>
 		);
 	},

@@ -1,8 +1,45 @@
 import { describe, expect, it } from "vitest";
 
-import { layoutSidecarPath, parseLayoutSidecar } from "@/lib/pdf/layout/io";
+import {
+	layoutSidecarNeedsTextLayer,
+	layoutSidecarPath,
+	layoutTextBackfillSidecar,
+	type PdfLayoutSidecar,
+	parseLayoutSidecar,
+	sameLayoutParse,
+} from "@/lib/pdf/layout/io";
+
+function region(): PdfLayoutSidecar["regions"][number] {
+	return {
+		id: "body",
+		pageIndex: 0,
+		kind: "text",
+		label: "text",
+		score: 0.9,
+		readingOrder: 1,
+		rect: { x: 10, y: 20, w: 30, h: 40 },
+		bbox: { x: 0.1, y: 0.2, w: 0.3, h: 0.4 },
+	};
+}
 
 describe("layout sidecar", () => {
+	it("backfills old MinerU captions once without invalidating the model parse", () => {
+		const old: PdfLayoutSidecar = {
+			schemaVersion: 3,
+			source: {
+				mode: "mineru-layout",
+				generatedAt: "now",
+				textLayerExtracted: true,
+			},
+			regions: [region()],
+		};
+		expect(layoutSidecarNeedsTextLayer(old)).toBe(true);
+		const updated = layoutTextBackfillSidecar(old, old.regions);
+		expect(layoutSidecarNeedsTextLayer(updated)).toBe(false);
+		expect(updated.source.generatedAt).toBe("now");
+		const parsed = parseLayoutSidecar(updated);
+		expect(parsed && layoutSidecarNeedsTextLayer(parsed)).toBe(false);
+	});
 	it("stores under the paper source folder", () => {
 		expect(layoutSidecarPath("/vault/papers/demo")).toBe(
 			"/vault/papers/demo/source/layout.json",
@@ -62,6 +99,57 @@ describe("layout sidecar", () => {
 		});
 		expect(sidecar?.source.mode).toBe("paddle-layout");
 		expect(sidecar?.regions).toHaveLength(1);
+	});
+
+	it("records a finished text-layer walk and keeps the parse timestamp", () => {
+		const sidecar = parseLayoutSidecar({
+			schemaVersion: 3,
+			source: {
+				mode: "embedpdf-layout",
+				generatedAt: "2026-08-07T00:00:00Z",
+				textLayerExtracted: true,
+			},
+			regions: [region()],
+		});
+		expect(sidecar?.source.textLayerExtracted).toBe(true);
+		expect(sidecar && layoutSidecarNeedsTextLayer(sidecar)).toBe(false);
+
+		const stale = parseLayoutSidecar({
+			schemaVersion: 3,
+			source: {
+				mode: "embedpdf-layout",
+				generatedAt: "2026-08-07T00:00:00Z",
+			},
+			regions: [
+				{
+					...region(),
+					text: "Harbor-Index Our third contribution is",
+				},
+			],
+		});
+		expect(stale && layoutSidecarNeedsTextLayer(stale)).toBe(true);
+		if (!stale) throw new Error("expected sidecar");
+		const backfill = layoutTextBackfillSidecar(stale, [
+			{ ...stale.regions[0], text: "Our third contribution is Harbor-Index" },
+		]);
+		expect(backfill.source.generatedAt).toBe("2026-08-07T00:00:00Z");
+		expect(backfill.source.textLayerExtracted).toBe(true);
+		expect(backfill.regions[0]?.text).toBe(
+			"Our third contribution is Harbor-Index",
+		);
+		expect(sameLayoutParse(stale, stale)).toBe(true);
+		expect(
+			sameLayoutParse(stale, {
+				...stale,
+				source: { ...stale.source, generatedAt: "2026-08-08T00:00:00Z" },
+			}),
+		).toBe(false);
+		expect(
+			sameLayoutParse(stale, {
+				...stale,
+				regions: [{ ...stale.regions[0], bbox: { x: 0, y: 0, w: 1, h: 1 } }],
+			}),
+		).toBe(false);
 	});
 
 	it("rejects stale schema or malformed regions", () => {

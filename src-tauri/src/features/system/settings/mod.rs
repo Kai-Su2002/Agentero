@@ -13,6 +13,7 @@
 use crate::core::error::AppError;
 use crate::core::paths::{self, settings_path};
 use crate::features::system::builtin;
+use agentero_core::decision::{SystemOneCredentials, DEFAULT_SYSTEM_ONE_MODEL};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
@@ -21,6 +22,8 @@ use std::sync::{Arc, Mutex};
 
 pub const DEFAULT_TRANSLATOR_BASE_URL: &str = "https://translation-server.agentero.app";
 pub const DEFAULT_NETWORK_PROXY_URL: &str = "http://127.0.0.1:7890";
+/// Default System One endpoint (TypeSafe jEV). Clef/OpenAI presets override it.
+pub const DEFAULT_DECISION_BASE_URL: &str = "https://api.typesafe.ai/v1/systemone";
 /// Built-in URL-prefix GitHub mirrors. The user picks from this list instead of
 /// typing a custom URL. All entries must support `{base}/{canonical_github_url}`.
 pub const GITHUB_MIRROR_PRESETS: &[&str] = &[
@@ -87,6 +90,18 @@ pub struct AppSettings {
     /// e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`.
     #[serde(default)]
     pub github_mirror_base_url: String,
+    /// EZProxy/WebVPN prefix for paywalled PDF fallback, e.g.
+    /// `https://webvpn.example.edu/login?url=`. Empty disables the layer.
+    #[serde(default)]
+    pub institution_proxy_prefix: String,
+    /// Session cookie sent along with institution proxy requests (pasted from
+    /// the browser). Empty = no cookie.
+    #[serde(default)]
+    pub institution_proxy_cookie: String,
+    /// Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+    /// (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+    #[serde(default)]
+    pub institution_proxy_type: String,
     #[serde(default = "default_paper_tree_label_mode")]
     pub paper_tree_label_mode: String,
     #[serde(default = "default_paper_tree_sort_mode")]
@@ -110,6 +125,12 @@ pub struct AppSettings {
     pub replace_current_tab_on_open_paper: bool,
     #[serde(default = "default_auto_update_internal_links")]
     pub auto_update_internal_links: String,
+    /// PDF continuous-scroll direction: `vertical` | `horizontal`.
+    #[serde(default = "default_pdf_scroll_strategy")]
+    pub pdf_scroll_strategy: String,
+    /// PDF page layout: `none` (single page) | `odd` | `even` (two-page spread).
+    #[serde(default = "default_pdf_spread_mode")]
+    pub pdf_spread_mode: String,
     #[serde(default = "default_library_columns")]
     pub library_columns: Vec<LibraryColumnPref>,
     #[serde(default)]
@@ -121,6 +142,10 @@ pub struct AppSettings {
     pub mcp_enabled: bool,
     #[serde(default = "default_mcp_port")]
     pub mcp_port: u16,
+    /// Opt-in: expose paper full text (`paper_text_get`) through the MCP
+    /// server. Default off — external clients only see metadata and NOTES.
+    #[serde(default)]
+    pub mcp_expose_paper_text: bool,
     /// OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex) for the built-in
     /// `tunnel-client` supervisor. Empty = never configured.
     #[serde(default)]
@@ -168,15 +193,16 @@ pub struct AppSettings {
     pub agent_personal_prompt: String,
     #[serde(default)]
     pub pdf_ask: PdfAskSettings,
+    /// Decision-layer provider (System One: jEV / Cloudflare Clef / compatible).
+    /// The legacy `jev` key is still read for backward compatibility.
+    #[serde(default, alias = "jev")]
+    pub decision: DecisionSettings,
     #[serde(default)]
     pub embedding: EmbeddingSettings,
     #[serde(default)]
     pub translate: TranslateSettings,
     #[serde(default)]
     pub layout: LayoutSettings,
-    /// Prefill Markdown export dialog watermark checkbox (default off).
-    #[serde(default)]
-    pub export_watermark_enabled: bool,
     /// PostHog product analytics opt-out (applies from the next launch).
     #[serde(default = "default_true")]
     pub telemetry_enabled: bool,
@@ -192,6 +218,10 @@ pub struct AppSettings {
     /// Post-vault feature tour completed or skipped. Default false → auto-start once.
     #[serde(default)]
     pub feature_tour_done: bool,
+    /// Config reminders the user dismissed with "don't remind me again"
+    /// (`layout-local-model` | `network-proxy`). Unknown ids are dropped on save.
+    #[serde(default)]
+    pub dismissed_reminders: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, specta::Type)]
@@ -201,6 +231,42 @@ pub struct PdfAskSettings {
     pub agent_id: String,
     #[serde(default)]
     pub model_id: String,
+}
+
+/// Decision-layer provider settings.
+///
+/// The layer speaks the System One contract (`state + questions -> answers`),
+/// implemented by TypeSafe jEV, Cloudflare Clef, and compatible endpoints.
+/// `provider` selects a vendor preset; `base_url` / `model` can be overridden,
+/// so the OpenAI Decisions API slots in here once its public contract ships.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct DecisionSettings {
+    /// `jev` | `clef` | `openai` | `custom` (empty = `jev`).
+    #[serde(default)]
+    pub provider: String,
+    #[serde(default)]
+    pub api_key: String,
+    #[serde(default)]
+    pub base_url: String,
+    /// Model id injected into every request (e.g. `jev-latest`, `clef`).
+    #[serde(default)]
+    pub model: String,
+    /// Whether the experimental smart-highlight toolbar action is enabled.
+    #[serde(default)]
+    pub smart_highlight: bool,
+}
+
+impl Default for DecisionSettings {
+    fn default() -> Self {
+        Self {
+            provider: default_decision_provider(),
+            api_key: String::new(),
+            base_url: default_decision_base_url(),
+            model: default_decision_model(),
+            smart_highlight: false,
+        }
+    }
 }
 
 /// Embedding endpoint: the built-in provider, or a custom OpenAI-compatible
@@ -242,8 +308,13 @@ pub struct TranslateSettings {
     pub provider_configs: HashMap<String, TranslateProviderConfig>,
     #[serde(default)]
     pub auto_translate_selection: bool,
+    /// Deprecated: kept for migration. Use `display_mode` + `dual_pane_source`.
     #[serde(default)]
     pub dual_pane_translate: bool,
+    #[serde(default = "default_translate_display_mode")]
+    pub display_mode: String,
+    #[serde(default = "default_translate_dual_pane_source")]
+    pub dual_pane_source: String,
     #[serde(default)]
     pub agent_id: String,
     #[serde(default)]
@@ -264,6 +335,8 @@ impl Default for TranslateSettings {
             provider_configs: HashMap::new(),
             auto_translate_selection: false,
             dual_pane_translate: false,
+            display_mode: default_translate_display_mode(),
+            dual_pane_source: default_translate_dual_pane_source(),
             agent_id: String::new(),
             model_id: String::new(),
             custom_prompt: String::new(),
@@ -340,6 +413,9 @@ impl Default for AppSettings {
             network_proxy_url: default_network_proxy_url(),
             github_mirror_enabled: false,
             github_mirror_base_url: GITHUB_MIRROR_PRESETS[0].to_string(),
+            institution_proxy_prefix: String::new(),
+            institution_proxy_cookie: String::new(),
+            institution_proxy_type: "ezproxy".to_string(),
             paper_tree_label_mode: default_paper_tree_label_mode(),
             paper_tree_sort_mode: default_paper_tree_sort_mode(),
             paper_note_mode: default_paper_note_mode(),
@@ -347,10 +423,13 @@ impl Default for AppSettings {
             auto_ingest: default_true(),
             replace_current_tab_on_open_paper: false,
             auto_update_internal_links: default_auto_update_internal_links(),
+            pdf_scroll_strategy: default_pdf_scroll_strategy(),
+            pdf_spread_mode: default_pdf_spread_mode(),
             library_columns: default_library_columns(),
             connector_enabled: false,
             connector_port: default_connector_port(),
             mcp_enabled: false,
+            mcp_expose_paper_text: false,
             mcp_port: default_mcp_port(),
             mcp_tunnel_id: String::new(),
             mcp_tunnel_api_key: String::new(),
@@ -371,15 +450,16 @@ impl Default for AppSettings {
             ai_response_language: default_ai_response_language(),
             agent_personal_prompt: String::new(),
             pdf_ask: PdfAskSettings::default(),
+            decision: DecisionSettings::default(),
             embedding: EmbeddingSettings::default(),
             translate: TranslateSettings::default(),
             layout: LayoutSettings::default(),
-            export_watermark_enabled: false,
             telemetry_enabled: default_true(),
             plaza_enabled: default_true(),
             plaza_hidden_sources: Vec::new(),
             onboarding_done: false,
             feature_tour_done: false,
+            dismissed_reminders: Vec::new(),
         }
     }
 }
@@ -393,6 +473,15 @@ fn default_translator_base_url() -> String {
 fn default_network_proxy_url() -> String {
     DEFAULT_NETWORK_PROXY_URL.to_string()
 }
+fn default_decision_provider() -> String {
+    "jev".to_string()
+}
+fn default_decision_base_url() -> String {
+    DEFAULT_DECISION_BASE_URL.to_string()
+}
+fn default_decision_model() -> String {
+    DEFAULT_SYSTEM_ONE_MODEL.to_string()
+}
 fn default_paper_tree_label_mode() -> String {
     "title-author".into()
 }
@@ -404,6 +493,12 @@ fn default_paper_note_mode() -> String {
 }
 fn default_auto_update_internal_links() -> String {
     "ask".into()
+}
+fn default_pdf_scroll_strategy() -> String {
+    "vertical".into()
+}
+fn default_pdf_spread_mode() -> String {
+    "none".into()
 }
 /// Canonical papers-Library column keys, in default order.
 const LIBRARY_COLUMN_KEYS: &[&str] = &[
@@ -481,6 +576,12 @@ fn default_translate_target() -> String {
 }
 fn default_translate_source() -> String {
     "auto".into()
+}
+fn default_translate_display_mode() -> String {
+    "overlay".into()
+}
+fn default_translate_dual_pane_source() -> String {
+    "pdf".into()
 }
 /// Layout analysis stays on the bundled offline PP-DocLayoutV3 model: it is
 /// free, local, and a cloud backend would bill every PDF for no gain. The
@@ -795,6 +896,21 @@ impl AppSettingsStore {
         Some((base_url.to_string(), key, model.to_string()))
     }
 
+    /// Decision-layer System One credentials. Returns None when the API key is
+    /// unset or is a UI mask (`*`-only), so probes never send masks.
+    pub fn decision_config(&self) -> Option<SystemOneCredentials> {
+        let guard = self.inner.lock().ok()?;
+        let api_key = guard.decision.api_key.trim();
+        if api_key.is_empty() || is_translate_api_key_mask(api_key) {
+            return None;
+        }
+        Some(SystemOneCredentials {
+            api_key: api_key.to_string(),
+            base_url: guard.decision.base_url.trim().to_string(),
+            model: guard.decision.model.trim().to_string(),
+        })
+    }
+
     /// Raw `(tunnel_id, api_key)` for the built-in ChatGPT tunnel supervisor.
     /// Returns None unless both are set; a UI mask counts as unset so a
     /// `settings_get` → `settings_set` round-trip never leaks or wipes the key.
@@ -806,6 +922,31 @@ impl AppSettingsStore {
             return None;
         }
         Some((id, key.to_string()))
+    }
+
+    /// Resolve the configured institution proxy (prefix, cookie). None when
+    /// the prefix is unset.
+    pub fn institution_proxy(
+        &self,
+    ) -> Option<(
+        agentero_core::features::paper::import::download::InstitutionProxyKind,
+        String,
+        String,
+    )> {
+        let guard = self.inner.lock().ok()?;
+        let prefix = guard.institution_proxy_prefix.trim();
+        if prefix.is_empty() {
+            return None;
+        }
+        let kind =
+            agentero_core::features::paper::import::download::InstitutionProxyKind::from_setting(
+                &guard.institution_proxy_type,
+            );
+        Some((
+            kind,
+            prefix.to_string(),
+            guard.institution_proxy_cookie.trim().to_string(),
+        ))
     }
 
     /// Resolve the configured EasyScholar key. Returns None when unset or when
@@ -903,6 +1044,9 @@ fn redact_secrets(mut settings: AppSettings) -> AppSettings {
     if !settings.easy_scholar_key.trim().is_empty() {
         settings.easy_scholar_key = mask_translate_api_key(&settings.easy_scholar_key);
     }
+    if !settings.decision.api_key.trim().is_empty() {
+        settings.decision.api_key = mask_translate_api_key(&settings.decision.api_key);
+    }
     settings
 }
 
@@ -936,6 +1080,9 @@ fn merge_secrets(incoming: &mut AppSettings, previous: &AppSettings) {
     if is_translate_api_key_mask(&incoming.easy_scholar_key) {
         incoming.easy_scholar_key = previous.easy_scholar_key.clone();
     }
+    if is_translate_api_key_mask(&incoming.decision.api_key) {
+        incoming.decision.api_key = previous.decision.api_key.clone();
+    }
 }
 
 fn normalize(s: &mut AppSettings) {
@@ -952,6 +1099,25 @@ fn normalize(s: &mut AppSettings) {
         .to_ascii_lowercase();
     s.mcp_tunnel_api_key = s.mcp_tunnel_api_key.trim().to_string();
     s.easy_scholar_key = s.easy_scholar_key.trim().to_string();
+    s.decision.api_key = s.decision.api_key.trim().to_string();
+    let provider = s.decision.provider.trim().to_ascii_lowercase();
+    s.decision.provider = if provider.is_empty() {
+        default_decision_provider()
+    } else {
+        provider
+    };
+    let decision_url = s.decision.base_url.trim().trim_end_matches('/');
+    // Only the default jEV preset backfills the endpoint; Clef/OpenAI/custom
+    // keep whatever the user typed (empty = not configured yet).
+    s.decision.base_url = if decision_url.is_empty() && s.decision.provider == "jev" {
+        default_decision_base_url()
+    } else {
+        decision_url.to_string()
+    };
+    s.decision.model = s.decision.model.trim().to_string();
+    if s.decision.model.is_empty() && s.decision.provider == "jev" {
+        s.decision.model = default_decision_model();
+    }
     if s.batch_import_concurrency < 1 || s.batch_import_concurrency > 10 {
         s.batch_import_concurrency = default_batch_import_concurrency();
     }
@@ -971,6 +1137,26 @@ fn normalize(s: &mut AppSettings) {
     } else {
         GITHUB_MIRROR_PRESETS[0].to_string()
     };
+    s.institution_proxy_prefix = s
+        .institution_proxy_prefix
+        .trim()
+        .trim_end_matches('/')
+        .to_string();
+    s.institution_proxy_cookie = s.institution_proxy_cookie.trim().to_string();
+    s.institution_proxy_type = if s.institution_proxy_type.eq_ignore_ascii_case("wengine") {
+        "wengine".to_string()
+    } else {
+        "ezproxy".to_string()
+    };
+    // Keep the core download fallback in sync on both load and set paths.
+    let kind = agentero_core::features::paper::import::download::InstitutionProxyKind::from_setting(
+        &s.institution_proxy_type,
+    );
+    agentero_core::features::paper::import::download::set_institution_proxy(
+        kind,
+        &s.institution_proxy_prefix,
+        &s.institution_proxy_cookie,
+    );
 
     const LABEL_MODES: &[&str] = &["title-author", "title", "author-year-title", "folder"];
     if !LABEL_MODES.contains(&s.paper_tree_label_mode.as_str()) {
@@ -994,6 +1180,14 @@ fn normalize(s: &mut AppSettings) {
     const AUTO_UPDATE_INTERNAL_LINKS: &[&str] = &["ask", "always"];
     if !AUTO_UPDATE_INTERNAL_LINKS.contains(&s.auto_update_internal_links.as_str()) {
         s.auto_update_internal_links = default_auto_update_internal_links();
+    }
+    const PDF_SCROLL_STRATEGIES: &[&str] = &["vertical", "horizontal"];
+    if !PDF_SCROLL_STRATEGIES.contains(&s.pdf_scroll_strategy.as_str()) {
+        s.pdf_scroll_strategy = default_pdf_scroll_strategy();
+    }
+    const PDF_SPREAD_MODES: &[&str] = &["none", "odd", "even"];
+    if !PDF_SPREAD_MODES.contains(&s.pdf_spread_mode.as_str()) {
+        s.pdf_spread_mode = default_pdf_spread_mode();
     }
 
     // Library columns: drop unknown/duplicate keys, append missing ones
@@ -1135,6 +1329,24 @@ fn normalize(s: &mut AppSettings) {
         s.layout.parser_backend = "local".to_string();
     }
     normalize_layout_provider_configs(&mut s.layout.provider_configs);
+    s.dismissed_reminders =
+        normalize_dismissed_reminders(std::mem::take(&mut s.dismissed_reminders));
+}
+
+/// Known config-reminder ids; anything else is dropped so a hand-edited file
+/// cannot smuggle stale ids into the frontend.
+const DISMISSED_REMINDER_IDS: &[&str] = &["layout-local-model", "network-proxy"];
+
+fn normalize_dismissed_reminders(raw: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for id in raw {
+        let id = id.trim();
+        if id.is_empty() || !DISMISSED_REMINDER_IDS.contains(&id) || out.iter().any(|k| k == id) {
+            continue;
+        }
+        out.push(id.to_string());
+    }
+    out
 }
 
 /// Migration rule for `EmbeddingSettings::source`: an explicit value wins,
@@ -1276,6 +1488,24 @@ mod tests {
         assert!(!s.onboarding_done);
         assert!(!s.feature_tour_done);
         assert_eq!(s.theme, "dark");
+    }
+
+    #[test]
+    fn dismissed_reminders_whitelist() {
+        let mut s = AppSettings {
+            dismissed_reminders: vec![
+                "layout-local-model".into(),
+                "unknown".into(),
+                "layout-local-model".into(),
+                "  network-proxy ".into(),
+            ],
+            ..AppSettings::default()
+        };
+        normalize(&mut s);
+        assert_eq!(
+            s.dismissed_reminders,
+            vec!["layout-local-model", "network-proxy"]
+        );
     }
 
     #[test]
@@ -1490,6 +1720,18 @@ mod tests {
         };
         normalize(&mut s);
         assert_eq!(s.paper_note_mode, "standard");
+    }
+
+    #[test]
+    fn normalize_rejects_unknown_pdf_reading_modes() {
+        let mut s = AppSettings {
+            pdf_scroll_strategy: "diagonal".into(),
+            pdf_spread_mode: "triple".into(),
+            ..AppSettings::default()
+        };
+        normalize(&mut s);
+        assert_eq!(s.pdf_scroll_strategy, "vertical");
+        assert_eq!(s.pdf_spread_mode, "none");
     }
 
     #[test]
@@ -1843,6 +2085,42 @@ mod tests {
             custom.embedding_config().map(|(base, _, _)| base),
             Some("https://embed.test/v1".into())
         );
+    }
+
+    #[test]
+    fn decision_config_never_returns_masked_key() {
+        let store = AppSettingsStore::for_tests(AppSettings {
+            decision: DecisionSettings {
+                provider: "jev".into(),
+                api_key: "sk-jev-secret".into(),
+                base_url: "https://jev.test/v1".into(),
+                model: "jev-latest".into(),
+                smart_highlight: false,
+            },
+            ..AppSettings::default()
+        });
+        assert_eq!(
+            store.decision_config(),
+            Some(SystemOneCredentials {
+                api_key: "sk-jev-secret".into(),
+                base_url: "https://jev.test/v1".into(),
+                model: "jev-latest".into(),
+            })
+        );
+
+        // After redaction the getter must treat the mask as unset.
+        let redacted = redact_secrets(AppSettings {
+            decision: DecisionSettings {
+                provider: "jev".into(),
+                api_key: "sk-jev-secret".into(),
+                base_url: "https://jev.test/v1".into(),
+                model: "jev-latest".into(),
+                smart_highlight: false,
+            },
+            ..AppSettings::default()
+        });
+        let masked_store = AppSettingsStore::for_tests(redacted);
+        assert!(masked_store.decision_config().is_none());
     }
 
     #[test]

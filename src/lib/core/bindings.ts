@@ -35,6 +35,12 @@ export const commands = {
 	 */
 	easyScholarProbe: () => __TAURI_INVOKE<ApiResult<boolean>>("easy_scholar_probe"),
 	/**
+	 *  Probe the configured institution proxy (EZProxy/WebVPN) by fetching a
+	 *  known paywalled DOI through the rewrite and checking the response is a
+	 *  PDF. Returns a short human-readable result for the settings UI.
+	 */
+	institutionProxyProbe: () => __TAURI_INVOKE<ApiResult<string>>("institution_proxy_probe"),
+	/**
 	 *  Query EasyScholar for a publication's rank data.
 	 *  Returns the full API response so the WebView can extract `officialRank.all`
 	 *  and build namespaced tags.
@@ -66,8 +72,11 @@ export const commands = {
 	/**
 	 *  One-click install of Node.js via the host package manager (winget / brew),
 	 *  then re-probe. Can take several minutes while the installer downloads.
+	 * 
+	 *  `taskId` opts into background progress (`agent-lifecycle:progress`) and
+	 *  cooperative cancel via `agent_lifecycle_cancel`.
 	 */
-	doctorInstallNode: () => typedError<ApiResult<NodeInstallResult_Serialize>, string>(__TAURI_INVOKE("doctor_install_node")),
+	doctorInstallNode: (taskId: string | null) => typedError<ApiResult<NodeInstallResult_Serialize>, string>(__TAURI_INVOKE("doctor_install_node", { taskId })),
 	/**
 	 *  Re-probe every registered Agent over ACP and return classified failures.
 	 *  Can take up to ~30s per slow agent (probes run with limited concurrency).
@@ -75,7 +84,20 @@ export const commands = {
 	doctorCheckAgents: () => typedError<ApiResult<AgentAcpDiagnostic_Serialize[]>, string>(__TAURI_INVOKE("doctor_check_agents")),
 	/**  Open the template-owned CLI login command in a confirm-to-run terminal. */
 	doctorOpenAgentLoginTerminal: (templateId: string) => __TAURI_INVOKE<ApiResult<null>>("doctor_open_agent_login_terminal", { templateId }),
+	/**
+	 *  Open the installed Agent's interactive host CLI in a terminal.
+	 * 
+	 *  Uses the template's interactive CLI (`registry::interactive_cli`), which is
+	 *  usually `detect_command` but can differ (Antigravity's `agy`). The command is
+	 *  resolved against the registered Agent env like
+	 *  [`doctor_open_agent_login_terminal`].
+	 */
+	doctorOpenAgentCliTerminal: (templateId: string) => __TAURI_INVOKE<ApiResult<null>>("doctor_open_agent_cli_terminal", { templateId }),
 	doctorCheckNetwork: () => typedError<ApiResult<NetworkDoctorReport_Serialize>, string>(__TAURI_INVOKE("doctor_check_network")),
+	/**  List which known desktop apps are installed on this machine. */
+	desktopAppsProbe: () => typedError<ApiResult<DesktopAppStatus_Serialize[]>, string>(__TAURI_INVOKE("desktop_apps_probe")),
+	/**  Launch one installed desktop app (currently macOS only). */
+	desktopAppOpen: (id: DesktopAppId) => typedError<ApiResult<null>, string>(__TAURI_INVOKE("desktop_app_open", { id })),
 	/**  Request cooperative cancellation for a currently streaming ACP session. */
 	agentCancelRun: (sessionId: string) => __TAURI_INVOKE<ApiResult<boolean>>("agent_cancel_run", { sessionId }),
 	jobParseRefsEnqueue: (args: JobEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_parse_refs_enqueue", { args })),
@@ -610,6 +632,11 @@ export const commands = {
 	chktexLint: (texPath: string, content: string) => __TAURI_INVOKE<ApiResult<LatexLintDiagnostic[]>>("chktex_lint", { texPath, content }),
 	resolveLatexRoot: (texPath: string, vaultPath: string) => __TAURI_INVOKE<ApiResult<LatexRoot>>("resolve_latex_root", { texPath, vaultPath }),
 	jobLatexCompileEnqueue: (args: JobLatexCompileEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_latex_compile_enqueue", { args })),
+	jobJevSmartHighlightsEnqueue: (args: JobEnqueueArgs) => typedError<ApiResult<JobSnapshot>, string>(__TAURI_INVOKE("job_jev_smart_highlights_enqueue", { args })),
+	jevSuggestHighlights: (args: JevSuggestHighlightsArgs) => typedError<ApiResult<JevSuggestHighlightsResult>, string>(__TAURI_INVOKE("jev_suggest_highlights", { args })),
+	jevProbeHealth: () => typedError<ApiResult<null>, string>(__TAURI_INVOKE("jev_probe_health")),
+	/**  Run one registered decision through the engine (rules + jEV + fallback). */
+	decide: (args: DecideArgs) => typedError<ApiResult<DecisionOutcome>, string>(__TAURI_INVOKE("decide", { args })),
 };
 
 /** Events */
@@ -1243,11 +1270,6 @@ export type AgentStreamKind = "message" | "thought";
 
 export type AgentTemplate = "opencode" | 
 /**
- *  OpenClaw native ACP (`openclaw acp`).
- *  Docs: https://docs.openclaw.ai/cli/acp
- */
-"open-claw" | 
-/**
  *  Hermes Agent native ACP (`hermes acp`).
  *  Docs: https://github.com/NousResearch/hermes-agent
  */
@@ -1290,7 +1312,12 @@ export type AgentTemplate = "opencode" |
  *  MiniMax Code CLI with native ACP (`mcode acp`).
  *  Docs: https://agent.minimax.io/docs/cli/quick-start
  */
-"minimax-code" | "custom";
+"minimax-code" | 
+/**
+ *  Xiaomi MiMo Code CLI (an OpenCode fork) with native ACP (`mimo acp`).
+ *  Docs: https://mimo.xiaomi.com · npm package `mimocode`
+ */
+"mimo-code" | "custom";
 
 /**  ACP tool call create/update for UI (`Tool` element). */
 export type AgentToolEvent = AgentToolEvent_Serialize | AgentToolEvent_Deserialize;
@@ -1419,6 +1446,21 @@ export type AppSettings_Deserialize = {
 	githubMirrorEnabled?: boolean,
 	/**  e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`. */
 	githubMirrorBaseUrl?: string,
+	/**
+	 *  EZProxy/WebVPN prefix for paywalled PDF fallback, e.g.
+	 *  `https://webvpn.example.edu/login?url=`. Empty disables the layer.
+	 */
+	institutionProxyPrefix?: string,
+	/**
+	 *  Session cookie sent along with institution proxy requests (pasted from
+	 *  the browser). Empty = no cookie.
+	 */
+	institutionProxyCookie?: string,
+	/**
+	 *  Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+	 *  (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+	 */
+	institutionProxyType?: string,
 	paperTreeLabelMode?: string,
 	paperTreeSortMode?: string,
 	/**
@@ -1443,12 +1485,21 @@ export type AppSettings_Deserialize = {
 	 */
 	replaceCurrentTabOnOpenPaper?: boolean,
 	autoUpdateInternalLinks?: string,
+	/**  PDF continuous-scroll direction: `vertical` | `horizontal`. */
+	pdfScrollStrategy?: string,
+	/**  PDF page layout: `none` (single page) | `odd` | `even` (two-page spread). */
+	pdfSpreadMode?: string,
 	libraryColumns?: LibraryColumnPref_Deserialize[],
 	connectorEnabled?: boolean,
 	connectorPort?: number,
 	/**  Loopback Streamable HTTP MCP server. Default off. */
 	mcpEnabled?: boolean,
 	mcpPort?: number,
+	/**
+	 *  Opt-in: expose paper full text (`paper_text_get`) through the MCP
+	 *  server. Default off — external clients only see metadata and NOTES.
+	 */
+	mcpExposePaperText?: boolean,
 	/**
 	 *  OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex) for the built-in
 	 *  `tunnel-client` supervisor. Empty = never configured.
@@ -1484,8 +1535,6 @@ export type AppSettings_Deserialize = {
 	embedding?: EmbeddingSettings,
 	translate?: TranslateSettings,
 	layout?: LayoutSettings,
-	/**  Prefill Markdown export dialog watermark checkbox (default off). */
-	exportWatermarkEnabled?: boolean,
 	/**  PostHog product analytics opt-out (applies from the next launch). */
 	telemetryEnabled?: boolean,
 	/**  Plaza discovery sources in the sidebar. Default on. */
@@ -1496,6 +1545,23 @@ export type AppSettings_Deserialize = {
 	onboardingDone?: boolean,
 	/**  Post-vault feature tour completed or skipped. Default false → auto-start once. */
 	featureTourDone?: boolean,
+	/**
+	 *  Config reminders the user dismissed with "don't remind me again"
+	 *  (`layout-local-model` | `network-proxy`). Unknown ids are dropped on save.
+	 */
+	dismissedReminders?: string[],
+} & {
+	/**
+	 *  Decision-layer provider (System One: jEV / Cloudflare Clef / compatible).
+	 *  The legacy `jev` key is still read for backward compatibility.
+	 */
+	decision?: DecisionSettings,
+} | {
+	/**
+	 *  Decision-layer provider (System One: jEV / Cloudflare Clef / compatible).
+	 *  The legacy `jev` key is still read for backward compatibility.
+	 */
+	jev?: DecisionSettings,
 };
 
 export type AppSettings_Serialize = {
@@ -1508,6 +1574,21 @@ export type AppSettings_Serialize = {
 	githubMirrorEnabled: boolean,
 	/**  e.g. `https://gh.llkk.cc` — requests become `{base}/https://codeload.github.com/...`. */
 	githubMirrorBaseUrl: string,
+	/**
+	 *  EZProxy/WebVPN prefix for paywalled PDF fallback, e.g.
+	 *  `https://webvpn.example.edu/login?url=`. Empty disables the layer.
+	 */
+	institutionProxyPrefix: string,
+	/**
+	 *  Session cookie sent along with institution proxy requests (pasted from
+	 *  the browser). Empty = no cookie.
+	 */
+	institutionProxyCookie: string,
+	/**
+	 *  Gateway flavour: `ezproxy` (query passthrough) or `wengine`
+	 *  (path-rewriting WebVPN, e.g. ZJU). Default `ezproxy`.
+	 */
+	institutionProxyType: string,
 	paperTreeLabelMode: string,
 	paperTreeSortMode: string,
 	/**
@@ -1532,12 +1613,21 @@ export type AppSettings_Serialize = {
 	 */
 	replaceCurrentTabOnOpenPaper: boolean,
 	autoUpdateInternalLinks: string,
+	/**  PDF continuous-scroll direction: `vertical` | `horizontal`. */
+	pdfScrollStrategy: string,
+	/**  PDF page layout: `none` (single page) | `odd` | `even` (two-page spread). */
+	pdfSpreadMode: string,
 	libraryColumns: LibraryColumnPref_Serialize[],
 	connectorEnabled: boolean,
 	connectorPort: number,
 	/**  Loopback Streamable HTTP MCP server. Default off. */
 	mcpEnabled: boolean,
 	mcpPort: number,
+	/**
+	 *  Opt-in: expose paper full text (`paper_text_get`) through the MCP
+	 *  server. Default off — external clients only see metadata and NOTES.
+	 */
+	mcpExposePaperText: boolean,
 	/**
 	 *  OpenAI Secure MCP Tunnel id (`tunnel_` + 32 hex) for the built-in
 	 *  `tunnel-client` supervisor. Empty = never configured.
@@ -1568,11 +1658,14 @@ export type AppSettings_Serialize = {
 	aiResponseLanguage: string,
 	agentPersonalPrompt: string,
 	pdfAsk: PdfAskSettings,
+	/**
+	 *  Decision-layer provider (System One: jEV / Cloudflare Clef / compatible).
+	 *  The legacy `jev` key is still read for backward compatibility.
+	 */
+	decision: DecisionSettings,
 	embedding: EmbeddingSettings,
 	translate: TranslateSettings,
 	layout: LayoutSettings,
-	/**  Prefill Markdown export dialog watermark checkbox (default off). */
-	exportWatermarkEnabled: boolean,
 	/**  PostHog product analytics opt-out (applies from the next launch). */
 	telemetryEnabled: boolean,
 	/**  Plaza discovery sources in the sidebar. Default on. */
@@ -1583,6 +1676,11 @@ export type AppSettings_Serialize = {
 	onboardingDone: boolean,
 	/**  Post-vault feature tour completed or skipped. Default false → auto-start once. */
 	featureTourDone: boolean,
+	/**
+	 *  Config reminders the user dismissed with "don't remind me again"
+	 *  (`layout-local-model` | `network-proxy`). Unknown ids are dropped on save.
+	 */
+	dismissedReminders: string[],
 };
 
 export type AskUserOptionDto = AskUserOptionDto_Serialize | AskUserOptionDto_Deserialize;
@@ -1818,6 +1916,13 @@ export type CatalogEntry_Deserialize = {
 	installCommand?: string | null,
 	/**  Host CLI OAuth/login command from the template. */
 	loginCommand?: string | null,
+	/**
+	 *  Interactive host CLI for the Settings "open in terminal" action.
+	 *  Locally this is the resolved absolute path when the binary is available
+	 *  (may differ from `resolved_path`, e.g. Antigravity `agy`); `None` hides
+	 *  the action. Remote scans leave it `None`.
+	 */
+	cliCommand?: string | null,
 	/**  Host CLI present but ACP entrypoint missing — Settings may offer ACP install. */
 	offerInstall?: boolean,
 	/**  Silent install/update via `agent_run_tool_lifecycle` is available (local). */
@@ -1864,6 +1969,13 @@ export type CatalogEntry_Serialize = {
 	installCommand?: string | null,
 	/**  Host CLI OAuth/login command from the template. */
 	loginCommand?: string | null,
+	/**
+	 *  Interactive host CLI for the Settings "open in terminal" action.
+	 *  Locally this is the resolved absolute path when the binary is available
+	 *  (may differ from `resolved_path`, e.g. Antigravity `agy`); `None` hides
+	 *  the action. Remote scans leave it `None`.
+	 */
+	cliCommand?: string | null,
 	/**  Host CLI present but ACP entrypoint missing — Settings may offer ACP install. */
 	offerInstall: boolean,
 	/**  Silent install/update via `agent_run_tool_lifecycle` is available (local). */
@@ -2278,7 +2390,101 @@ export type CreateVaultResult = {
 	openPath: string,
 };
 
+export type DecideArgs = {
+	/**  Registered decision id, e.g. `pdf.selection.intent`. */
+	decisionId: string,
+	/**  Decision-specific state. */
+	state: Json,
+};
+
+/**
+ *  A decision result: the neutral envelope `{action, status, provider,
+ *  modelVersion}` plus provider-specific [`Self::metadata`].
+ * 
+ *  `action` is whatever the provider produced. Rule/jEV string choices arrive
+ *  as JSON strings (`"ignore"`), richer payloads as objects; consumers switch
+ *  on the shape they registered for.
+ * 
+ *  Calibration-sensitive values (confidence, probabilities) are deliberately
+ *  **not** top-level fields: confidences are not comparable across providers,
+ *  so they live in `metadata` scoped to the `provider` / `modelVersion` that
+ *  produced them. Routing thresholds are scoped the same way
+ *  ([`FallbackThreshold`]).
+ */
+export type DecisionOutcome = {
+	action: Json,
+	/**  How the outcome was reached (provider answer vs. schema default). */
+	status: DecisionStatus,
+	/**
+	 *  Name of the provider that produced the action (`rule` / `systemone` /
+	 *  `default` / `none`). Vendor/model detail lives in `model_version`.
+	 */
+	provider: string,
+	/**
+	 *  Provider model or config version that produced the action, when known.
+	 *  Part of the calibration scope: a threshold only applies to outcomes with
+	 *  the same `provider` and (if pinned) `model_version`.
+	 */
+	modelVersion: string | null,
+	/**
+	 *  Provider-specific payload (e.g. `confidence`, `probabilities`). Never
+	 *  assume a field exists or shares calibration with another provider.
+	 */
+	metadata: Json,
+};
+
+/**
+ *  Decision-layer provider settings.
+ * 
+ *  The layer speaks the System One contract (`state + questions -> answers`),
+ *  implemented by TypeSafe jEV, Cloudflare Clef, and compatible endpoints.
+ *  `provider` selects a vendor preset; `base_url` / `model` can be overridden,
+ *  so the OpenAI Decisions API slots in here once its public contract ships.
+ */
+export type DecisionSettings = {
+	/**  `jev` | `clef` | `openai` | `custom` (empty = `jev`). */
+	provider?: string,
+	apiKey?: string,
+	baseUrl?: string,
+	/**  Model id injected into every request (e.g. `jev-latest`, `clef`). */
+	model?: string,
+	/**  Whether the experimental smart-highlight toolbar action is enabled. */
+	smartHighlight?: boolean,
+};
+
+/**
+ *  Provider-neutral disposition of a decision, independent of any
+ *  provider-specific calibration.
+ */
+export type DecisionStatus = 
+/**  A provider produced the action. */
+"decided" | 
+/**  No provider had an opinion; the schema's `default_action` was used. */
+"defaulted" | 
+/**  Neither a provider nor a schema default produced anything. */
+"no_opinion";
+
 export type DepPolicy = "allSettled" | "allSucceeded";
+
+/**  Stable id the frontend keys rows and brand logos on. */
+export type DesktopAppId = "chatgpt" | "qwenwork" | "workbuddy";
+
+/**  Detection result for one app. `path` is the resolved macOS bundle when known. */
+export type DesktopAppStatus = DesktopAppStatus_Serialize | DesktopAppStatus_Deserialize;
+
+/**  Detection result for one app. `path` is the resolved macOS bundle when known. */
+export type DesktopAppStatus_Deserialize = {
+	id: DesktopAppId,
+	installed: boolean,
+	path: string | null,
+};
+
+/**  Detection result for one app. `path` is the resolved macOS bundle when known. */
+export type DesktopAppStatus_Serialize = {
+	id: DesktopAppId,
+	installed: boolean,
+	path?: string | null,
+};
 
 export type DoctorApplyAliasesArgs = {
 	vaultPath: string,
@@ -2786,6 +2992,16 @@ export type InternalLinkOccurrence_Serialize = {
 
 export type InternalLinkSyntax = "wikilink" | "markdown";
 
+export type JevSuggestHighlightsArgs = {
+	vaultPath: string,
+	/**  Vault-relative paper folder, e.g. `papers/2303.17760`. */
+	path: string,
+};
+
+export type JevSuggestHighlightsResult = {
+	highlights: SuggestedHighlight[],
+};
+
 export type JobChangedEvent = JobChangedPayload;
 
 export type JobChangedPayload = {
@@ -2847,7 +3063,7 @@ export type JobImportEnqueueArgs = {
 	params?: Json | null,
 };
 
-export type JobKind = "parseRefs" | "parseBody" | "layoutAnalyze" | "layoutTranslate" | "downloadAssets" | "pageCount" | "wikiReindex" | "recognizeMetadata" | "import" | "connectorSync" | "modelDownload" | "citingScan" | "libraryIo" | "metadataRefresh" | "latexCompile";
+export type JobKind = "parseRefs" | "parseBody" | "layoutAnalyze" | "layoutTranslate" | "downloadAssets" | "pageCount" | "wikiReindex" | "recognizeMetadata" | "import" | "connectorSync" | "modelDownload" | "citingScan" | "libraryIo" | "metadataRefresh" | "latexCompile" | "jevSmartHighlights";
 
 export type JobLane = "focus" | "normal" | "idle";
 
@@ -3093,6 +3309,10 @@ export type LayoutRemoteBox = {
 	score: number | null,
 	/**  `[x1, y1, x2, y2]` in rendered-image pixels (top-left origin). */
 	coordinate: [(number | null), (number | null), (number | null), (number | null)],
+	/**  OCR/content text for this box, when provided by the engine. */
+	text?: string | null,
+	/**  Caption text attached to a host without independent caption geometry. */
+	caption?: string | null,
 };
 
 export type LayoutRemotePageResult = {
@@ -3443,6 +3663,17 @@ export type NodeInstallResult_Serialize = {
 	error?: string | null,
 	/**  Host probe re-run after the install attempt. */
 	report: HostDoctorReport_Serialize,
+};
+
+/**
+ *  Rect normalized to 0–1 against the page box, top-left origin, y down —
+ *  identical to what the viewer persists for ask/translate marks.
+ */
+export type NormRect = {
+	x: number | null,
+	y: number | null,
+	w: number | null,
+	h: number | null,
 };
 
 export type NotesTemplateSeedResult = {
@@ -4492,6 +4723,17 @@ export type StageImportFileResult = {
 	path: string,
 };
 
+export type SuggestedHighlight = {
+	quote: string,
+	page: number,
+	rects: NormRect[],
+	color: string,
+	category: string,
+	score: number | null,
+	pageWidth: number | null,
+	pageHeight: number | null,
+};
+
 export type SyncBackendConfig = {
 	/**  Backend discriminator; S3 fields or WebDAV fields apply accordingly. */
 	backend?: SyncBackendKind,
@@ -4662,7 +4904,10 @@ export type TranslateSettings = {
 	sourceLang?: string,
 	providerConfigs?: { [key in string]: TranslateProviderConfig },
 	autoTranslateSelection?: boolean,
+	/**  Deprecated: kept for migration. Use `display_mode` + `dual_pane_source`. */
 	dualPaneTranslate?: boolean,
+	displayMode?: string,
+	dualPaneSource?: string,
 	agentId?: string,
 	modelId?: string,
 	/**
@@ -5419,6 +5664,12 @@ export type ZoteroMigrateArgs = {
 export type ZoteroMigrateResult = {
 	imported: number,
 	skipped: number,
+	/**
+	 *  Zotero item types intentionally outside Agentero's paper model (currently
+	 *  `computerProgram`). Kept separate from duplicate skips for an auditable
+	 *  source-item total.
+	 */
+	ignoredUnsupported: number,
 	copiedPdfs: number,
 	/**  Zotero notes backfilled into existing papers' NOTES.md (already-present papers). */
 	notesAdded: number,

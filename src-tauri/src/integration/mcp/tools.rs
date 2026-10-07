@@ -11,6 +11,7 @@ use super::resources::{
 use super::McpController;
 use crate::core::error::AppError;
 use crate::features::paper::catalog::{self, papers};
+use crate::features::paper::discovery::discover;
 use crate::features::paper::import::{self, LookupImportArgs, NoteShellMode};
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::{Json, Parameters};
@@ -22,6 +23,7 @@ use rmcp::model::{
 use rmcp::service::{RequestContext, RoleServer};
 use rmcp::{tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tauri::Manager;
 
@@ -112,6 +114,16 @@ struct LayoutGetArgs {
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
+struct PaperTextArgs {
+    r#ref: String,
+    /// 1-based page numbers; omit for all pages.
+    pages: Option<Vec<u32>>,
+    /// Per-page character budget (default 20000, capped at 50000).
+    max_chars: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
 struct ImportIdArgs {
     /// arXiv id, DOI, or URL.
     text: String,
@@ -194,6 +206,106 @@ impl From<import::LookupImportResult> for ImportIdOut {
             tex: r.tex,
             paper_md: r.paper_md,
             asset_messages: r.asset_messages,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct DiscoverArxivArgs {
+    /// Topic terms / phrases (repeatable).
+    #[serde(default)]
+    keywords: Vec<String>,
+    /// arXiv categories, e.g. cs.AI (repeatable).
+    #[serde(default)]
+    categories: Vec<String>,
+    /// Only papers submitted on/after this date (YYYY-MM-DD).
+    #[serde(default)]
+    since: Option<String>,
+    /// Only papers submitted on/before this date (YYYY-MM-DD).
+    #[serde(default)]
+    until: Option<String>,
+    /// Shortlist size (default 8).
+    #[serde(default)]
+    top: Option<usize>,
+    /// Max candidates fetched before ranking (default 100, max 200).
+    #[serde(default)]
+    max_candidates: Option<usize>,
+    /// Drop candidates already in the library catalog (default true).
+    #[serde(default = "default_true")]
+    dedup: bool,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct DiscoverScoreTermOut {
+    term: String,
+    /// `title` or `abstract`.
+    field: String,
+    count: u32,
+    weight: f32,
+    contribution: f32,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct DiscoverItemOut {
+    arxiv_id: String,
+    title: String,
+    #[serde(rename = "abstract")]
+    abstract_text: String,
+    url: String,
+    pdf_url: Option<String>,
+    published_at: Option<String>,
+    score: f32,
+    matches: Vec<DiscoverScoreTermOut>,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct DiscoverArxivOut {
+    source: String,
+    /// Raw arXiv `search_query` expression, for transparency/replay.
+    search_query: String,
+    candidates_scanned: usize,
+    /// Candidates dropped as already in the library.
+    excluded: usize,
+    computed_at: String,
+    items: Vec<DiscoverItemOut>,
+}
+
+impl From<discover::DiscoverResult> for DiscoverArxivOut {
+    fn from(result: discover::DiscoverResult) -> Self {
+        Self {
+            source: result.source,
+            search_query: result.search_query,
+            candidates_scanned: result.candidates_scanned,
+            excluded: result.excluded,
+            computed_at: result.computed_at,
+            items: result
+                .items
+                .into_iter()
+                .map(|item| DiscoverItemOut {
+                    arxiv_id: item.arxiv_id,
+                    title: item.title,
+                    abstract_text: item.abstract_text,
+                    url: item.url,
+                    pdf_url: item.pdf_url,
+                    published_at: item.published_at,
+                    score: item.score,
+                    matches: item
+                        .matches
+                        .into_iter()
+                        .map(|m| DiscoverScoreTermOut {
+                            term: m.term,
+                            field: m.field,
+                            count: m.count,
+                            weight: m.weight,
+                            contribution: m.contribution,
+                        })
+                        .collect(),
+                })
+                .collect(),
         }
     }
 }
@@ -304,6 +416,40 @@ impl AgenteroMcp {
         };
         match result {
             Ok(r) => Ok(Json(ImportIdOut::from(r))),
+            Err(e) => Err(tool_err(e)),
+        }
+    }
+
+    #[tool(
+        description = "Discover and rank arXiv papers for a topic (keywords / categories / submission-date window) with a deterministic lexical scorer. Vault-free; when the vault is open, dedup (default) drops papers already in the library. Returns arXiv ids for a follow-up import_id."
+    )]
+    async fn discover_arxiv(
+        &self,
+        Parameters(args): Parameters<DiscoverArxivArgs>,
+    ) -> Result<Json<DiscoverArxivOut>, CallToolResult> {
+        let exclude: HashSet<String> = if args.dedup {
+            match self.ctrl.local_vault() {
+                Ok(vault) => match discover::known_arxiv_ids(&vault) {
+                    Ok(ids) => ids,
+                    Err(e) => return Err(tool_err(e)),
+                },
+                // Discovery is vault-free; a closed vault just skips novelty.
+                Err(_) => HashSet::new(),
+            }
+        } else {
+            HashSet::new()
+        };
+        let query = discover::DiscoverQuery {
+            keywords: args.keywords,
+            categories: args.categories,
+            since: args.since,
+            until: args.until,
+            top: args.top,
+            max_candidates: args.max_candidates,
+            semantic_weight: None,
+        };
+        match discover::discover_arxiv(&query, &exclude, None).await {
+            Ok(result) => Ok(Json(DiscoverArxivOut::from(result))),
             Err(e) => Err(tool_err(e)),
         }
     }
@@ -472,6 +618,40 @@ impl AgenteroMcp {
         }
     }
 
+    /// Opt-in (#676): paper full text leaves the vault only when the user
+    /// enables `mcpExposePaperText`; otherwise this tool errors.
+    #[tool(
+        description = "Read page text of a paper's PDF (opt-in). Disabled unless the owner enables mcpExposePaperText in Settings. pages selects 1-based pages (omit for all); each page is truncated to maxChars (default 20000)."
+    )]
+    async fn paper_text_get(
+        &self,
+        Parameters(args): Parameters<PaperTextArgs>,
+    ) -> Result<Json<paper::PaperTextOut>, CallToolResult> {
+        let app = match self.ctrl.app_handle() {
+            Some(app) => app,
+            None => return Err(tool_err(AppError::message("app handle unavailable"))),
+        };
+        let expose = app
+            .state::<crate::features::system::settings::AppSettingsStore>()
+            .get()
+            .map(|result| result.settings.mcp_expose_paper_text)
+            .unwrap_or(false);
+        if !expose {
+            return Err(tool_err(AppError::message(
+                "paper_text_get is disabled: enable mcpExposePaperText in Settings                  (opt-in — paper full text would be sent to external clients)",
+            )));
+        }
+        let vault = match self.ctrl.local_vault() {
+            Ok(v) => v,
+            Err(e) => return Err(tool_err(e)),
+        };
+        let max_chars = args.max_chars.unwrap_or(20_000).clamp(1, 50_000);
+        match paper::text(&vault, &args.r#ref, args.pages, max_chars) {
+            Ok(out) => Ok(Json(out)),
+            Err(e) => Err(tool_err(e)),
+        }
+    }
+
     #[tool(
         description = "List one directory in the open vault (not the whole tree). path is vault-relative; omit it for the vault root. Skips .agentero, hidden dirs, and LaTeX build artifacts. Use this to find drafts such as main.tex outside papers/."
     )]
@@ -617,6 +797,28 @@ mod schema_tests {
             .and_then(|v| v.as_object())
             .expect("object properties");
         for key in ["path", "id", "title", "pdf", "tex", "paperMd"] {
+            assert!(props.contains_key(key), "missing {key} in {props:?}");
+        }
+    }
+
+    #[test]
+    fn discover_arxiv_advertises_output_schema() {
+        let tool = AgenteroMcp::discover_arxiv_tool_attr();
+        let schema = tool
+            .output_schema
+            .expect("discover_arxiv should advertise outputSchema");
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("object properties");
+        for key in [
+            "source",
+            "searchQuery",
+            "candidatesScanned",
+            "excluded",
+            "computedAt",
+            "items",
+        ] {
             assert!(props.contains_key(key), "missing {key} in {props:?}");
         }
     }

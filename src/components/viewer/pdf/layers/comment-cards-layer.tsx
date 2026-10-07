@@ -38,7 +38,7 @@ import {
 	swatchColorClass,
 } from "@/lib/pdf/highlight/palette";
 /** Card width in CSS px — also the gutter width reserved on the viewport. */
-export const COMMENT_CARD_WIDTH_PX = 224;
+export const COMMENT_CARD_WIDTH_PX = 200;
 /** Horizontal gap between the page edge and the rail. */
 export const COMMENT_CARD_GAP_PX = 8;
 /** Extra px so ring + shadow aren't clipped by the viewport overflow. */
@@ -50,8 +50,8 @@ export const COMMENT_RAIL_WIDTH_PX =
 const CARD_GAP_PX = 8;
 /** text-xs leading-relaxed ≈ 12px × 1.625. */
 const CARD_LINE_HEIGHT_PX = 20;
-/** Conservative chars per line at w-56 with padding (CJK-heavy notes). */
-const CARD_CHARS_PER_LINE = 15;
+/** Conservative chars per line at w-50 with padding (CJK-heavy notes). */
+const CARD_CHARS_PER_LINE = 13;
 /** Padding + color-dot row + blockquote/comment margins. */
 const CARD_BASE_HEIGHT_PX = 54;
 /** View-mode clamp for the note body. */
@@ -66,8 +66,9 @@ const COMMENT_CARD_SURFACE_CLASS =
 	"group pointer-events-auto absolute select-none rounded-lg border border-white/55 bg-background/88 shadow-[0_10px_28px_rgba(15,23,42,0.16),0_2px_8px_rgba(15,23,42,0.1)] ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 transition-[box-shadow,background-color,transform] duration-150 ease-out hover:z-[7] hover:shadow-[0_16px_36px_rgba(15,23,42,0.2),0_4px_12px_rgba(15,23,42,0.12)] hover:!h-auto supports-backdrop-blur:bg-background/70 dark:border-white/10 dark:shadow-[0_12px_32px_rgba(0,0,0,0.45),0_2px_10px_rgba(0,0,0,0.35)] dark:hover:shadow-[0_18px_40px_rgba(0,0,0,0.55),0_4px_14px_rgba(0,0,0,0.42)] dark:ring-white/10";
 const COMMENT_DRAFT_SURFACE_CLASS =
 	"group/draft pointer-events-auto absolute z-[6] cursor-text overflow-hidden rounded-lg border border-white/55 bg-background/88 text-left shadow-[0_10px_28px_rgba(15,23,42,0.16),0_2px_8px_rgba(15,23,42,0.1)] ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 outline-none supports-backdrop-blur:bg-background/70 dark:border-white/10 dark:shadow-[0_12px_32px_rgba(0,0,0,0.45),0_2px_10px_rgba(0,0,0,0.35)] dark:ring-white/10";
+/** Horizontal action bar floating just above the card's top-right corner. */
 const COMMENT_ACTION_BAR_CLASS =
-	"absolute top-1.5 right-1.5 flex items-center gap-0.5 rounded-md border border-white/50 bg-background/82 p-0.5 shadow-[0_6px_18px_rgba(15,23,42,0.14)] ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 transition-opacity duration-150 dark:border-white/10 dark:shadow-[0_8px_20px_rgba(0,0,0,0.4)] dark:ring-white/10";
+	"pointer-events-none absolute right-0 bottom-full z-[1] flex items-center gap-0.5 rounded-md border border-white/50 bg-background/82 p-0.5 shadow-[0_6px_18px_rgba(15,23,42,0.14)] ring-1 ring-black/5 backdrop-blur-xl backdrop-saturate-150 transition-opacity duration-150 group-hover:pointer-events-auto dark:border-white/10 dark:shadow-[0_8px_20px_rgba(0,0,0,0.4)] dark:ring-white/10";
 
 type CommentCardsLayerProps = {
 	/** Comments for this page only. */
@@ -358,7 +359,6 @@ const CommentCard = memo(function CommentCard({
 			data-pdf-chrome
 			className={cn(
 				COMMENT_CARD_SURFACE_CLASS,
-				!editing && "max-h-[70vh] overflow-y-auto",
 				editing
 					? "z-[6] bg-background/92 shadow-[0_18px_44px_rgba(15,23,42,0.22),0_4px_16px_rgba(15,23,42,0.12)] ring-2 ring-ring/50 dark:shadow-[0_18px_46px_rgba(0,0,0,0.6),0_4px_16px_rgba(0,0,0,0.45)]"
 					: hovered
@@ -381,7 +381,7 @@ const CommentCard = memo(function CommentCard({
 					"h-full rounded-[inherit] px-2.5 py-2",
 					editing
 						? "overflow-visible"
-						: "overflow-hidden group-hover:overflow-visible",
+						: "overflow-hidden group-hover:overflow-visible group-focus-within:overflow-visible",
 				)}
 				onPointerDown={(e) => e.stopPropagation()}
 				onBlur={
@@ -406,124 +406,126 @@ const CommentCard = memo(function CommentCard({
 						: undefined
 				}
 			>
-				{editing ? (
-					<div className="block w-full text-left">
-						{item.kind === "visual" ? (
-							<Crop className="size-2.5 text-muted-foreground" aria-hidden />
-						) : (
-							<span
-								className={cn(
-									"block size-2 rounded-full",
-									swatchColorClass(item.color),
-								)}
-								aria-hidden
-							/>
-						)}
-						<textarea
-							ref={textareaRef}
-							className="mt-1 max-h-60 w-full resize-none bg-transparent p-0 text-sm text-foreground/80 leading-relaxed outline-none placeholder:text-muted-foreground/70 select-text"
-							placeholder={t("annotations.placeholder")}
-							aria-label={t("annotations.editorLabel")}
-							defaultValue={item.comment}
-							rows={EDIT_MIN_COMMENT_LINES}
-							{...compositionProps}
-							onChange={(e) => {
-								draftRef.current = e.currentTarget.value;
-								autosizeTextarea(e.currentTarget);
-							}}
-							onClick={(e) => e.stopPropagation()}
-							onKeyDown={(e) => {
-								e.stopPropagation();
-								if (
-									applyMarkdownTextareaShortcut(e, (value) => {
-										draftRef.current = value;
-										autosizeTextarea(e.currentTarget);
-									})
-								)
-									return;
-								if (e.key === "Escape") {
-									e.preventDefault();
-									cancel();
-									return;
-								}
-								if (
-									e.key === "Enter" &&
-									(e.metaKey || e.ctrlKey) &&
-									!isBlockedByIme(e)
-								) {
-									e.preventDefault();
-									commit(e.currentTarget.value);
-								}
-							}}
-						/>
-					</div>
-				) : (
-					// biome-ignore lint/a11y/useSemanticElements: a native <button> cannot wrap the blockquote/p flow content
-					<div
-						role="button"
-						tabIndex={0}
-						className="block w-full cursor-text text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
-						onClick={(e) => {
-							e.stopPropagation();
-							if ((e.target as Element).closest("a, button")) return;
-							onOpen(item);
-						}}
-						onKeyDown={(e) => {
-							if (e.target !== e.currentTarget) return;
-							if (e.key === "Enter" || e.key === " ") {
-								e.preventDefault();
-								onOpen(item);
-							}
-						}}
-					>
-						{item.kind === "visual" ? (
-							<Crop className="size-2.5 text-muted-foreground" aria-hidden />
-						) : (
-							<span
-								className={cn(
-									"block size-2 rounded-full",
-									swatchColorClass(item.color),
-								)}
-								aria-hidden
-							/>
-						)}
-						<div
-							className={cn(
-								"mt-1 max-h-[3.75rem] overflow-hidden break-words text-sm leading-relaxed group-hover:max-h-none group-hover:overflow-x-auto",
-								item.comment.trim()
-									? "text-foreground/80"
-									: "text-muted-foreground/70",
-							)}
-						>
-							{item.comment.trim() ? (
-								<MessageResponse className="text-sm leading-relaxed [&_p]:my-0 [&_table]:min-w-max">
-									{item.comment}
-								</MessageResponse>
+				<div className={cn(!editing && "max-h-[70vh] overflow-y-auto")}>
+					{editing ? (
+						<div className="block w-full text-left">
+							{item.kind === "visual" ? (
+								<Crop className="size-2.5 text-muted-foreground" aria-hidden />
 							) : (
-								t("annotations.placeholder")
+								<span
+									className={cn(
+										"block size-2 rounded-full",
+										swatchColorClass(item.color),
+									)}
+									aria-hidden
+								/>
 							)}
+							<textarea
+								ref={textareaRef}
+								className="mt-1 max-h-60 w-full resize-none bg-transparent p-0 text-sm text-foreground/80 leading-relaxed outline-none placeholder:text-muted-foreground/70 select-text"
+								placeholder={t("annotations.placeholder")}
+								aria-label={t("annotations.editorLabel")}
+								defaultValue={item.comment}
+								rows={EDIT_MIN_COMMENT_LINES}
+								{...compositionProps}
+								onChange={(e) => {
+									draftRef.current = e.currentTarget.value;
+									autosizeTextarea(e.currentTarget);
+								}}
+								onClick={(e) => e.stopPropagation()}
+								onKeyDown={(e) => {
+									e.stopPropagation();
+									if (
+										applyMarkdownTextareaShortcut(e, (value) => {
+											draftRef.current = value;
+											autosizeTextarea(e.currentTarget);
+										})
+									)
+										return;
+									if (e.key === "Escape") {
+										e.preventDefault();
+										cancel();
+										return;
+									}
+									if (
+										e.key === "Enter" &&
+										(e.metaKey || e.ctrlKey) &&
+										!isBlockedByIme(e)
+									) {
+										e.preventDefault();
+										commit(e.currentTarget.value);
+									}
+								}}
+							/>
 						</div>
-						{item.messages && item.messages.length > 0 ? (
-							<div className="mt-1.5 border-t border-border/40 pt-1.5">
-								<div className="line-clamp-3 space-y-1 group-hover:line-clamp-none">
-									{item.messages.map((m) => (
-										<p
-											key={m.id}
-											className={cn(
-												"whitespace-pre-wrap break-words text-caption leading-relaxed",
-												m.role === "assistant"
-													? "text-muted-foreground"
-													: "text-foreground/80",
-											)}
-										>
-											{m.content}
-										</p>
-									))}
-								</div>
+					) : (
+						// biome-ignore lint/a11y/useSemanticElements: a native <button> cannot wrap the blockquote/p flow content
+						<div
+							role="button"
+							tabIndex={0}
+							className="block w-full cursor-text text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+							onClick={(e) => {
+								e.stopPropagation();
+								if ((e.target as Element).closest("a, button")) return;
+								onOpen(item);
+							}}
+							onKeyDown={(e) => {
+								if (e.target !== e.currentTarget) return;
+								if (e.key === "Enter" || e.key === " ") {
+									e.preventDefault();
+									onOpen(item);
+								}
+							}}
+						>
+							{item.kind === "visual" ? (
+								<Crop className="size-2.5 text-muted-foreground" aria-hidden />
+							) : (
+								<span
+									className={cn(
+										"block size-2 rounded-full",
+										swatchColorClass(item.color),
+									)}
+									aria-hidden
+								/>
+							)}
+							<div
+								className={cn(
+									"mt-1 max-h-[3.75rem] overflow-hidden break-words text-sm leading-relaxed group-hover:max-h-none group-hover:overflow-x-auto",
+									item.comment.trim()
+										? "text-foreground/80"
+										: "text-muted-foreground/70",
+								)}
+							>
+								{item.comment.trim() ? (
+									<MessageResponse className="text-sm leading-relaxed [&_p]:my-0 [&_table]:min-w-max">
+										{item.comment}
+									</MessageResponse>
+								) : (
+									t("annotations.placeholder")
+								)}
 							</div>
-						) : null}
-					</div>
-				)}
+							{item.messages && item.messages.length > 0 ? (
+								<div className="mt-1.5 border-t border-border/40 pt-1.5">
+									<div className="line-clamp-3 space-y-1 group-hover:line-clamp-none">
+										{item.messages.map((m) => (
+											<p
+												key={m.id}
+												className={cn(
+													"whitespace-pre-wrap break-words text-caption leading-relaxed",
+													m.role === "assistant"
+														? "text-muted-foreground"
+														: "text-foreground/80",
+												)}
+											>
+												{m.content}
+											</p>
+										))}
+									</div>
+								</div>
+							) : null}
+						</div>
+					)}
+				</div>
 				<div
 					className={cn(
 						COMMENT_ACTION_BAR_CLASS,
@@ -656,6 +658,8 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 	onActiveChangeRef.current = onActiveChange;
 	const onDismissRef = useRef(onDismiss);
 	onDismissRef.current = onDismiss;
+	const aliveRef = useRef(true);
+	const closingRef = useRef(false);
 	const { isBlockedByIme, compositionProps } = useImeGuard();
 
 	const editing = hovered || focused;
@@ -679,13 +683,14 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 	);
 
 	const enterEdit = useCallback(() => {
-		if (committedRef.current) return;
+		if (committedRef.current || closingRef.current) return;
 		setHovered(true);
 		setFocused(true);
 		// Mark sticky before focus so EmbedPDF clearing the selection does not
 		// unmount this chip mid-hover.
 		onActiveChangeRef.current?.(true);
 		requestAnimationFrame(() => {
+			if (committedRef.current || closingRef.current) return;
 			const el = textareaRef.current;
 			if (!el) return;
 			el.focus();
@@ -707,15 +712,44 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 		const trimmed = text.trim();
 		if (!trimmed) return;
 		committedRef.current = true;
+		closingRef.current = true;
 		onActiveChangeRef.current?.(false);
 		onCommitRef.current(trimmed);
 	}, []);
 
 	useEffect(() => {
 		return () => {
+			aliveRef.current = false;
 			onActiveChangeRef.current?.(false);
 		};
 	}, []);
+
+	// Clicking outside the note (e.g. anywhere on the PDF page) commits typed
+	// text or drops an empty draft. Chrome elements (like the selection toolbar)
+	// do not trigger dismissal.
+	useEffect(() => {
+		const onPointerDown = (event: PointerEvent) => {
+			const target = event.target;
+			if (!(target instanceof Node) || rootRef.current?.contains(target)) {
+				return;
+			}
+			if ((target as Element).closest?.("[data-pdf-chrome]")) {
+				return;
+			}
+			const text = (textareaRef.current?.value ?? draftTextRef.current).trim();
+			closingRef.current = true;
+			if (text) {
+				commit(text);
+			} else {
+				onDismissRef.current?.();
+			}
+			textareaRef.current?.blur();
+		};
+		document.addEventListener("pointerdown", onPointerDown, true);
+		return () => {
+			document.removeEventListener("pointerdown", onPointerDown, true);
+		};
+	}, [commit]);
 
 	return (
 		// biome-ignore lint/a11y/useSemanticElements: hosts a textarea; native <button> cannot wrap it
@@ -724,6 +758,7 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 			role="group"
 			aria-label={t("selection.note")}
 			data-pdf-chrome
+			data-selection-comment=""
 			className={cn(
 				COMMENT_DRAFT_SURFACE_CLASS,
 				"transition-[width,box-shadow,background-color] duration-200 ease-out motion-reduce:transition-none",
@@ -796,6 +831,7 @@ const SelectionCommentAffordance = memo(function SelectionCommentAffordance({
 						autosizeTextarea(e.currentTarget);
 					}}
 					onBlur={(e) => {
+						if (!aliveRef.current || closingRef.current) return;
 						const next = e.relatedTarget as Node | null;
 						if (next && rootRef.current?.contains(next)) return;
 						const text = draftTextRef.current;
@@ -884,7 +920,8 @@ export const CommentCardsLayer = memo(function CommentCardsLayer({
 	const svgWidth = pageWidthPx + COMMENT_CARD_GAP_PX + COMMENT_CARD_WIDTH_PX;
 
 	return (
-		<div className="pointer-events-none absolute inset-0 z-[5] overflow-visible">
+		// Above translated glyphs (also z-6, mounted earlier) so the rail stays visible.
+		<div className="pointer-events-none absolute inset-0 z-[6] overflow-visible">
 			{connectorD ? (
 				// Decorative hover leader; announced via the card / hit-target labels.
 				// biome-ignore lint/a11y/noSvgWithoutTitle: purely visual connector

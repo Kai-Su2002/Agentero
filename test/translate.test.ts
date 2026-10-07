@@ -63,6 +63,7 @@ describe("translate services registry", () => {
 		expect(isTranslateProviderId("deepl")).toBe(true);
 		expect(isCommercialTranslateProvider("deepl")).toBe(true);
 		expect(isFreeMtProvider("deeplx")).toBe(true);
+		expect(isFreeMtProvider("cnki")).toBe(true);
 		expect(isFreeMtProvider("agent")).toBe(false);
 		expect(isFreeMtProvider("deepl")).toBe(false);
 	});
@@ -73,6 +74,7 @@ describe("translate services registry", () => {
 		expect(ids).toContain("tencenttransmart");
 		expect(ids).toContain("huoshanweb");
 		expect(ids).toContain("deeplx");
+		expect(ids).toContain("cnki");
 		expect(ids).toContain("deepl");
 		expect(ids).toContain("azure");
 		expect(ids).toContain("googleCloud");
@@ -229,7 +231,7 @@ describe("translate prompts", () => {
 		// Page line, [[n]] batch rules and the text payload stay app-composed.
 		expect(p).toContain("page 7");
 		expect(p).toContain("[[n]] marker");
-		expect(p).toContain("Do not merge paragraphs.");
+		expect(p).toContain("do not merge markers");
 		expect(p.endsWith("Text:\n\n[[1]] alpha\n\n[[2]] beta")).toBe(true);
 	});
 

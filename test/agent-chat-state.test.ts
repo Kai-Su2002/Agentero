@@ -18,6 +18,7 @@ import {
 	formatAskUserAnswers,
 	isBackgroundWorkflowHistoryTitle,
 	isPendingAskUserToolStatus,
+	mergeModelChoices,
 	parseAskUserQuestions,
 	providerSessionIdForHistoryLoad,
 	questionsFromAskUserDtos,
@@ -863,6 +864,40 @@ describe("ensureModelsInclude", () => {
 			group: "Custom",
 		});
 		expect(out.map((m) => m.id)).toEqual(["deepseek-chat", "gpt-5", "gpt-4.1"]);
+	});
+});
+
+describe("mergeModelChoices", () => {
+	it("keeps the richer catalog and appends new ids (openCode stale snapshot)", () => {
+		const richer = [
+			{ id: "opencode/gpt-5", name: "opencode/GPT-5" },
+			{ id: "deepseek/deepseek-flash", name: "deepseek/DeepSeek V4.1 Flash" },
+			{ id: "xai/grok-4.3", name: "xai/Grok 4.3" },
+		];
+		// session/new partial snapshot (custom providers only) arrives after the
+		// complete list; it must not drop the built-in provider.
+		const stale = [
+			{ id: "deepseek/deepseek-flash", name: "deepseek/DeepSeek V4.1 Flash" },
+			{ id: "xai/grok-4.3", name: "xai/Grok 4.3" },
+		];
+		const merged = mergeModelChoices(richer, stale);
+		expect(merged.map((m) => m.id)).toEqual([
+			"opencode/gpt-5",
+			"deepseek/deepseek-flash",
+			"xai/grok-4.3",
+		]);
+	});
+
+	it("adds genuinely new ids from the extra list", () => {
+		const merged = mergeModelChoices(
+			[{ id: "a", name: "A" }],
+			[
+				{ id: "a", name: "A again" },
+				{ id: "b", name: "B", group: "g" },
+			],
+		);
+		expect(merged.map((m) => m.id)).toEqual(["a", "b"]);
+		expect(merged[1]?.group).toBe("g");
 	});
 });
 

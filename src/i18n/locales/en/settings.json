@@ -10,6 +10,7 @@
 		"agent": "Agent",
 		"translate": "Translate",
 		"layout": "Layout",
+		"experimental": "Experimental",
 		"doctor": "Doctor",
 		"keyboard": "Keyboard",
 		"remote-access": "Remote access",
@@ -56,6 +57,13 @@
 	},
 	"general": {
 		"title": "General",
+		"sections": {
+			"papers": "Paper library",
+			"pdf": "PDF reading",
+			"plaza": "Plaza",
+			"network": "Network",
+			"integrations": "Integrations"
+		},
 		"paperTreeLabelMode": {
 			"label": "Paper names in file tree",
 			"title-author": "Title · Author",
@@ -96,6 +104,17 @@
 			"ask": "Ask",
 			"always": "Always when safe"
 		},
+		"pdfScrollStrategy": {
+			"label": "PDF scroll direction",
+			"vertical": "Vertical",
+			"horizontal": "Horizontal"
+		},
+		"pdfSpreadMode": {
+			"label": "PDF page layout",
+			"none": "Single page",
+			"odd": "Two-page (from page 1)",
+			"even": "Two-page (cover separate)"
+		},
 		"batchImportConcurrency": {
 			"label": "Background task concurrency",
 			"value": "{{value}} simultaneous"
@@ -107,6 +126,17 @@
 		"githubMirror": {
 			"label": "GitHub mirror",
 			"description": "Choose a built-in public mirror for Skill import fallback when GitHub is unreachable."
+		},
+		"institutionProxy": {
+			"label": "Institution proxy",
+			"description": "WebVPN prefix for paywalled PDF download (leave empty to disable)",
+			"cookieLabel": "Proxy cookie",
+			"cookiePlaceholder": "Paste WebVPN cookie",
+			"typeLabel": "Gateway type",
+			"typeEzproxy": "EZProxy (login?url=)",
+			"typeWengine": "WebVPN (wengine)",
+			"test": "Test",
+			"testing": "Testing…"
 		},
 		"easyScholar": {
 			"section": "EasyScholar",
@@ -128,6 +158,10 @@
 			"invalidPort": "Port must be between 1 and 65535."
 		},
 		"mcp": {
+			"exposeText": {
+				"label": "Expose paper text (MCP)",
+				"description": "Opt-in for paper_text_get: external clients (e.g. ChatGPT) can read the PDF's page text. Off by default — full text then never leaves the vault."
+			},
 			"label": "MCP server",
 			"portLabel": "MCP port",
 			"invalidPort": "Port must be between 1 and 65535.",
@@ -150,12 +184,6 @@
 				"copied": "Copied",
 				"openTunnels": "Open tunnels",
 				"openApiKeys": "Open API keys"
-			}
-		},
-		"export": {
-			"section": "Note export",
-			"watermark": {
-				"label": "Agentero watermark by default"
 			}
 		},
 		"privacy": {
@@ -270,6 +298,16 @@
 		"desktopHint": "Run `pnpm tauri dev` to scan agents on this machine.",
 		"commonAgents": "Common agents",
 		"commonAgentsHint": "If ACP fails, try configuring a proxy under General.",
+		"desktopApps": {
+			"section": "Local desktop apps",
+			"hint": "These popular desktop apps do not support ACP yet, so they cannot be connected as Agents here.",
+			"scanning": "Detecting…",
+			"unsupported": "Not supported yet",
+			"open": "Open {{name}}",
+			"chatgpt": "ChatGPT",
+			"qwenwork": "QwenWork",
+			"workbuddy": "WorkBuddy"
+		},
 		"defaultAgent": {
 			"section": "Default agent",
 			"label": "Default Agent",
@@ -295,6 +333,8 @@
 		"updateAgent": "Update",
 		"updateAgentAria": "Update {{name}} agent CLI",
 		"updateAgentTitle": "Update agent CLI",
+		"openCliAria": "Open {{name}} CLI in terminal",
+		"openCliTitle": "Open terminal for {{command}}",
 		"updateSuccess": "Updated {{name}}",
 		"lifecycleWaiting": "Waiting for installer…",
 		"lifecycleInstalling": "Running installer…",
@@ -386,6 +426,7 @@
 			"label": "Default service",
 			"agentero": "Agentero built-in",
 			"deeplx": "DeepLX",
+			"cnki": "CNKI Translate",
 			"huoshanweb": "Volcengine Web",
 			"tencenttransmart": "Tencent Transmart",
 			"googleapi": "Google Translate (API)",
@@ -412,8 +453,15 @@
 		"autoSelection": {
 			"label": "Auto-translate PDF selection"
 		},
-		"dualPane": {
-			"label": "Open rendered translation in a side window"
+		"displayMode": {
+			"label": "Translation display mode",
+			"overlay": "Overlay on original PDF",
+			"dualPane": "Dual pane"
+		},
+		"dualPaneSource": {
+			"label": "Dual pane source",
+			"pdf": "PDF layout translation",
+			"latex": "Translated LaTeX source"
 		},
 		"providerConfig": {
 			"section": "API Services",
@@ -479,6 +527,8 @@
 		},
 		"providerConfig": {
 			"section": "Provider settings",
+			"sectionHint": "Paddle or MinerU is recommended. Other OpenAI-compatible services are collapsed under Other below.",
+			"other": "Other providers",
 			"providerName": {
 				"paddle": "Paddle",
 				"mineru": "MinerU",
@@ -543,6 +593,40 @@
 			}
 		}
 	},
+	"experimental": {
+		"title": "Experimental features",
+		"decision": {
+			"section": "Decision model",
+			"getKey": "Get an API key",
+			"smartHighlight": "Smart highlight",
+			"provider": {
+				"label": "Provider",
+				"jev": "TypeSafe Jev",
+				"clef": "Cloudflare Clef",
+				"openai": "OpenAI (config)",
+				"custom": "Custom"
+			},
+			"apiKey": {
+				"label": "API key",
+				"placeholder": "API key"
+			},
+			"baseUrl": {
+				"label": "Endpoint URL"
+			},
+			"model": {
+				"label": "Model",
+				"placeholder": "Model id"
+			},
+			"test": "Test connection",
+			"probeStatus": {
+				"idle": "Not tested yet",
+				"probing": "Testing…",
+				"ok": "Reachable",
+				"fail": "Unreachable",
+				"unconfigured": "API key required"
+			}
+		}
+	},
 	"doctor": {
 		"title": "Vault Doctor",
 		"refresh": "Run diagnosis again",
@@ -579,7 +663,8 @@
 				"installing": "Installing…",
 				"tooltip": "Install the Node.js LTS through your system package manager (winget or Homebrew)",
 				"hint": "Some ACP Agents need Node.js and npm on PATH. Install the LTS via your system package manager, then re-detect.",
-				"noPackageManager": "No supported package manager found. Install Node.js manually from nodejs.org, then re-detect."
+				"noPackageManager": "No supported package manager found. Install Node.js manually from nodejs.org, then re-detect.",
+				"success": "Node.js installed. Retry the Agent install."
 			}
 		},
 		"network": {
@@ -710,6 +795,11 @@
 			"clear": "Clear cache",
 			"clearDone": "Cache cleared",
 			"clearFailed": "Couldn't clear the paper full-text cache."
+		},
+		"downloadProxyNotice": {
+			"title": "No network proxy configured",
+			"description": "CLI downloads and app updates come from GitHub. If this network can't reach GitHub, configure a proxy in General → Network proxy and try again.",
+			"openSettings": "Open network settings"
 		},
 		"update": {
 			"available": "Version {{version}} is ready",

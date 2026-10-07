@@ -1,10 +1,17 @@
 import type { PdfTextRun } from "@embedpdf/models";
 
 import type { PdfAskNormalizedRect } from "@/lib/pdf/ask/types";
+import { recoverFigureCaptionsFromRuns } from "@/lib/pdf/layout/captions-from-runs";
+import { figureCaptionKey } from "@/lib/pdf/layout/figure-caption-text";
 import {
 	isCaptionLayoutKind,
 	isLayoutBodyTextKind,
 } from "@/lib/pdf/layout/labels";
+import {
+	groupReadingLines,
+	orderByReadingLine,
+	type ReadingBox,
+} from "@/lib/pdf/layout/reading-order";
 import type { PdfLayoutRegion } from "@/lib/pdf/layout/types";
 
 /** Semantic role of a caption box (from PDF text, not model label alone). */
@@ -38,23 +45,27 @@ type TextRunLine = {
 	bottom: number;
 };
 
+function runReadingBox(run: PdfTextRun): ReadingBox {
+	return {
+		x: run.rect.origin.x,
+		y: run.rect.origin.y,
+		width: run.rect.size.width,
+		height: run.rect.size.height,
+	};
+}
+
 function runsInBbox(
 	runs: PdfTextRun[],
 	bbox: PdfAskNormalizedRect,
 	pageWidth: number,
 	pageHeight: number,
 ): PdfTextRun[] {
-	return runs
-		.filter(
-			(run) =>
-				Boolean(run.text?.trim()) &&
-				runCenterInBbox(run, bbox, pageWidth, pageHeight),
-		)
-		.slice()
-		.sort(
-			(a, b) =>
-				a.rect.origin.y - b.rect.origin.y || a.rect.origin.x - b.rect.origin.x,
-		);
+	const inside = runs.filter(
+		(run) =>
+			Boolean(run.text?.trim()) &&
+			runCenterInBbox(run, bbox, pageWidth, pageHeight),
+	);
+	return orderByReadingLine(inside, runReadingBox);
 }
 
 /**
@@ -71,20 +82,11 @@ export function splitBodyRegionAtParagraphGaps(
 	const inside = runsInBbox(runs, region.bbox, pageSize.width, pageSize.height);
 	if (inside.length < 2) return [region];
 
-	const lines: TextRunLine[] = [];
-	for (const run of inside) {
-		const top = run.rect.origin.y;
-		const bottom = top + run.rect.size.height;
-		const previous = lines.at(-1);
-		const tolerance = Math.max(1, run.rect.size.height * 0.45);
-		if (previous && Math.abs(top - previous.top) <= tolerance) {
-			previous.runs.push(run);
-			previous.top = Math.min(previous.top, top);
-			previous.bottom = Math.max(previous.bottom, bottom);
-		} else {
-			lines.push({ runs: [run], top, bottom });
-		}
-	}
+	const lines = groupReadingLines(inside, runReadingBox).map((line) => ({
+		runs: line.items,
+		top: line.top,
+		bottom: line.bottom,
+	}));
 	if (lines.length < 2) return [region];
 	const heights = lines.map((line) => Math.max(1, line.bottom - line.top));
 	const medianHeight = heights.slice().sort((a, b) => a - b)[
@@ -160,7 +162,9 @@ export function textFromRunsInBbox(
 export function captionRoleFromText(text: string): CaptionRole {
 	const t = text.trim();
 	if (!t) return "other";
+	if (figureCaptionKey(t)) return "figure_main";
 	// (a) Concentration — panel subtitle, not the whole-figure caption.
+	if (/^[a-z]$/i.test(t)) return "subpanel";
 	if (/^\(\s*[a-z]\s*\)/i.test(t)) return "subpanel";
 	if (/^[a-z]\s*[).:]\s+\S/i.test(t) && t.length < 80) return "subpanel";
 	if (/^table\s*\d/i.test(t) || /^tab\.\s*\d/i.test(t)) return "table_main";
@@ -213,7 +217,7 @@ export function enrichCaptionRegionsWithText(
 	runs: PdfTextRun[],
 	pageSize: { width: number; height: number },
 ): PdfLayoutRegion[] {
-	return regions.flatMap((region) => {
+	const enriched = regions.flatMap((region) => {
 		if (region.pageIndex !== pageIndex) return region;
 
 		if (isCaptionLayoutKind(region.kind)) {
@@ -240,22 +244,26 @@ export function enrichCaptionRegionsWithText(
 
 		if (isLayoutBodyTextKind(region.kind) && region.kind !== "header") {
 			return splitBodyRegionAtParagraphGaps(region, runs, pageSize).map(
-				(segment) => ({
-					...segment,
-					text:
-						segment.text ||
-						textFromRunsInBbox(
-							runs,
-							segment.bbox,
-							pageSize.width,
-							pageSize.height,
-						),
-				}),
+				(segment) => {
+					// A box that does not split still carries previously stored
+					// text. Prefer this walk so a bad word order is replaced.
+					const fresh = textFromRunsInBbox(
+						runs,
+						segment.bbox,
+						pageSize.width,
+						pageSize.height,
+					);
+					return {
+						...segment,
+						text: fresh || segment.text,
+					};
+				},
 			);
 		}
 
 		return region;
 	});
+	return recoverFigureCaptionsFromRuns(enriched, pageIndex, runs, pageSize);
 }
 
 /**

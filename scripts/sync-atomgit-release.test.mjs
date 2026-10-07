@@ -3,11 +3,13 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import {
 	AtomGit,
 	digest,
 	retry,
 	selectRelease,
+	stallWatchdog,
 	syncRelease,
 } from "./sync-atomgit-release.mjs";
 
@@ -196,6 +198,18 @@ test("PUT uses signed headers without PAT; repeated sync skips identical bytes a
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}
+});
+
+test("stall watchdog tolerates slow progress and aborts a stalled transfer", async () => {
+	const slow = stallWatchdog(120);
+	const beat = setInterval(slow.progress, 20);
+	await sleep(300);
+	assert.equal(slow.signal.aborted, false);
+	clearInterval(beat);
+	await sleep(200);
+	assert.equal(slow.signal.aborted, true);
+	assert.equal(slow.signal.reason.name, "StallError");
+	slow.stop();
 });
 
 test("transient errors retry but exhausted retries fail", async () => {

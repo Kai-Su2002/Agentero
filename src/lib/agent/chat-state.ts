@@ -159,6 +159,11 @@ export type ChatSessionHistoryItem = {
 	/** Durable ACP provider session id used to resume this conversation. */
 	providerSessionId?: string | null;
 	/**
+	 * When true, the title was set by the user (#710) and must not be replaced
+	 * by ACP `session/list` titles or `session_info_update` pushes.
+	 */
+	titleLocked?: boolean;
+	/**
 	 * When false, never pass sessionId to runOnce (no ACP session/resume).
 	 * Used for PDF visual-trace pin chats whose multi-turn context lives in
 	 * local lines + prompt history, not provider sessions.
@@ -354,7 +359,6 @@ export type AgentOption = {
 function catalogTemplateFromId(templateId: string): AgentTemplate | undefined {
 	switch (templateId) {
 		case "opencode":
-		case "openclaw":
 		case "hermes":
 		case "claude-acp":
 		case "codex-acp":
@@ -366,6 +370,7 @@ function catalogTemplateFromId(templateId: string): AgentTemplate | undefined {
 		case "kimi-code":
 		case "zcode":
 		case "minimax-code":
+		case "mimo-code":
 		case "custom":
 			return templateId;
 		default:
@@ -1177,4 +1182,30 @@ export function ensureModelsInclude(
 		});
 	}
 	return dedupeModelsClient([...extras, ...models]);
+}
+
+/**
+ * Union two model catalogs by id, keeping `primary` order and appending ids that
+ * only appear in `extra`.
+ *
+ * Guards the picker against a stale ACP catalog overwriting a richer one:
+ * opencode 2.x returns a partial model list on `session/new` and pushes the
+ * complete list moments later via `config_option_update`, while the warm result
+ * (and the pooled slot / run start) still carries the partial snapshot. The
+ * snapshot must not shrink the list (Fix #638).
+ */
+export function mergeModelChoices(
+	primary: AgentModelChoice[],
+	extra: AgentModelChoice[],
+): AgentModelChoice[] {
+	if (extra.length === 0) return primary;
+	const seen = new Set(primary.map((m) => m.id.trim()));
+	const out = [...primary];
+	for (const m of extra) {
+		const id = m.id.trim();
+		if (!id || seen.has(id)) continue;
+		seen.add(id);
+		out.push(m);
+	}
+	return out;
 }

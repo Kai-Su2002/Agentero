@@ -8,13 +8,15 @@ minimumReleaseAgeExclude:
   - ai@7.0.26
   - '@hono/node-server@1.19.17'
 overrides:
-  brace-expansion@<5.0.9: '>=5.0.9'
+  brace-expansion@<5.0.12: '>=5.0.12 <6'
   browserslist@<4.28.7: '>=4.28.7 <5'
-  dompurify@<3.4.13: '>=3.4.13 <4'
+  dompurify@<3.4.16: '>=3.4.16 <4'
   fast-uri@<3.1.6: '>=3.1.6 <4'
-  hono@<4.12.34: '>=4.12.34 <5'
-  ip-address@<10.3.1: '>=10.3.1 <11'
+  hono@<4.13.7: '>=4.13.7 <5'
+  ip-address@<10.7.1: '>=10.7.1 <11'
   js-yaml@<4.3.1: '>=4.3.1 <5'
+  # KaTeX 0.11–0.18.1 is vulnerable to a prototype-pollution trust bypass.
+  katex@<0.18.2: '>=0.18.2 <0.19'
   lodash-es@<4.18.0: '>=4.18.0 <5'
   mermaid@<11.16.1: '>=11.16.1 <12'
   # Scoped to 3.x: nanoid 5/6 are also installed and unaffected by the advisory.
@@ -22,8 +24,11 @@ overrides:
   # Scoped to the vulnerable 4.x–5.1.15 range (Dependabot #42/#46/#47/#48).
   nanoid@>=4.0.0 <5.1.16: '>=5.1.16 <6'
   postcss@<8.5.23: '>=8.5.23'
+  postcss-selector-parser@<7.1.6: '>=7.1.6 <8'
+  proxy-addr@<2.0.8: '>=2.0.8 <3'
   qs@<6.16.0: '>=6.16.0 <7'
-  undici@<7.29.0: '>=7.29.0 <8'
+  source-map-js@<1.2.2: '>=1.2.2 <2'
+  undici@<7.29.1: '>=7.29.1 <8'
   '@hono/node-server@<1.19.17': '>=1.19.17 <2'
   # Keep re-installs (e.g. pnpm patch-commit) from drifting the pinned types.
   '@types/react-dom': 19.2.3

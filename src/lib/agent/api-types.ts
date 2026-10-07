@@ -19,6 +19,8 @@ export type CatalogEntry = {
 	installCommand?: string | null;
 	/** Host CLI OAuth/login command opened by Agentero's terminal helper. */
 	loginCommand?: string | null;
+	/** Interactive host CLI for the "open in terminal" action, when shipped. */
+	cliCommand?: string | null;
 	/** Host CLI present but ACP entrypoint missing — offer ACP install. */
 	offerInstall?: boolean;
 	/** Local silent install via `runToolLifecycle` is supported. */

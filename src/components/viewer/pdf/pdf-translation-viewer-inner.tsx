@@ -15,6 +15,7 @@ import { EMPTY_LAYOUT_REGIONS_BY_PAGE } from "@/components/viewer/pdf/constants"
 import { usePdfLayoutRegions } from "@/components/viewer/pdf/hooks/use-pdf-layout-regions";
 import { usePdfLayoutTranslate } from "@/components/viewer/pdf/hooks/use-pdf-layout-translate";
 import { usePdfPaperTone } from "@/components/viewer/pdf/hooks/use-pdf-paper-tone";
+import { usePdfReadingMode } from "@/components/viewer/pdf/hooks/use-pdf-reading-mode";
 import { usePdfScrollSync } from "@/components/viewer/pdf/hooks/use-pdf-scroll-sync";
 import { usePdfZoomControls } from "@/components/viewer/pdf/hooks/use-pdf-zoom-controls";
 import {
@@ -49,6 +50,9 @@ const EMPTY_MARKS: PdfPageMarksSlice = {
 	activeCardId: null,
 	hoveredCommentId: null,
 	selectionCommentDraft: null,
+	translateHighlightsByPage: EMPTY_PAGE_MAP,
+	highlightQuotesByPage: EMPTY_PAGE_MAP,
+	translatedHighlightsByPage: EMPTY_PAGE_MAP,
 };
 
 const NOOP = () => undefined;
@@ -96,6 +100,7 @@ export function PdfTranslationViewerInner({
 	onHandle,
 }: PdfViewerInnerProps) {
 	usePdfScrollSync(docId);
+	usePdfReadingMode(docId);
 	// Interaction manager is registered; keep the capability subscribed so
 	// GlobalPointerProvider / pan-zoom gestures stay wired.
 	useInteractionManagerCapability();

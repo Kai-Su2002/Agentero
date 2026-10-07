@@ -501,6 +501,28 @@
 }
 
 /*
+ * Translation glyphs sit on PDF paper, not app chrome. The global rule
+ * paints selection in --foreground, which is near-white in dark mode, so a
+ * selection on light paper flips black ink light. WebKit also drops
+ * ::selection color unless background-color is in the same rule — a
+ * background-only utility is enough to trigger that.
+ *
+ * Sentence spans do not inherit this. A rule on the paragraph styles only
+ * the paragraph's own text; each span matches the global ::selection and
+ * turns white. The descendant rule has to name those spans.
+ */
+.pdf-translate-selection::selection,
+.pdf-translate-selection *::selection {
+	background-color: rgb(96 165 250 / 0.4);
+	color: #18181b;
+}
+.pdf-translate-selection[data-paper="dark"]::selection,
+.pdf-translate-selection[data-paper="dark"] *::selection {
+	background-color: rgb(96 165 250 / 0.4);
+	color: #f4f4f5;
+}
+
+/*
  * PDF bottom-bar zoom slider: muted gray at rest, brand accent on hover /
  * focus / drag so the control stays quiet until the pointer engages it.
  * Use --brand (chromatic) rather than --primary (near black/white neutrals).
@@ -726,6 +748,25 @@
 		var(--muted-foreground) 28%,
 		transparent
 	);
+}
+
+/*
+ * Linux WebKitGTK can draw native overlay scrollbars above tooltips and menus.
+ * Hide page scrollbars while a floating layer is open, keeping the floating
+ * layer's own scrollbars. Enabled only on Linux desktop (lib/core/scrollbars.ts).
+ * Keep the selector list to real scrollers: it is restyled on every open / close.
+ */
+html[data-linux-scrollbars]:has(
+	body > :is([data-radix-popper-content-wrapper], [data-viewport-floating])
+)
+:is(
+	.agentero-scroll,
+	.agentero-scroll-both,
+	.overflow-auto,
+	.overflow-x-auto,
+	.overflow-y-auto
+):not(:is([data-radix-popper-content-wrapper], [data-viewport-floating]) *) {
+	scrollbar-width: none;
 }
 
 /* dockview: map native theme class to app design tokens */
@@ -1062,8 +1103,63 @@ body.agentero-dockview-dragging * {
 	color: #f2cc60;
 }
 
+/*
+ * Markdown reading performance (#702).
+ *
+ * A long note renders every block; changing the pane width (dragging a rail or
+ * a Dockview sash) re-wraps the whole document every frame, and scrolling
+ * paints it all. `content-visibility: auto` lets Chromium skip layout and paint
+ * for offscreen top-level blocks — the Slate-recommended technique for large
+ * documents. It is scoped to the live editor (only it renders
+ * `.slate-blockWrapper`) and disabled while the editor holds focus, so editing,
+ * caret placement and IME keep their uncontained semantics. `contain-intrinsic-
+ * size: auto` caches each block's real height after its first render, so the
+ * `4rem` fallback only applies to never-seen blocks.
+ *
+ * WebKit is slower than not using this per element, so the attribute is set
+ * only on non-WebKit webviews (see lib/core/paint-perf.ts).
+ */
+html[data-offscreen-md-blocks] [data-slate-editor][data-selection-chat-origin="markdown"]:not(
+		:focus-within
+	)
+	.slate-blockWrapper {
+	content-visibility: auto;
+	contain-intrinsic-size: auto 4rem;
+}
+
 ::highlight(agentero-context-selection),
 ::highlight(agentero-annotation-selection),
 ::highlight(agentero-annotation-navigation) {
 	background-color: #3b82f650;
+}
+
+/*
+ * Config reminders (#658): Sonner lays action buttons out in the same flex row
+ * as the text, which squeezes a long description into a narrow column. Stack
+ * the content above a right-aligned button row for `cn-reminder-toast` toasts.
+ * Specificity is raised past Sonner's own rules so source order does not matter.
+ */
+[data-sonner-toast][data-styled="true"].cn-reminder-toast {
+	display: grid;
+	grid-template-columns: 1fr auto auto;
+	align-items: center;
+	column-gap: 6px;
+	row-gap: 10px;
+	--toast-button-margin-start: 0;
+	--toast-button-margin-end: 0;
+}
+[data-sonner-toast][data-styled="true"].cn-reminder-toast [data-content] {
+	grid-column: 1 / -1;
+	grid-row: 1;
+}
+[data-sonner-toast][data-styled="true"].cn-reminder-toast [data-icon] {
+	display: none;
+}
+[data-sonner-toast][data-styled="true"].cn-reminder-toast [data-cancel] {
+	grid-column: 2;
+	grid-row: 2;
+}
+[data-sonner-toast][data-styled="true"].cn-reminder-toast [data-action] {
+	grid-column: 3;
+	grid-row: 2;
 }

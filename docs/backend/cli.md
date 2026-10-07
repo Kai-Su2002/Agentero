@@ -20,6 +20,7 @@ Headless Vault / Catalog / Wiki 接口；**不含** BYOA / paper-reader。
 | `describe` | Agent 自省：策展型 op 目录与单 op 的 input/output/errors/examples（机器契约真源） |
 | `paper` | list/get、tag list/set/add/rm、move、download/parse… |
 | `import` | 标识符入库 |
+| `discover` | 查询式发现：按关键词/分类/提交日期窗口抓 arXiv 候选，确定性词法排序（headless、无 embedding key） |
 | `export` | 导出 |
 | `doctor` | Vault 结构与 Catalog 诊断；含 wikilink 检查与 aliases / 视觉批注 / catalog 去重修复 |
 | `layout` | 侧栏同构版面索引：`list` / `get`（figure / table / algorithm / formula / section） |
@@ -148,6 +149,37 @@ agentero vault list --json
 default_vault = "/Users/philfan/l/paper"
 known_vaults = ["/Users/philfan/l/paper", "/Users/philfan/l/video-acc"]
 ```
+
+## 发现（discover）
+
+`discover arxiv` 是**查询式、无 Vault** 的发现原语，对应「抓当天 arXiv + 关键词排序」：候选来自 arXiv Atom API（`export.arxiv.org/api/query`，按提交日期倒序），用**确定性词法打分**排序——标题命中权重 3、摘要命中权重 1，每个结果带 `matches` 说明命中了哪些词、贡献多少。不需要 embedding 端点或 API key。
+
+```bash
+# 关键词 + 分类 + 日期窗口
+agentero discover arxiv -k agent -k "world model" -c cs.AI --since 2026-08-01 --until 2026-08-07 --json
+
+# 只看某分类当天最新（无关键词时按提交日期新→旧）
+agentero discover arxiv -c cs.LG --top 20 --max-candidates 200 --json
+```
+
+| 参数 | 说明 |
+|---|---|
+| `-k/--keyword` | 主题词或短语，可重复；多词短语按整词匹配（`all:"…"`） |
+| `-c/--category` | arXiv 分类（如 `cs.AI`），可重复 |
+| `--since` / `--until` | 提交日期窗口（`YYYY-MM-DD`，映射到 `submittedDate`） |
+| `--top` | 短名单条数（默认 8） |
+| `--max-candidates` | 排序前抓取的候选上限（默认 100，封顶 200） |
+| `--out` | 把完整短名单 JSON 写到文件 |
+| `--no-dedup` | 关闭「已入库去重」 |
+| `--embed-base` / `--embed-model` | 给 OpenAI 兼容 embeddings Base URL + 模型 id，启用**可选**语义加权；key 读 `AGENTERO_EMBEDDING_API_KEY`（不走 argv） |
+| `--semantic-weight` | 语义余弦加到词法分的权重（默认 1.0） |
+
+- **至少给一个 `--keyword` 或 `--category`**，否则报 `usage`（只给日期会扫无界切片）。
+- 打分默认纯词法、可复现、离线可跑；`matches` 里的 `field` / `count` / `weight` / `contribution` 就是「为什么推它」。
+- **已入库去重**：解析到 vault 时，候选里 arXiv id 已在 catalog 的会被**排序前**剔除（`excluded` 计数）；命令仍保持 vault-free——解析不到 vault 就静默跳过去重，只有显式传了无效 `--vault` 才报错。`--no-dedup` 可关闭。
+- **可选语义排序**：给了 `--embed-base` + `--embed-model` 后，把关键词的 embedding 与候选 embedding 的余弦按 `--semantic-weight` 加到词法分上（`matches` 里出现 `field: "semantic"` 一项）。端点失败**不报错**，降级为纯词法并在 `semanticError` / 文本末行提示。默认不启用，词法仍是基线。
+- 输出是可直接消费的短名单（`_shortlist.json` 的收敛版）；Agent 拿到后自行判断题相关性，再走 `import id` 入库。
+- 与桌面广场的 arXiv Daily **不同**：后者是「读我的库 → 今天该读什么」的库画像 embedding 排序，依赖 catalog 与 embedding 端点；本命令是 query-first、零依赖，供 headless / 管线使用。
 
 ## 论文导入
 

@@ -12,6 +12,7 @@ use crate::core::error::AppError;
 use crate::core::http;
 use crate::features::paper::catalog::papers;
 use crate::features::paper::catalog::with_catalog;
+use crate::features::paper::discovery::embeddings;
 use crate::features::paper::discovery::feeds::parse::parse_feed_bytes;
 use chrono::Utc;
 use rusqlite::{Connection, OptionalExtension};
@@ -29,8 +30,6 @@ pub const DEFAULT_TOP_N: usize = 20;
 
 /// Cap on abstracts embedded per request so one run cannot fan out unbounded.
 const MAX_CORPUS: usize = 2_000;
-/// Abstracts per `/embeddings` call. Large batches trip provider input limits.
-const EMBED_BATCH: usize = 64;
 /// Chars of an abstract sent for embedding (providers cap tokens per input).
 const MAX_EMBED_CHARS: usize = 4_000;
 const FEED_TIMEOUT: Duration = Duration::from_secs(30);
@@ -80,25 +79,33 @@ pub struct ProbeEmbeddingResult {
     pub latency_ms: u64,
 }
 
-/// Resolve a user-supplied embedding base URL into a full `/embeddings` URL.
-///
-/// Accepts trailing slashes and bases that already end in `/embeddings`.
-/// All other paths get `/embeddings` appended after a single separator.
-fn resolve_endpoint(base_url: &str) -> String {
-    let base = base_url.trim().trim_end_matches('/');
-    if base.is_empty() {
-        return String::new();
-    }
-    if base.ends_with("/embeddings") {
-        base.to_string()
-    } else {
-        format!("{base}/embeddings")
-    }
+/// Read the most recent stored run without recomputing (page open / prewarm).
+pub fn last_result(vault_root: &Path) -> Result<Option<RecommendResult>, AppError> {
+    with_catalog(vault_root, latest_run_result)
 }
 
-/// Read the stored run without recomputing (page open / stale check).
-pub fn last_result(vault_root: &Path) -> Result<Option<RecommendResult>, AppError> {
-    with_catalog(vault_root, read_state)
+/// Inputs that identify a cached run; also its cache key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct RunParams {
+    categories: Vec<String>,
+    top_n: usize,
+    model: String,
+}
+
+/// Stable cache key for a run: source + model + top_n + ordered categories.
+/// Different top_n / model / categories therefore never share a slot.
+fn run_key(source: &str, params: &RunParams) -> String {
+    let categories = params
+        .categories
+        .iter()
+        .map(|c| c.to_ascii_lowercase())
+        .collect::<Vec<_>>()
+        .join(",");
+    text_hash(&format!(
+        "{source}|{}|{}|{categories}",
+        params.model, params.top_n
+    ))
 }
 
 /// Categories to use when the caller passes none: last run's, else defaults.
@@ -109,9 +116,9 @@ fn resolve_categories(conn: &Connection, requested: Option<Vec<String>>) -> Vec<
             return cleaned;
         }
     }
-    if let Ok(Some(state)) = read_state(conn) {
-        if !state.categories.is_empty() {
-            return state.categories;
+    if let Ok(Some(params)) = latest_run_params(conn) {
+        if !params.categories.is_empty() {
+            return params.categories;
         }
     }
     DEFAULT_CATEGORIES.iter().map(|c| c.to_string()).collect()
@@ -132,59 +139,86 @@ fn normalize_categories(raw: Vec<String>) -> Vec<String> {
     out
 }
 
-fn read_state(conn: &Connection) -> Result<Option<RecommendResult>, AppError> {
+/// Decode one `discovery_runs` row into a cached `RecommendResult`.
+fn parse_run_row(row: (String, String, String)) -> Option<RecommendResult> {
+    let (computed_at, params_json, results_json) = row;
+    let params: RunParams = serde_json::from_str(&params_json).ok()?;
+    let items: Vec<RecommendItem> = serde_json::from_str(&results_json).unwrap_or_default();
+    Some(RecommendResult {
+        items,
+        computed_at,
+        categories: params.categories,
+        corpus_size: 0,
+        reused_cache: true,
+    })
+}
+
+fn read_run(conn: &Connection, key: &str) -> Result<Option<RecommendResult>, AppError> {
     let row: Option<(String, String, String)> = conn
         .query_row(
-            "SELECT computed_at, categories_json, results_json FROM arxiv_rec_state WHERE id = 1",
+            "SELECT computed_at, params_json, results_json FROM discovery_runs WHERE key = ?1",
+            [key],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )
+        .optional()
+        .map_err(AppError::from)?;
+    Ok(row.and_then(parse_run_row))
+}
+
+fn latest_run_result(conn: &Connection) -> Result<Option<RecommendResult>, AppError> {
+    let row: Option<(String, String, String)> = conn
+        .query_row(
+            "SELECT computed_at, params_json, results_json FROM discovery_runs
+             ORDER BY computed_at DESC LIMIT 1",
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )
         .optional()
         .map_err(AppError::from)?;
-    let Some((computed_at, categories_json, results_json)) = row else {
-        return Ok(None);
-    };
-    let categories: Vec<String> = serde_json::from_str(&categories_json).unwrap_or_default();
-    let items: Vec<RecommendItem> = serde_json::from_str(&results_json).unwrap_or_default();
-    Ok(Some(RecommendResult {
-        items,
-        computed_at,
-        categories,
-        corpus_size: 0,
-        reused_cache: true,
-    }))
+    Ok(row.and_then(parse_run_row))
 }
 
-fn write_state(conn: &Connection, result: &RecommendResult) -> Result<(), AppError> {
-    let categories_json = serde_json::to_string(&result.categories)?;
-    let results_json = serde_json::to_string(&result.items)?;
+fn latest_run_params(conn: &Connection) -> Result<Option<RunParams>, AppError> {
+    let row: Option<String> = conn
+        .query_row(
+            "SELECT params_json FROM discovery_runs ORDER BY computed_at DESC LIMIT 1",
+            [],
+            |r| r.get(0),
+        )
+        .optional()
+        .map_err(AppError::from)?;
+    Ok(row.and_then(|json| serde_json::from_str(&json).ok()))
+}
+
+fn write_run(
+    conn: &Connection,
+    key: &str,
+    params: &RunParams,
+    result: &RecommendResult,
+) -> Result<(), AppError> {
     conn.execute(
-        "INSERT INTO arxiv_rec_state(id, computed_at, categories_json, results_json)
-         VALUES(1, ?1, ?2, ?3)
-         ON CONFLICT(id) DO UPDATE SET
+        "INSERT INTO discovery_runs(key, source, computed_at, params_json, results_json)
+         VALUES(?1, 'arxiv', ?2, ?3, ?4)
+         ON CONFLICT(key) DO UPDATE SET
             computed_at = excluded.computed_at,
-            categories_json = excluded.categories_json,
+            params_json = excluded.params_json,
             results_json = excluded.results_json",
-        rusqlite::params![result.computed_at, categories_json, results_json],
+        rusqlite::params![
+            key,
+            result.computed_at,
+            serde_json::to_string(params)?,
+            serde_json::to_string(&result.items)?
+        ],
     )
     .map_err(AppError::from)?;
     Ok(())
 }
 
-/// True when `computed_at` falls on today's UTC date and covers `categories`.
-fn is_fresh(state: &RecommendResult, categories: &[String]) -> bool {
+/// True when `computed_at` falls on today's UTC date and the run has items.
+/// Model / categories / top_n are part of the cache key, so a hit already
+/// implies those match.
+fn is_fresh(state: &RecommendResult) -> bool {
     if state.items.is_empty() {
-        return false;
-    }
-    if state.categories.len() != categories.len() {
-        return false;
-    }
-    let same = state
-        .categories
-        .iter()
-        .zip(categories.iter())
-        .all(|(a, b)| a.eq_ignore_ascii_case(b));
-    if !same {
         return false;
     }
     let today = Utc::now().format("%Y-%m-%d").to_string();
@@ -348,73 +382,6 @@ fn write_cached_vectors(
     Ok(())
 }
 
-#[derive(Serialize)]
-struct EmbedRequest<'a> {
-    model: &'a str,
-    input: &'a [String],
-}
-
-/// POST one batch of texts to `{base}/embeddings` and return their vectors.
-async fn embed_batch(
-    client: &reqwest::Client,
-    endpoint: &str,
-    api_key: Option<&str>,
-    model: &str,
-    texts: &[String],
-) -> Result<Vec<Vec<f32>>, AppError> {
-    let mut request = client.post(endpoint).json(&EmbedRequest {
-        model,
-        input: texts,
-    });
-    if let Some(key) = api_key {
-        request = request.header("Authorization", format!("Bearer {key}"));
-    }
-    let resp = request
-        .send()
-        .await
-        .map_err(|e| AppError::message(format!("embeddings request failed: {e}")))?;
-    let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| AppError::message(format!("embeddings read body: {e}")))?;
-    if !status.is_success() {
-        let snippet = http::http_err_snippet(&body);
-        return Err(AppError::message(format!(
-            "embeddings endpoint returned {status}: {snippet}"
-        )));
-    }
-    let value: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| AppError::message(format!("embeddings parse: {e}")))?;
-    let data = value
-        .get("data")
-        .and_then(|d| d.as_array())
-        .ok_or_else(|| AppError::message("embeddings response has no data array"))?;
-    let mut out = Vec::with_capacity(data.len());
-    for entry in data {
-        let vector: Vec<f32> = entry
-            .get("embedding")
-            .and_then(|e| e.as_array())
-            .ok_or_else(|| AppError::message("embeddings entry has no embedding"))?
-            .iter()
-            .filter_map(|v| v.as_f64())
-            .map(|v| v as f32)
-            .collect();
-        if vector.is_empty() {
-            return Err(AppError::message("embeddings entry is empty"));
-        }
-        out.push(vector);
-    }
-    if out.len() != texts.len() {
-        return Err(AppError::message(format!(
-            "embeddings returned {} vectors for {} inputs",
-            out.len(),
-            texts.len()
-        )));
-    }
-    Ok(out)
-}
-
 /// Liveness probe: POST one tiny input, confirm the endpoint actually serves
 /// `/embeddings`, and report the returned dimensionality + latency.
 ///
@@ -425,7 +392,7 @@ pub async fn probe_embedding_endpoint(
     api_key: Option<&str>,
     model: &str,
 ) -> Result<ProbeEmbeddingResult, AppError> {
-    let endpoint = resolve_endpoint(base_url);
+    let endpoint = embeddings::resolve_endpoint(base_url);
     if endpoint.is_empty() {
         return Err(AppError::message(format!(
             "{ERR_PROBE_FAILED}: empty base URL"
@@ -436,46 +403,18 @@ pub async fn probe_embedding_endpoint(
         .build()
         .map_err(|e| AppError::message(format!("{ERR_PROBE_FAILED}: {e}")))?;
     let inputs = [PROBE_INPUT.to_string()];
-    let mut request = client.post(&endpoint).json(&EmbedRequest {
-        model,
-        input: &inputs,
-    });
-    if let Some(key) = api_key {
-        request = request.header("Authorization", format!("Bearer {key}"));
-    }
     let started = std::time::Instant::now();
-    let resp = request
-        .send()
+    let vectors = embeddings::embed_batch(&client, &endpoint, api_key, model, &inputs)
         .await
         .map_err(|e| AppError::message(format!("{ERR_PROBE_FAILED}: {e}")))?;
-    let status = resp.status();
-    let body = resp
-        .text()
-        .await
-        .map_err(|e| AppError::message(format!("{ERR_PROBE_FAILED}: {e}")))?;
-    if !status.is_success() {
-        let snippet = http::http_err_snippet(&body);
-        return Err(AppError::message(format!(
-            "{ERR_PROBE_FAILED}: HTTP {status} — {snippet}"
-        )));
-    }
-    let value: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|e| AppError::message(format!("{ERR_PROBE_FAILED}: parse {e}")))?;
-    let vector: Vec<f64> = value
-        .get("data")
-        .and_then(|d| d.as_array())
-        .and_then(|arr| arr.first())
-        .and_then(|entry| entry.get("embedding"))
-        .and_then(|e| e.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_f64()).collect())
-        .unwrap_or_default();
-    if vector.is_empty() {
+    let dim = vectors.first().map(Vec::len).unwrap_or(0);
+    if dim == 0 {
         return Err(AppError::message(format!(
             "{ERR_PROBE_FAILED}: response has no embedding"
         )));
     }
     Ok(ProbeEmbeddingResult {
-        dim: vector.len(),
+        dim,
         latency_ms: started.elapsed().as_millis() as u64,
     })
 }
@@ -510,9 +449,9 @@ async fn embed_all(
         .build()
         .map_err(|e| AppError::message(format!("recommend http client: {e}")))?;
     let mut fresh: Vec<(String, Vec<f32>)> = Vec::new();
-    for chunk in missing.chunks(EMBED_BATCH) {
+    for chunk in missing.chunks(embeddings::EMBED_BATCH) {
         let inputs: Vec<String> = chunk.iter().map(|(_, t)| t.clone()).collect();
-        let vectors = embed_batch(&client, endpoint, api_key, model, &inputs).await?;
+        let vectors = embeddings::embed_batch(&client, endpoint, api_key, model, &inputs).await?;
         for ((hash, _), vector) in chunk.iter().zip(vectors) {
             fresh.push((hash.clone(), vector));
         }
@@ -538,19 +477,6 @@ async fn embed_all(
                 .ok_or_else(|| AppError::message("embedding missing after fetch"))
         })
         .collect()
-}
-
-fn normalize(vector: &mut [f32]) {
-    let norm = vector.iter().map(|v| v * v).sum::<f32>().sqrt();
-    if norm > 0.0 {
-        for v in vector.iter_mut() {
-            *v /= norm;
-        }
-    }
-}
-
-fn dot(a: &[f32], b: &[f32]) -> f32 {
-    a.iter().zip(b.iter()).map(|(x, y)| x * y).sum()
 }
 
 /// Weights for corpus papers ordered newest-first: `1/(1+log10(rank+1))`,
@@ -585,13 +511,32 @@ pub async fn recommend(
     };
     let top_n = top_n.unwrap_or(DEFAULT_TOP_N).clamp(1, 100);
 
+    // Cache by the inputs the run depends on. Without a configured model we
+    // cannot compute the key, so fall back to the latest run (still same-day
+    // gated) — this keeps page-open/prewarm rendering a stored result when the
+    // endpoint is temporarily unavailable.
+    let cache_key = embedding.as_ref().map(|(_, _, model)| {
+        run_key(
+            "arxiv",
+            &RunParams {
+                categories: categories.clone(),
+                top_n,
+                model: model.clone(),
+            },
+        )
+    });
+
     if !force {
         let stored = {
             let vault = vault_root.to_path_buf();
-            with_catalog(&vault, read_state)?
+            let cache_key = cache_key.clone();
+            with_catalog(&vault, move |conn| match &cache_key {
+                Some(key) => read_run(conn, key),
+                None => latest_run_result(conn),
+            })?
         };
         if let Some(state) = stored {
-            if is_fresh(&state, &categories) {
+            if is_fresh(&state) {
                 return Ok(state);
             }
         }
@@ -600,7 +545,7 @@ pub async fn recommend(
     let Some((base_url, api_key, model)) = embedding else {
         return Err(AppError::message(ERR_NO_EMBEDDING));
     };
-    let endpoint = resolve_endpoint(&base_url);
+    let endpoint = embeddings::resolve_endpoint(&base_url);
     if endpoint.is_empty() {
         return Err(AppError::message(ERR_NO_EMBEDDING));
     }
@@ -653,10 +598,10 @@ pub async fn recommend(
     )
     .await?;
     for v in corpus_vectors.iter_mut() {
-        normalize(v);
+        embeddings::normalize(v);
     }
     for v in candidate_vectors.iter_mut() {
-        normalize(v);
+        embeddings::normalize(v);
     }
 
     let weights = time_decay_weights(corpus_vectors.len());
@@ -670,7 +615,7 @@ pub async fn recommend(
                 .map(|(corpus_vector, weight)| {
                     // Mismatched dims mean two different models wrote the cache.
                     if corpus_vector.len() == cv.len() {
-                        dot(corpus_vector, cv) * weight
+                        embeddings::dot(corpus_vector, cv) * weight
                     } else {
                         0.0
                     }
@@ -697,9 +642,15 @@ pub async fn recommend(
         reused_cache: false,
     };
     {
+        let params = RunParams {
+            categories: result.categories.clone(),
+            top_n,
+            model: model.clone(),
+        };
+        let key = run_key("arxiv", &params);
         let vault = vault_root.to_path_buf();
         let to_store = result.clone();
-        with_catalog(&vault, |conn| write_state(conn, &to_store))?;
+        with_catalog(&vault, |conn| write_run(conn, &key, &params, &to_store))?;
     }
     Ok(result)
 }
@@ -726,13 +677,6 @@ mod tests {
     }
 
     #[test]
-    fn normalize_makes_unit_length() {
-        let mut v = vec![3.0_f32, 4.0];
-        normalize(&mut v);
-        assert!((dot(&v, &v) - 1.0).abs() < 1e-5);
-    }
-
-    #[test]
     fn categories_dedupe_and_trim() {
         let out = normalize_categories(vec![
             " cs.AI ".into(),
@@ -743,35 +687,8 @@ mod tests {
         assert_eq!(out, vec!["cs.AI".to_string(), "cs.LG".to_string()]);
     }
 
-    #[test]
-    fn resolve_endpoint_appends_embeddings_path() {
-        assert_eq!(
-            resolve_endpoint("https://api.openai.com/v1"),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(
-            resolve_endpoint("https://api.openai.com/v1/"),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(
-            resolve_endpoint("https://api.openai.com/v1/embeddings"),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(
-            resolve_endpoint("https://api.openai.com/v1/embeddings/"),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(
-            resolve_endpoint("  https://api.openai.com/v1/  "),
-            "https://api.openai.com/v1/embeddings"
-        );
-        assert_eq!(resolve_endpoint(""), "");
-    }
-
-    #[test]
-    fn freshness_requires_same_day_and_categories() {
-        let cats = vec!["cs.AI".to_string()];
-        let today = RecommendResult {
+    fn sample_result(computed_at: String) -> RecommendResult {
+        RecommendResult {
             items: vec![RecommendItem {
                 arxiv_id: "1".into(),
                 title: "t".into(),
@@ -780,26 +697,115 @@ mod tests {
                 published_at: None,
                 score: 1.0,
             }],
-            computed_at: crate::core::time::now_rfc3339_millis(),
-            categories: cats.clone(),
+            computed_at,
+            categories: vec!["cs.AI".to_string()],
             corpus_size: 1,
             reused_cache: true,
-        };
-        assert!(is_fresh(&today, &cats));
-        // Different category set → recompute.
-        assert!(!is_fresh(&today, &["cs.LG".to_string()]));
+        }
+    }
+
+    #[test]
+    fn freshness_requires_same_day_and_items() {
+        let today = sample_result(crate::core::time::now_rfc3339_millis());
+        assert!(is_fresh(&today));
         // Stale date → recompute.
-        let stale = RecommendResult {
-            computed_at: "2020-01-01T00:00:00Z".into(),
-            ..today.clone()
-        };
-        assert!(!is_fresh(&stale, &cats));
+        let stale = sample_result("2020-01-01T00:00:00Z".into());
+        assert!(!is_fresh(&stale));
         // No items → recompute even when the date matches.
         let empty = RecommendResult {
             items: Vec::new(),
             ..today
         };
-        assert!(!is_fresh(&empty, &cats));
+        assert!(!is_fresh(&empty));
+    }
+
+    #[test]
+    fn run_key_varies_with_model_top_n_and_categories() {
+        let base = RunParams {
+            categories: vec!["cs.AI".to_string()],
+            top_n: 20,
+            model: "text-embedding-3-small".to_string(),
+        };
+        let key = run_key("arxiv", &base);
+
+        // Same inputs (category case-insensitive) → same slot.
+        let same = RunParams {
+            categories: vec!["CS.ai".to_string()],
+            ..base.clone()
+        };
+        assert_eq!(key, run_key("arxiv", &same));
+
+        // Each input change is its own slot.
+        assert_ne!(
+            key,
+            run_key(
+                "arxiv",
+                &RunParams {
+                    top_n: 50,
+                    ..base.clone()
+                }
+            )
+        );
+        assert_ne!(
+            key,
+            run_key(
+                "arxiv",
+                &RunParams {
+                    model: "other-model".to_string(),
+                    ..base.clone()
+                }
+            )
+        );
+        assert_ne!(
+            key,
+            run_key(
+                "arxiv",
+                &RunParams {
+                    categories: vec!["cs.LG".to_string()],
+                    ..base.clone()
+                }
+            )
+        );
+    }
+
+    #[test]
+    fn run_rows_roundtrip_through_the_multitable() {
+        let dir =
+            std::env::temp_dir().join(format!("agentero-recommend-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let conn = crate::features::paper::catalog::ensure_catalog(&dir).expect("catalog");
+
+        let params = RunParams {
+            categories: vec!["cs.AI".to_string()],
+            top_n: 20,
+            model: "m".to_string(),
+        };
+        let key = run_key("arxiv", &params);
+        let result = sample_result(crate::core::time::now_rfc3339_millis());
+        write_run(&conn, &key, &params, &result).unwrap();
+
+        let read = read_run(&conn, &key).unwrap().expect("row");
+        assert_eq!(read.items.len(), 1);
+        assert_eq!(read.categories, vec!["cs.AI".to_string()]);
+        assert!(read.reused_cache);
+
+        // A different key is a different slot; latest still resolves.
+        let other = RunParams {
+            top_n: 50,
+            ..params.clone()
+        };
+        write_run(
+            &conn,
+            &run_key("arxiv", &other),
+            &other,
+            &sample_result(crate::core::time::now_rfc3339_millis()),
+        )
+        .unwrap();
+        assert!(read_run(&conn, &key).unwrap().is_some());
+        assert!(latest_run_result(&conn).unwrap().is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

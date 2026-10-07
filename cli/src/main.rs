@@ -191,6 +191,11 @@ enum Commands {
         #[command(subcommand)]
         cmd: commands::import::ImportCmd,
     },
+    /// Discover/rank new papers (query-first, vault-free).
+    Discover {
+        #[command(subcommand)]
+        cmd: commands::discover::DiscoverCmd,
+    },
     /// Export catalog data.
     Export {
         #[command(subcommand)]
@@ -361,6 +366,7 @@ fn command_label(cmd: &Commands) -> &'static str {
         Commands::Describe { .. } => "cli.describe",
         Commands::Paper { .. } => "cli.paper",
         Commands::Import { .. } => "cli.import",
+        Commands::Discover { .. } => "cli.discover",
         Commands::Export { .. } => "cli.export",
         Commands::Doctor { .. } => "cli.doctor",
         Commands::Layout { .. } => "cli.layout",
@@ -393,6 +399,7 @@ async fn run(command: Commands, globals: &GlobalOpts) -> Result<serde_json::Valu
         Commands::Describe { op } => commands::describe::run(op.as_deref(), globals),
         Commands::Paper { cmd } => commands::paper::run(cmd, globals).await,
         Commands::Import { cmd } => commands::import::run(cmd, globals).await,
+        Commands::Discover { cmd } => commands::discover::run(cmd, globals).await,
         Commands::Export { cmd } => commands::export::run(cmd, globals).await,
         Commands::Doctor { cmd } => commands::doctor::run(cmd, globals),
         Commands::Layout { cmd } => commands::layout::run(cmd, globals),

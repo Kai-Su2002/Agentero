@@ -16,6 +16,7 @@ import {
 	useCallback,
 	useEffect,
 	useMemo,
+	useRef,
 	useState,
 } from "react";
 import { useTranslation } from "react-i18next";
@@ -28,6 +29,7 @@ import { EmbedStatus } from "@/components/editor/embeds/embed-status";
 import { useWikiEmbedProjection } from "@/components/editor/embeds/projection-context";
 import { WikiAnnotationEmbed } from "@/components/editor/embeds/wiki-annotation-embed";
 import { useMarkdownExportMode } from "@/components/editor/markdown-export-mode-context";
+import { useInView } from "@/hooks/use-in-view";
 import { errorText } from "@/lib/core/error";
 import { createKeyedCache } from "@/lib/core/keyed-cache";
 import { cn } from "@/lib/core/utils";
@@ -261,6 +263,10 @@ export function WikiEmbedElement({
 	const EmbeddedMarkdownProjection = useWikiEmbedProjection();
 	const expandEmbeds = exportMode?.expandEmbeds === true;
 	const hideChromeActions = exportMode?.hideChromeActions === true;
+	// Embed bodies deserialize another whole document; only do that once the
+	// embed is near the viewport (export always renders every embed).
+	const bodyRef = useRef<HTMLSpanElement | null>(null);
+	const bodyInView = useInView(bodyRef, { enabled: !exportMode });
 
 	const target = element.value ?? "";
 	const targetWithFragment = element.heading
@@ -316,6 +322,7 @@ export function WikiEmbedElement({
 				: { kind: "error" as const };
 
 	useEffect(() => {
+		if (!bodyInView) return;
 		const vaultPath = wikiNav?.vaultPath;
 		const sourcePath = markdownDoc.filePath;
 		if (!vaultPath || !sourcePath || !requestKey) {
@@ -378,6 +385,7 @@ export function WikiEmbedElement({
 			cancelled = true;
 		};
 	}, [
+		bodyInView,
 		markdownDoc.filePath,
 		requestKey,
 		targetWithFragment,
@@ -445,6 +453,7 @@ export function WikiEmbedElement({
 			}}
 		>
 			<span
+				ref={bodyRef}
 				contentEditable={false}
 				className={cn(
 					"group/embed block rounded-md border border-border bg-muted/20 shadow-sm",
@@ -486,44 +495,50 @@ export function WikiEmbedElement({
 				{presentation.kind === "loading" ? (
 					<EmbedStatus message={t("embed.loading")} />
 				) : presentation.kind === "ready" ? (
-					<Suspense fallback={<EmbedStatus message={t("embed.loading")} />}>
-						{presentation.response.contentKind === "markdown" &&
-						EmbeddedMarkdownProjection ? (
-							<WikiEmbedAncestryProvider
-								ancestry={[...ancestry, presentation.key]}
-							>
-								<EmbeddedMarkdownProjection
-									key={`${presentation.key}:${targetRevision}`}
-									markdown={presentation.response.content ?? ""}
-									filePath={absoluteTarget}
+					bodyInView ? (
+						<Suspense fallback={<EmbedStatus message={t("embed.loading")} />}>
+							{presentation.response.contentKind === "markdown" &&
+							EmbeddedMarkdownProjection ? (
+								<WikiEmbedAncestryProvider
+									ancestry={[...ancestry, presentation.key]}
+								>
+									<EmbeddedMarkdownProjection
+										key={`${presentation.key}:${targetRevision}`}
+										markdown={presentation.response.content ?? ""}
+										filePath={absoluteTarget}
+									/>
+								</WikiEmbedAncestryProvider>
+							) : presentation.response.contentKind === "image" ||
+								presentation.response.contentKind === "pdf" ? (
+								<WikiAttachmentEmbed
+									kind={presentation.response.contentKind}
+									absoluteTarget={absoluteTarget}
+									targetPath={presentation.response.link.targetPath ?? target}
+									revision={targetRevision}
+									imageSize={element.alias}
 								/>
-							</WikiEmbedAncestryProvider>
-						) : presentation.response.contentKind === "image" ||
-							presentation.response.contentKind === "pdf" ? (
-							<WikiAttachmentEmbed
-								kind={presentation.response.contentKind}
-								absoluteTarget={absoluteTarget}
-								targetPath={presentation.response.link.targetPath ?? target}
-								revision={targetRevision}
-								imageSize={element.alias}
-							/>
-						) : presentation.response.contentKind === "annotation" &&
-							wikiNav?.vaultPath &&
-							presentation.response.link.targetPath &&
-							presentation.response.link.occurrence.fragment?.kind ===
-								"annotation" ? (
-							// Body-only: title/icon + jump live in the shared header above
-							// (body is not click-to-open, same as markdown embeds).
-							<WikiAnnotationEmbed
-								vaultPath={wikiNav.vaultPath}
-								targetPath={presentation.response.link.targetPath}
-								annotationId={presentation.response.link.occurrence.fragment.id}
-								onResolvedKind={onAnnotationKind}
-							/>
-						) : (
-							<EmbedStatus message={t("embed.unsupported")} />
-						)}
-					</Suspense>
+							) : presentation.response.contentKind === "annotation" &&
+								wikiNav?.vaultPath &&
+								presentation.response.link.targetPath &&
+								presentation.response.link.occurrence.fragment?.kind ===
+									"annotation" ? (
+								// Body-only: title/icon + jump live in the shared header above
+								// (body is not click-to-open, same as markdown embeds).
+								<WikiAnnotationEmbed
+									vaultPath={wikiNav.vaultPath}
+									targetPath={presentation.response.link.targetPath}
+									annotationId={
+										presentation.response.link.occurrence.fragment.id
+									}
+									onResolvedKind={onAnnotationKind}
+								/>
+							) : (
+								<EmbedStatus message={t("embed.unsupported")} />
+							)}
+						</Suspense>
+					) : (
+						<EmbedStatus message={t("embed.loading")} />
+					)
 				) : (
 					<EmbedStatus
 						message={t(

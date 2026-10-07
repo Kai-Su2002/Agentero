@@ -41,6 +41,7 @@ import { clearLogs } from "@/lib/core/logger";
 import { notifyError, notifySuccess } from "@/lib/core/notify";
 import { openExternalUrl } from "@/lib/core/open-external";
 import { isMacOS, isTauri, isWindows } from "@/lib/core/tauri";
+import { warnIfNoProxyForDownload } from "@/lib/settings/proxy-guard";
 import {
 	checkForUpdate,
 	getUpdateSnapshot,
@@ -115,11 +116,13 @@ export function AboutPane() {
 		void checkForUpdate();
 	};
 	const onInstall = () => {
-		void installAvailableUpdate().then((next) => {
-			if (next.phase === "error") {
-				notifyError(t("about.update.installFailed"));
-			}
-		});
+		void warnIfNoProxyForDownload()
+			.then(() => installAvailableUpdate())
+			.then((next) => {
+				if (next.phase === "error") {
+					notifyError(t("about.update.installFailed"));
+				}
+			});
 	};
 	const installErrorText = (err: unknown) =>
 		lifecycleErrorMessage(errorText(err), (key, options) =>
@@ -127,7 +130,8 @@ export function AboutPane() {
 		);
 	const onInstallCli = () => {
 		setCliBusy(true);
-		void installCliCommand()
+		void warnIfNoProxyForDownload()
+			.then(() => installCliCommand())
 			.then(async (res) => {
 				setCli(res.status);
 				await refreshCli();

@@ -39,7 +39,7 @@ papers/<id>/
 ├── marks/            # 高亮/批注/提问/翻译 JSON 与 mark 自有资产
 ├── source/           # TeX 等（可懒加载）
 │   ├── agentero-cite.json  # 参考文献 sidecar（可重建，见 api.md paper_refs_parse）
-│   ├── layout.json         # PDF 版面 raw sidecar（可重建；merge/filter 可重复）
+│   ├── layout.json         # PDF 版面 raw sidecar（schema 3，可重建；textLayerExtracted 表示文字层已抽过）
 │   └── layout-index.json   # 侧栏同构索引（CLI/Agent；post-merge figure/table/…）
 ├── PAPER.md          # 无 TeX 时的派生正文（本地 liteparse 或云端引擎，见 paper-import.md § 正文解析引擎）
 ├── assets/           # NOTES 内嵌图等

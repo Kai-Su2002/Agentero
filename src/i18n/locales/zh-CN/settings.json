@@ -10,6 +10,7 @@
 		"agent": "Agent",
 		"translate": "翻译",
 		"layout": "版面解析",
+		"experimental": "实验功能",
 		"doctor": "问题诊断",
 		"keyboard": "快捷键",
 		"remote-access": "远程访问",
@@ -56,6 +57,13 @@
 	},
 	"general": {
 		"title": "通用",
+		"sections": {
+			"papers": "论文库",
+			"pdf": "PDF 阅读",
+			"plaza": "广场",
+			"network": "网络",
+			"integrations": "集成"
+		},
 		"paperTreeLabelMode": {
 			"label": "文件树论文名称",
 			"title-author": "标题 · 作者",
@@ -96,6 +104,17 @@
 			"ask": "询问",
 			"always": "始终（安全时）"
 		},
+		"pdfScrollStrategy": {
+			"label": "PDF 滚动方向",
+			"vertical": "纵向",
+			"horizontal": "横向"
+		},
+		"pdfSpreadMode": {
+			"label": "PDF 页面版式",
+			"none": "单页",
+			"odd": "双页（从第 1 页配对）",
+			"even": "双页（封面单独）"
+		},
 		"batchImportConcurrency": {
 			"label": "后台任务并发数",
 			"value": "同时 {{value}} 个"
@@ -107,6 +126,17 @@
 		"githubMirror": {
 			"label": "GitHub 镜像",
 			"description": "从内置公开镜像中选择一个，用于 Skill 导入时回退 GitHub 直连。"
+		},
+		"institutionProxy": {
+			"label": "机构代理",
+			"description": "WebVPN 前缀，用于付费文献 PDF 兜底下载（留空停用）",
+			"cookieLabel": "代理 Cookie",
+			"cookiePlaceholder": "粘贴 WebVPN Cookie",
+			"typeLabel": "网关类型",
+			"typeEzproxy": "EZProxy（login?url=）",
+			"typeWengine": "WebVPN（wengine 路径式）",
+			"test": "测试",
+			"testing": "测试中…"
 		},
 		"easyScholar": {
 			"section": "EasyScholar",
@@ -128,6 +158,10 @@
 			"invalidPort": "端口必须在 1 到 65535 之间。"
 		},
 		"mcp": {
+			"exposeText": {
+				"label": "对外暴露论文正文（MCP）",
+				"description": "开启后 paper_text_get 可用：外部客户端（如 ChatGPT）可读取 PDF 分页文本。默认关闭——正文不会离开本地库。"
+			},
 			"label": "MCP 服务器",
 			"portLabel": "MCP 端口",
 			"invalidPort": "端口必须在 1 到 65535 之间。",
@@ -150,12 +184,6 @@
 				"copied": "已复制",
 				"openTunnels": "打开隧道列表",
 				"openApiKeys": "打开 API Key 页面"
-			}
-		},
-		"export": {
-			"section": "笔记导出",
-			"watermark": {
-				"label": "默认添加 Agentero 水印"
 			}
 		},
 		"privacy": {
@@ -270,6 +298,16 @@
 		"desktopHint": "运行 `pnpm tauri dev` 以扫描本机上的 Agent。",
 		"commonAgents": "常用 Agent",
 		"commonAgentsHint": "若 ACP 失败，可尝试在「通用」当中配置代理。",
+		"desktopApps": {
+			"section": "本地桌面应用",
+			"hint": "这些桌面应用暂不支持 ACP，无法作为 Agent 接入。",
+			"scanning": "检测中…",
+			"unsupported": "暂不支持",
+			"open": "打开 {{name}}",
+			"chatgpt": "ChatGPT",
+			"qwenwork": "千问办公",
+			"workbuddy": "WorkBuddy"
+		},
 		"defaultAgent": {
 			"section": "默认 Agent",
 			"label": "默认 Agent",
@@ -295,6 +333,8 @@
 		"updateAgent": "升级",
 		"updateAgentAria": "升级 {{name}} Agent CLI",
 		"updateAgentTitle": "升级 Agent CLI",
+		"openCliAria": "在终端打开 {{name}} CLI",
+		"openCliTitle": "打开终端执行 {{command}}",
 		"updateSuccess": "已升级 {{name}}",
 		"lifecycleWaiting": "正在等待安装器…",
 		"lifecycleInstalling": "正在运行安装器…",
@@ -386,6 +426,7 @@
 			"label": "默认服务",
 			"agentero": "Agentero 内置",
 			"deeplx": "DeepLX",
+			"cnki": "CNKI 翻译助手",
 			"huoshanweb": "火山翻译 Web",
 			"tencenttransmart": "腾讯交互翻译",
 			"googleapi": "Google 翻译（API）",
@@ -412,8 +453,15 @@
 		"autoSelection": {
 			"label": "PDF 划词后自动翻译"
 		},
-		"dualPane": {
-			"label": "在侧窗中打开渲染好的翻译"
+		"displayMode": {
+			"label": "翻译显示模式",
+			"overlay": "在原 PDF 上覆盖",
+			"dualPane": "双栏对照"
+		},
+		"dualPaneSource": {
+			"label": "双栏来源",
+			"pdf": "PDF 版式翻译",
+			"latex": "LaTeX 源翻译"
 		},
 		"providerConfig": {
 			"section": "API 服务",
@@ -479,6 +527,8 @@
 		},
 		"providerConfig": {
 			"section": "服务商配置",
+			"sectionHint": "推荐优先配置 Paddle 或 MinerU；其他 OpenAI 兼容服务见下方「其他」。",
+			"other": "其他服务商",
 			"providerName": {
 				"paddle": "Paddle",
 				"mineru": "MinerU",
@@ -543,6 +593,40 @@
 			}
 		}
 	},
+	"experimental": {
+		"title": "实验功能",
+		"decision": {
+			"section": "决策模型",
+			"getKey": "获取 API Key",
+			"smartHighlight": "智能高亮",
+			"provider": {
+				"label": "提供方",
+				"jev": "TypeSafe Jev",
+				"clef": "Cloudflare Clef",
+				"openai": "OpenAI（待公布）",
+				"custom": "自定义"
+			},
+			"apiKey": {
+				"label": "API Key",
+				"placeholder": "API Key"
+			},
+			"baseUrl": {
+				"label": "接口地址"
+			},
+			"model": {
+				"label": "模型",
+				"placeholder": "模型 ID"
+			},
+			"test": "测试连接",
+			"probeStatus": {
+				"idle": "尚未测试",
+				"probing": "测试中…",
+				"ok": "可用",
+				"fail": "不可用",
+				"unconfigured": "需要填写 API Key"
+			}
+		}
+	},
 	"doctor": {
 		"title": "问题诊断",
 		"refresh": "重新运行诊断",
@@ -579,7 +663,8 @@
 				"installing": "正在安装…",
 				"tooltip": "通过系统包管理器（winget 或 Homebrew）安装 Node.js LTS",
 				"hint": "部分 ACP Agent 需要 PATH 中的 Node.js 与 npm。可通过系统包管理器安装 LTS 版本，安装完成后重新检测。",
-				"noPackageManager": "未找到受支持的系统包管理器，请前往 nodejs.org 手动安装 Node.js，然后重新检测。"
+				"noPackageManager": "未找到受支持的系统包管理器，请前往 nodejs.org 手动安装 Node.js，然后重新检测。",
+				"success": "Node.js 安装完成，请重试安装 Agent。"
 			}
 		},
 		"network": {
@@ -710,6 +795,11 @@
 			"clear": "清除缓存",
 			"clearDone": "缓存已清除",
 			"clearFailed": "清除论文全文缓存失败。"
+		},
+		"downloadProxyNotice": {
+			"title": "未配置网络代理",
+			"description": "CLI 与应用更新都从 GitHub 下载。若当前网络无法访问 GitHub，请先在「通用 → 网络代理」中配置代理后重试。",
+			"openSettings": "打开网络设置"
 		},
 		"update": {
 			"available": "版本 {{version}} 已可用",

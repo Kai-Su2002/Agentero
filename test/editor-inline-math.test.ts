@@ -3,6 +3,7 @@ import { MarkdownPlugin } from "@platejs/markdown";
 import { createSlateEditor, createSlatePlugin, KEYS } from "platejs";
 import { describe, expect, it } from "vitest";
 import { MarkdownKit } from "@/components/editor/plugins/markdown-kit";
+import { convertInlineMathAtCaret } from "@/lib/markdown/inline-math-auto-close";
 import { inlineMathInputRule } from "@/lib/markdown/inline-math-input-rule";
 
 const TestParagraphPlugin = createSlatePlugin({
@@ -355,5 +356,81 @@ describe("Markdown inline math input", () => {
 		expect(editor.getApi(MarkdownPlugin).markdown.serialize()).toBe(
 			"* one\n* two\n",
 		);
+	});
+});
+
+describe("convertInlineMathAtCaret", () => {
+	function editorWithText(text: string) {
+		const editor = createMarkdownPasteEditor();
+		editor.children = [{ type: "p", children: [{ text }] }];
+		return editor;
+	}
+
+	function selectOffset(
+		editor: ReturnType<typeof createMarkdownPasteEditor>,
+		offset: number,
+	) {
+		editor.tf.select({
+			anchor: { path: [0, 0], offset },
+			focus: { path: [0, 0], offset },
+		});
+	}
+
+	it("converts a complete $...$ pair around the caret", () => {
+		const editor = editorWithText("$x_0$");
+		selectOffset(editor, 2);
+
+		expect(convertInlineMathAtCaret(editor)).toBe(true);
+		expect(editor.children).toMatchObject([
+			{
+				type: "p",
+				children: [
+					{ text: "" },
+					{ type: "inline_equation", texExpression: "x_0" },
+					{ text: "" },
+				],
+			},
+		]);
+	});
+
+	it("does nothing when the caret is outside the pair", () => {
+		const editor = editorWithText("$x_0$");
+		selectOffset(editor, 5);
+
+		expect(convertInlineMathAtCaret(editor)).toBe(false);
+		expect(editor.children).toMatchObject([
+			{ type: "p", children: [{ text: "$x_0$" }] },
+		]);
+	});
+
+	it("leaves escaped dollars alone", () => {
+		const editor = editorWithText("\\$x_0\\$");
+		selectOffset(editor, 3);
+
+		expect(convertInlineMathAtCaret(editor)).toBe(false);
+	});
+
+	it("converts a $$-then-fill sequence once the pair is complete", () => {
+		const editor = createInlineMathEditor("");
+		editor.tf.insertText("$");
+		editor.tf.insertText("$");
+		editor.tf.select({
+			anchor: { path: [0, 0], offset: 1 },
+			focus: { path: [0, 0], offset: 1 },
+		});
+		for (const ch of "x_0") editor.tf.insertText(ch);
+
+		expect(editor.api.string([])).toBe("$x_0$");
+		expect(convertInlineMathAtCaret(editor)).toBe(true);
+		expect(editor.children).toMatchObject([
+			{
+				type: "p",
+				children: [
+					{ text: "" },
+					{ type: "inline_equation", texExpression: "x_0" },
+					{ text: "" },
+				],
+			},
+		]);
 	});
 });

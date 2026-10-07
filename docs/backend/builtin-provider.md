@@ -83,7 +83,7 @@
 3. 每段一个独立请求，`StreamExt::buffered(3)`——既有并发上限又保证结果顺序，省掉索引管线。并发数 3 对齐 `openai_vlm.rs` 的 `PAGE_CONCURRENCY`。
 4. 重组为 `"{marker} {text}"` 以 `"\n\n"` 连接，与前端 `buildNumberedPayload` 的输出字节一致。
 
-段数少于前端预期时，`parseNumberedTranslation` 返回 null 并**回退为逐段翻译**，段落不会错位。
+段数少于前端预期时，`parseNumberedTranslation` 返回 null 并**回退为逐句翻译**，句子不会错位。
 
 `⟦n⟧` 行内占位符（前端 `mask.ts` 用于保护引用 / URL / 行内公式）**原样透传**，不剥离。这是一个**未经真实 key 验证的假设**，见下方「限制与后续」。
 
@@ -99,7 +99,7 @@
 - `finish_reason` 为 `length` / `max_tokens` / `content_filter` 时报「translation incomplete…retry with a smaller chunk」。
 - `"agentero"` 刻意**不在** Rust 的 `FREE_PROVIDERS` 里（CLI `cli/src/commands/translate.rs` 用它门控 `--provider`，随后以 `api_key: None` 调用，会让 CLI 接受一个无法认证的 provider），也**不在** `COMMERCIAL_PROVIDERS` 里（那个列表驱动 WebView 凭证卡片，内置 provider 不该渲染任何卡片）。
 - **两份「免费 provider」清单刻意不一致**：前端 `FreeTranslateProviderId` / `FREE_MT_PROVIDER_IDS`（`src/lib/translate/types.ts`）**含** `agentero`——这样它复用无 key 引擎的管线、且因为不是 `CommercialTranslateProviderId`，`translate-pane.tsx` 不会为它渲染凭证卡片，`COMMERCIAL_MT_DEFAULT_BASE_URLS` / `COMMERCIAL_MT_DOCS_URLS` 这两个 total Record 也不需要新条目。Rust 的 `FREE_PROVIDERS` **不含**它（理由见上条）。改任何一份清单时都要意识到另一份是反的。
-- 探测：`probeFreeMtProviders` 显式把 `agentero` 过滤掉（探测它会真的发一次翻译请求），可用性只来自 `builtin_provider_status`。
+- 探测：`probeFreeMtProviders` 现已含 `agentero`（探测会真的发一次 "Hi" 翻译请求，顺带验证网关连通）；`translate-pane.tsx` 在 `builtin_provider_status` 报不可用时跳过它——那时探测只会确定性复现 no-key 错误。
 
 ### 支持语言（Hunyuan-MT，37）
 
@@ -216,7 +216,7 @@
 2. **模板空格待 A/B**：arXiv Hunyuan-MT 技术报告渲染为 `…explanation. <source_text>`（**有**空格），实现用的是模型文档模板的无空格形式。值得一次真实对比再定。
 3. **`temperature = 0.2`** 沿用仓库惯例；技术报告没有规定解码参数。
 4. **多段翻译没有全局 deadline**：最坏墙钟时间是 `ceil(n/3) × timeout`（`timeout` 默认 30s，钳制 1–30s）。整篇 PDF 的一批最多十几段，实测前不设总闸。
-5. **`arxiv_rec_state` 不按 model 建键**：当日已排序结果在切换 embedding 来源后的首次运行会被复用，除非 `force`。既存行为，本次不改（详见 [../development/plaza.md](../development/plaza.md) §3.4）。
+5. ~~**`arxiv_rec_state` 不按 model 建键**~~ **已修**（schema v8 `discovery_runs`）：运行结果键含 model / top_n / 分类，切换 embedding 来源后当天首次运行即重算，不再复用旧结果（详见 [../development/plaza.md](../development/plaza.md) §3.4）。
 6. **目标语言只有 en / zh-CN**：扩到 Hunyuan-MT 的 37 语言需要同时改 `TR_TARGETS`、前端 `TranslateTargetLang` union 与目标语言选择器，并在 `hunyuan_target_name` 补映射。
 7. **内嵌 key → per-install activation token**：由网关签发、可吊销、可做 per-user 配额；客户端 provider 形状不变。这是内嵌 key 可提取问题的真正解法。
 8. **新手引导没有「Agentero 内置」这一档**：`translate` / `layout` 两个引导步只有「填自己的 Key」与「用免费引擎 / 本地模型」二选一。`translate-step.tsx` 的「用系统默认」原先写入静态前端默认值、会覆盖 Host 解析出的内置默认，现已改为按可用性解析（与 `default_translate_provider()` 一致），因此一路点过引导不再丢失内置默认；但引导界面本身仍未把内置作为显式选项呈现。见 [../frontend/onboarding.md](../frontend/onboarding.md)。

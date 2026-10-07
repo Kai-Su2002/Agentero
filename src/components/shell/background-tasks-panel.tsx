@@ -18,6 +18,7 @@ import {
 	Plug,
 	ScanSearch,
 	Search,
+	Settings,
 	X,
 } from "lucide-react";
 import {
@@ -45,11 +46,14 @@ import {
 	cancelBackgroundTask,
 	clearFinishedBackgroundTasks,
 	getActiveBackgroundTasks,
+	getBackgroundTasksSnapshot,
 	isFinishedBackgroundTask,
 	setBackgroundTasksExpanded,
 } from "@/lib/core/background-tasks";
 import { MOTION_MS, prefersReducedMotion } from "@/lib/core/motion";
+import { notifyError } from "@/lib/core/notify";
 import { cn } from "@/lib/core/utils";
+import { openSettingsWindow } from "@/lib/shell/settings-window";
 
 /** Dwell before expanding detail from the ring (avoids flicker on pass-over). */
 const HOVER_EXPAND_MS = 400;
@@ -71,12 +75,36 @@ const KIND_ICONS: Partial<Record<BackgroundTaskKind, BackgroundTaskIcon>> = {
 	recognizeMetadata: "scan",
 	latexCompile: "fileCode",
 	paperRead: "read",
+	nodeInstall: "download",
 };
 
 function taskIcon(task: BackgroundTask | undefined): BackgroundTaskIcon {
 	if (!task) return "list";
 	return task.icon ?? KIND_ICONS[task.kind] ?? "list";
 }
+
+/**
+ * Failed layout / reference-parse rows can be caused by a missing or invalid
+ * provider key, so they offer a jump to the analysis settings (#656).
+ */
+const LAYOUT_SETTINGS_KINDS: ReadonlySet<BackgroundTaskKind> = new Set([
+	"layoutAnalyze",
+	"layoutRun",
+	"parseRefs",
+	"parseBody",
+]);
+
+/**
+ * JobCenter-driven failures need their own top-right toast: unlike the
+ * in-viewer run (`layoutRun`, which notifies from the viewer hook), headless
+ * `layoutAnalyze` / `parseBody` / `parseRefs` jobs only project a panel row.
+ * Excludes `layoutRun` to avoid a duplicate toast.
+ */
+const JOB_LAYOUT_TOAST_KINDS: ReadonlySet<BackgroundTaskKind> = new Set([
+	"layoutAnalyze",
+	"parseRefs",
+	"parseBody",
+]);
 
 /** Center icon for the primary active task. */
 function iconGlyph(icon: BackgroundTaskIcon) {
@@ -194,6 +222,25 @@ function TaskRow({ task }: { task: BackgroundTask }) {
 							</Button>
 						</TooltipTrigger>
 						<TooltipContent side="left">{t("tasks.cancel")}</TooltipContent>
+					</Tooltip>
+				) : null}
+				{task.status === "failed" && LAYOUT_SETTINGS_KINDS.has(task.kind) ? (
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								type="button"
+								variant="ghost"
+								size="icon-xs"
+								className="size-6 shrink-0"
+								aria-label={t("tasks.openLayoutSettings")}
+								onClick={() => openSettingsWindow("layout")}
+							>
+								<Settings className="size-3.5" />
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent side="left">
+							{t("tasks.openLayoutSettings")}
+						</TooltipContent>
 					</Tooltip>
 				) : null}
 			</div>
@@ -543,6 +590,22 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 		for (const id of ids) seenFailedIdsRef.current.add(id);
 		if (fresh.length === 0) return;
 
+		// Headless layout / parse jobs have no viewer toast of their own — surface
+		// a top-right error with a jump to the analysis settings.
+		const failedTasks = getBackgroundTasksSnapshot().tasks;
+		for (const id of fresh) {
+			const task = failedTasks.find((item) => item.id === id);
+			if (!task || !JOB_LAYOUT_TOAST_KINDS.has(task.kind)) continue;
+			notifyError(task.title, {
+				description: task.error?.trim() || undefined,
+				id: `layout-failed-${id}`,
+				action: {
+					label: t("tasks.openLayoutSettings"),
+					onClick: () => openSettingsWindow("layout"),
+				},
+			});
+		}
+
 		openDetail();
 		if (errorCollapseTimerRef.current) {
 			clearTimeout(errorCollapseTimerRef.current);
@@ -551,7 +614,7 @@ export function BackgroundTasksPanel({ className }: { className?: string }) {
 			errorCollapseTimerRef.current = null;
 			if (!pointerInsideRef.current) closeDetail();
 		}, ERROR_DETAIL_MS);
-	}, [failedIdsKey, openDetail, closeDetail]);
+	}, [failedIdsKey, openDetail, closeDetail, t]);
 
 	useEffect(() => {
 		return () => {

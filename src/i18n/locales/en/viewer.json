@@ -17,6 +17,9 @@
 		"remoteMode": "Remote mode",
 		"jumpBack": "Jump back",
 		"importToLibrary": "Import to library",
+		"smartHighlight": "Smart highlight",
+		"smartHighlightFailed": "Smart highlight failed",
+		"jevNoReadableText": "PDF text layer is empty or unreadable. Run Parse Body (Tools → Parse PDF body) to OCR the paper first.",
 		"findPlaceholder": "Find in document",
 		"findPrev": "Previous match",
 		"findNext": "Next match",
@@ -25,11 +28,13 @@
 		"exportAnnotatedPdf": "Export annotated PDF",
 		"exportingAnnotatedPdf": "Exporting annotated PDF…",
 		"exportAnnotatedPdfFailed": "Failed to export annotated PDF",
+		"exportAnnotatedPdfSaved": "Annotated PDF saved",
 		"exportDesktopOnly": "Export is only available in the desktop app",
 		"layout": {
 			"unavailable": "Layout analysis is not ready yet.",
 			"preparingModel": "Preparing layout model…",
-			"failed": "Layout analysis failed"
+			"failed": "Layout analysis failed",
+			"openSettings": "Open analysis settings"
 		},
 		"layoutTranslate": {
 			"start": "Full-text translate",
@@ -43,6 +48,7 @@
 			"needLayout": "Run layout analysis first (Figures panel).",
 			"noText": "No extractable text regions to translate.",
 			"failed": "Full-text translate failed",
+			"openSettings": "Open translation settings",
 			"waiting": "Waiting for layout analysis…",
 			"cancelQueue": "Cancel queue",
 			"queuedToast": "Full-text translation queued — waiting for layout analysis",
@@ -52,6 +58,15 @@
 		"translation": {
 			"title": "Translation",
 			"tabTitle": "Translation – {{title}}"
+		},
+		"latexTranslation": {
+			"desktopOnly": "LaTeX translation is only available in the desktop app.",
+			"noSource": "This paper has no local LaTeX source to translate.",
+			"missingPaperPath": "Paper path is missing; cannot start LaTeX translation.",
+			"translating": "Translating LaTeX source…",
+			"compiling": "Compiling translated LaTeX…",
+			"compileFailed": "Failed to compile the translated LaTeX. Check that a TeX engine is installed.",
+			"tabTitle": "LaTeX Translation"
 		}
 	},
 	"pdfAsk": {
@@ -133,7 +148,8 @@
 		"kindFigure": "Figure",
 		"kindTable": "Table",
 		"kindEquation": "Equation",
-		"kindAlgorithm": "Algorithm"
+		"kindAlgorithm": "Algorithm",
+		"kindReference": "Reference"
 	},
 	"figures": {
 		"title": "Analysis",

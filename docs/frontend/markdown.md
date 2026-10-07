@@ -22,11 +22,12 @@ Plate WYSIWYG；用于普通笔记与论文 `NOTES.md`。磁盘上始终是标�
 - **窄面板标题**：一至三级标题字号随面板宽度分两档递减（小于 24rem、小于 18rem），避免窄面板下单个标题占满整屏并逐字换行。
 - **标题上边距**：GitHub 风格固定阶梯，H1–H3 为 `mt-6`、H4–H6 为 `mt-4`，不随标题字号放大；文档第一个块不再叠加段前间距，笔记以 `# 标题` 开头时只保留编辑器 `pt-4`。
 - **分隔线**：`---` / `___` 渲染为紧凑分隔条；void 块放不进光标，默认 Enter 无效果，现光标停在分隔线上或块选分隔线时按 Enter 会在其下方插入新段落并落入光标。
+- **长文阅读性能**：编辑器未聚焦（阅读态）时，顶层块按 `content-visibility: auto` 跳过离屏块的布局与绘制，滚动、拖拽侧边栏或 Dockview 分隔条时只重排视口内内容；聚焦编辑时自动关闭，保证光标、选区与输入法语义不变。该优化仅对非 WebKit 引擎（Windows WebView2 等）启用（#702）。
 - **外部链接**：手写或粘贴标准 Markdown `[文字](https://…)` 会成为链接节点；普通单击打开编辑气泡（改显示文字与 URL），`⌘/Ctrl+单击`、中键或右键用系统浏览器打开；气泡内也有「打开」。`/` 菜单「外部链接」或右键「新增外部链接」直接插入链接节点（默认占位文字）并打开同一编辑气泡，而不是插入字面量 `[]()`。Vault 内相对 `.md` 链接与 `wiki:` 双链仍走站内导航。Vault 内 `.pdf` 链接（含 `%20` 解码后的空格路径）单击走 `openCitation` 打开 PDF，不经双链解析。带 `#page=` / `#section=` / `#figure=` 等 fragment 的 vault PDF（或 `.tex` 回退到同论文 PDF）同样走 `openCitation`，并跳到对应页/区域。
 - **Markdown 粘贴**：普通文本粘贴默认按 Markdown 反序列化，粘贴后光标保持在插入内容之后。若剪贴板携带 Slate 富文本片段（如编辑器内复制自身），优先恢复富文本 AST 节点，保留标题层级与节点属性，避免二次文本提取引入多余空行或重复双链文字。在空标题或既有标题块内粘贴单行纯文本/公式等无块级语法的文本时，按行内子节点插入并保持原标题级别，不会被降级替换为普通正文段落。
 - **块选与拖拽**：编辑态悬停顶层块时左侧出现六点手柄（Notion 同款）。**悬停或点击手柄**打开操作列表（复制 / 剪切 / 创建副本 / 删除）；**按住拖动手柄**在块之间换位（拖拽中禁止划词）。左 gutter 拖出虚线框可框选相邻块；多选后每个选中块保持显示手柄，任一手柄对整组复制 / 剪切 / 移动。空段落（Markdown 空行、文末 TrailingBlock）不是内容块：不显示手柄、也不画选中底色，但仍可随相邻块一起被框选移动以保留间距。在文字上拖仍是划词。`⌘A` / `Ctrl+A` 第一次选中当前块，再按一次选中全部块。复制块写入 Markdown 纯文本。只读、导出面和 `![[…]]` 嵌入不显示手柄。内部 Plate 块 id 不写回磁盘。块拖拽用指针后端（非 HTML5）：macOS 上 wry 会吞掉 DOM `drop`，和文件树一样。长笔记下拖拽/框选的两个全局标志由单一订阅镜像成编辑器根节点上的 `data-dnd-dragging` / `data-dnd-selection-area`，块级样式走 CSS 后代选择器而非每块订阅；手柄的操作菜单 Popover 直到指针进入手柄才挂载。放置目标与 drop line 必须常驻——指针后端在拖拽途中不会触发「被拖过的那个块」去注册自己。
 - **Slash 格式命令**：在可编辑正文中输入 `/` 打开轻量命令列表；使用上下方向键选择、Enter 执行、Escape 关闭。Slash 与双链候选会在可视窗口边缘自动翻转并限制高度；滚动编辑器时关闭候选，避免脱离光标。
-- **美元符号**：`\$a\$` 是普通文本，`$a$` 是行内公式；行内公式两侧可直接接普通文字（如 `第一段$x_0$第三段`），编辑时继续输入不会吞掉公式；含 `cases` 等较高内容的行内公式 hover / 选中背景按公式盒子覆盖，不只覆盖文本行高；两者经编辑、粘贴和保存后保持不同语义。
+- **美元符号**：`\$a\$` 是普通文本，`$a$` 是行内公式；行内公式两侧可直接接普通文字（如 `第一段$x_0$第三段`），编辑时继续输入不会吞掉公式；含 `cases` 等较高内容的行内公式 hover / 选中背景按公式盒子覆盖，不只覆盖文本行高；两者经编辑、粘贴和保存后保持不同语义。顺序输入 `$…$` 在闭合 `$` 处即时转换；若先输入 `$|$` 再补中间内容（无法逐字转换，因为公式是 void 节点、经气泡编辑），在光标位于 `$…$` 内时按 Enter 或离开编辑器即转换。行内公式按基线对齐（`align-baseline`），与正文同一行基线。
 - **独立公式**：`$$...$$` 渲染为块级 KaTeX；多行 `cases` / `aligned` 等高度较大的公式由整宽块级容器承载，hover / 选中背景覆盖完整公式块，超宽内容横向滚动，不会压到前后正文。
 - **公式错误恢复**：未闭合的独立 `$$` 不会吞掉其后的 Markdown；围栏内的错误内容按普通文本保留，后续段落和标题继续正常解析。
 - **正文小于号容错**：正文里 `<0.5B`、`p<0.05`，以及编辑器不支持的 `<Constraints>`、`<AI Paper Analyst>` 这类尖括号，不会再被当成未闭合 JSX 而截掉后面的内容（#533）。解析前把它们改写成 `&lt;`，编辑器里仍显示为 `<`。代码块、公式，以及真正支持的标签（`<div>`、`<center>`、`<iframe>`、`<p align>`、`<p>`、`<br>`、`<u>`、`<sub>`、`<sup>`、`<mark>`、`<kbd>`、`<callout>`）保持原样。详见 [bug_fix/note-markdown-stray-less-than.md](../bug_fix/note-markdown-stray-less-than.md)。
@@ -35,9 +36,22 @@ Plate WYSIWYG；用于普通笔记与论文 `NOTES.md`。磁盘上始终是标�
 - **代码块操作**：编辑态悬停或聚焦代码块时，右上角依次显示语言选择与复制按钮；只读预览只显示复制按钮。选择 Mermaid 语言后，源码下方显示实时预览。
 - **内嵌图**（见下表）。
 - **双链 / 嵌入**：见 [wiki.md](wiki.md)。
-- **导出 PDF / PNG / Markdown**（桌面端）：工具栏分享按钮或右键「导出笔记…」。Markdown 格式直接把当前序列化内容（含未保存改动与 frontmatter）另存为独立 `.md` 文件。PDF / PNG 离屏只读渲染当前序列化内容；页面背景贴边；正文内边距对齐编辑器 `default`（`px-16 pt-4`，底边 `pb-10`）。默认完整展开 `![[…]]` 嵌入，就绪后用 `html-to-image` 截视觉层。**PDF**（`pdf-lib`）在位图上叠 **不可见可选中文字层**（DOM 测量 + Host `export_system_cjk_font`）与 **http(s)/mailto 链接注解**，再按 A4 分页；**PNG** 仍为纯位图。可选论文页眉、每页水印（logo + `muted-foreground`）。完整 PDF 附件嵌入为路径占位。默认水印见设置 → 通用。
+- **导出 PDF / PNG / Markdown**（桌面端）：工具栏分享按钮或右键「导出笔记…」。Markdown 格式直接把当前序列化内容（含未保存改动与 frontmatter）另存为独立 `.md` 文件。PDF / PNG 离屏只读渲染当前序列化内容；页面背景贴边；正文内边距对齐编辑器 `default`（`px-16 pt-4`，底边 `pb-10`）。默认完整展开 `![[…]]` 嵌入，就绪后用 `html-to-image` 截视觉层。**PDF**（`pdf-lib`）在位图上叠 **不可见可选中文字层**（DOM 测量 + Host `export_system_cjk_font`）与 **http(s)/mailto 链接注解**，再按 A4 分页；**PNG** 仍为纯位图。可选论文页眉、每页水印（logo + `muted-foreground`）。完整 PDF 附件嵌入为路径占位。导出默认带水印，可在对话框内临时取消。
 - **外部改盘**：无未存改动则重载；有未存则 toast；内容相等抑制自写回声。主窗与文档弹出窗（「移动至新窗口」）各自监听本窗 Vault watcher，规则相同。
 - **保存冲突**：写盘前比对上次落盘内容；磁盘已被外部改则中止并警告。
+
+## 阅读与打开性能
+
+- **离屏块跳过渲染**：阅读态（编辑器未聚焦）顶层块 `content-visibility: auto`，滚动与拖拽侧栏/分隔条只重排视口内内容；仅非 WebKit 引擎启用。见 [bug_fix/markdown-read-jank-offscreen-blocks.md](../bug_fix/markdown-read-jank-offscreen-blocks.md)。
+- **反序列化按内容裁剪 remark 插件**：解析前嗅探 `$`/`<name`/`:`/`[[`/`[!`/`@`，只挂载命中的 remark 插件（`remarkMdx` 分词 JSX、`remarkEmoji` 全篇扫短代码、`remarkMath` 解析公式在纯文本笔记上是纯开销）；序列化仍用全量管线，round-trip 不变。无 `<` 时同时传 `withoutMdx`，跳过 Plate 的 `htmlToJsx` 整篇扫描。
+- **预处理按需执行**：`prepareMarkdownForDeserialize` 仅在存在连续空行 / `$$` / `<` 时才跑对应的整篇扫描，纯文本笔记直接原样返回。
+- **本地图片懒读 + 共享缓存**：图片节点进入视口（`rootMargin 800px`）才走 `readFile` → `blob:`；同一路径多引用与重开共用同一源（引用计数 + LRU=48 + 撤销），导出模式强制立即加载。
+- **打开路径种子缓存**：`loadTabResources` 读 Markdown/NOTES 走会话内 LRU=24 文本缓存，外部变更由 Vault watcher 失效、写盘后回填；保存冲突检测与 `applyDiskChange` 仍读原始文件，冲突语义不变。
+- **编辑器保活 LRU=4**：最近 4 个 Markdown / 文本编辑器常驻，切回跳过插件初始化与整篇反序列化；滚动位置按文件记忆（`scroll-memory`），淘汰重开回到上次位置。
+- **重块懒渲染**：Mermaid 预览、块级 KaTeX 公式与 `![[…]]` 嵌入进入视口才渲染/反序列化（导出模式立即渲染），长笔记首屏不为离屏图表/公式/嵌入买单；行内公式数量多且小，保持即时渲染。
+- **反链查询延后**：状态栏反链在 idle（`scheduleIdle`，超时 2s）里查询，不抢首屏。
+- **图片引用计数种子延后**：打开时不再同步遍历全树统计图片引用，改到 idle 执行；在它落地前自动保存跳过 asset GC diff，不会误删。
+
 
 ## 内嵌图片
 
@@ -146,6 +160,14 @@ Markdown 已能表达的语法不做 HTML 语义化转换，只处理 Markdown �
 | `src/lib/markdown/block-selection.ts` | 块选查询与 Markdown 序列化；void 块（分隔线 / 图）Enter 向下换行 |
 | `src/components/editor/plugins/markdown-kit.tsx` | Markdown 解析、序列化、粘贴与 Callout portable rules |
 | `src/lib/markdown/image.ts` | 内嵌图 IO / GC |
+| `src/lib/markdown/image-source-cache.ts` | 本地图片 `blob:` 源共享缓存（引用计数 + LRU + 撤销） |
+| `src/lib/markdown/remark-plugins.ts` | 全量 remark 管线与按内容裁剪的反序列化选择器 |
+| `src/lib/markdown/deserialize-md.ts` | 统一的反序列化入口（预处理 + 裁剪后的 remark 插件） |
+| `src/lib/markdown/scroll-memory.ts` | 每文件会话内滚动位置记忆 |
+| `src/lib/vault/seed-cache.ts` | Markdown/NOTES 打开路径文本种子缓存 |
+| `src/hooks/use-in-view.ts` | 进入视口才执行重活的 IntersectionObserver hook |
+| `src/lib/core/idle.ts` | idle 调度（`requestIdleCallback`，WebKit 回退短定时器） |
+| `src/lib/core/paint-perf.ts` | 按引擎开启离屏块跳过渲染 |
 | `src/lib/markdown/save-state.ts` | 保存与冲突 |
 | `src/lib/vault/fs-watch.ts` | 文件变更重载 |
 

@@ -17,6 +17,9 @@
 		"remoteMode": "远程模式",
 		"jumpBack": "返回跳转前",
 		"importToLibrary": "导入本地库",
+		"smartHighlight": "智能高亮",
+		"smartHighlightFailed": "智能高亮失败",
+		"jevNoReadableText": "PDF 文本层为空或无法识别。请先在工具栏 → 解析 PDF 正文 里跑一次 OCR。",
 		"findPlaceholder": "在文档中查找",
 		"findPrev": "上一个",
 		"findNext": "下一个",
@@ -25,11 +28,13 @@
 		"exportAnnotatedPdf": "导出带批注的 PDF",
 		"exportingAnnotatedPdf": "正在导出带批注的 PDF…",
 		"exportAnnotatedPdfFailed": "导出带批注的 PDF 失败",
+		"exportAnnotatedPdfSaved": "已导出带批注的 PDF",
 		"exportDesktopOnly": "导出功能仅在桌面端可用",
 		"layout": {
 			"unavailable": "版面分析尚未就绪。",
 			"preparingModel": "正在准备版面模型…",
-			"failed": "版面分析失败"
+			"failed": "版面分析失败",
+			"openSettings": "打开解析设置"
 		},
 		"layoutTranslate": {
 			"start": "全文翻译",
@@ -43,6 +48,7 @@
 			"needLayout": "请先运行版面分析（Figures 面板）。",
 			"noText": "没有可提取文字的版面区域可翻译。",
 			"failed": "全文翻译失败",
+			"openSettings": "打开翻译设置",
 			"waiting": "等待版面解析后翻译…",
 			"cancelQueue": "取消排队",
 			"queuedToast": "全文翻译已排队，等待版面解析完成",
@@ -52,6 +58,15 @@
 		"translation": {
 			"title": "翻译",
 			"tabTitle": "译文 – {{title}}"
+		},
+		"latexTranslation": {
+			"desktopOnly": "LaTeX 翻译仅在桌面端可用。",
+			"noSource": "该论文没有可翻译的本地 LaTeX 源。",
+			"missingPaperPath": "论文路径缺失，无法启动 LaTeX 翻译。",
+			"translating": "正在翻译 LaTeX 源…",
+			"compiling": "正在编译翻译后的 LaTeX…",
+			"compileFailed": "编译翻译后的 LaTeX 失败，请检查是否已安装 TeX 引擎。",
+			"tabTitle": "LaTeX 译文"
 		}
 	},
 	"pdfAsk": {
@@ -133,7 +148,8 @@
 		"kindFigure": "图",
 		"kindTable": "表",
 		"kindEquation": "公式",
-		"kindAlgorithm": "算法"
+		"kindAlgorithm": "算法",
+		"kindReference": "参考文献"
 	},
 	"figures": {
 		"title": "解析",

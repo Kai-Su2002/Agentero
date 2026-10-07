@@ -38,6 +38,7 @@ import {
 	runLayoutRegionTranslate,
 	toLayoutTranslateItems,
 } from "@/lib/pdf/layout";
+import { openSettingsWindow } from "@/lib/shell/settings-window";
 import { displayTranslateError } from "@/lib/translate";
 
 export type UsePdfLayoutTranslateOptions = {
@@ -222,15 +223,26 @@ export function usePdfLayoutTranslate({
 
 	// `runLayoutRegionTranslate` settles per-chain errors into item state instead
 	// of throwing, so a dead translation API would otherwise finish silently.
+	const notifyTranslateFailure = useCallback(
+		(description: string) => {
+			notifyError(t("pdf.layoutTranslate.failed"), {
+				description,
+				action: {
+					label: t("pdf.layoutTranslate.openSettings"),
+					onClick: () => openSettingsWindow("translate"),
+				},
+			});
+		},
+		[t],
+	);
+
 	const notifyTranslateItemErrors = useCallback(
 		(items: readonly LayoutTranslateItem[]) => {
 			const failed = items.find((it) => it.status === "error" && it.error);
 			if (!failed) return;
-			notifyError(t("pdf.layoutTranslate.failed"), {
-				description: displayTranslateError(failed.error ?? ""),
-			});
+			notifyTranslateFailure(displayTranslateError(failed.error ?? ""));
 		},
-		[t],
+		[notifyTranslateFailure],
 	);
 
 	const cancelWaitingLayout = useCallback(() => {
@@ -337,7 +349,7 @@ export function usePdfLayoutTranslate({
 			.catch((e) => {
 				if (ac.signal.aborted) return;
 				const message = displayTranslateError(errorText(e));
-				notifyError(t("pdf.layoutTranslate.failed"), { description: message });
+				notifyTranslateFailure(message);
 				setLayoutTranslateJob((prev) => ({
 					status: "partial",
 					items: prev.items,
@@ -356,6 +368,7 @@ export function usePdfLayoutTranslate({
 		applyHiddenPages,
 		enterWaitingLayout,
 		notifyTranslateItemErrors,
+		notifyTranslateFailure,
 		t,
 	]);
 
@@ -467,9 +480,7 @@ export function usePdfLayoutTranslate({
 				.catch((e) => {
 					if (ac.signal.aborted) return;
 					const message = displayTranslateError(errorText(e));
-					notifyError(t("pdf.layoutTranslate.failed"), {
-						description: message,
-					});
+					notifyTranslateFailure(message);
 					setLayoutTranslateJob((prev) => ({
 						status: "partial",
 						items: prev.items,
@@ -489,6 +500,7 @@ export function usePdfLayoutTranslate({
 			applyHiddenPages,
 			enterWaitingLayout,
 			notifyTranslateItemErrors,
+			notifyTranslateFailure,
 			t,
 		],
 	);

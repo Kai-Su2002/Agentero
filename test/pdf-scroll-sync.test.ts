@@ -5,6 +5,7 @@ import {
 	getScrollSyncPeer,
 	getScrollSyncRole,
 	mapScrollByContent,
+	mergeSyncedScrollPosition,
 	registerScrollSyncElement,
 	registerScrollSyncPair,
 	registerScrollSyncPeer,
@@ -111,6 +112,58 @@ describe("mapScrollByContent", () => {
 				metrics({ scrollTop: 0, scrollHeight: 1000, clientHeight: 200 }),
 			),
 		).toBeNull();
+	});
+});
+
+describe("mergeSyncedScrollPosition", () => {
+	it("does not move the source horizontally after a vertical translation-pane scroll", () => {
+		const mapped = mapScrollByContent(
+			metrics({
+				scrollLeft: 180,
+				scrollTop: 400,
+				scrollWidth: 1600,
+				clientWidth: 420,
+				scrollHeight: 2400,
+				clientHeight: 300,
+			}),
+			metrics({
+				scrollLeft: 40,
+				scrollTop: 300,
+				scrollWidth: 1600,
+				clientWidth: 620,
+				scrollHeight: 2400,
+				clientHeight: 300,
+			}),
+		);
+		expect(mapped).toEqual({ x: 80, y: 400 });
+		if (!mapped) throw new Error("expected mapped scroll position");
+		expect(
+			mergeSyncedScrollPosition(
+				mapped,
+				{ x: 40, y: 300 },
+				{ x: false, y: true },
+			),
+		).toEqual({ x: 40, y: 400 });
+	});
+
+	it("keeps horizontal position when only the other pane scrolls vertically", () => {
+		expect(
+			mergeSyncedScrollPosition(
+				{ x: 120, y: 480 },
+				{ x: 37, y: 300 },
+				{ x: false, y: true },
+			),
+		).toEqual({ x: 37, y: 480 });
+	});
+
+	it("keeps vertical position when only the other pane scrolls horizontally", () => {
+		expect(
+			mergeSyncedScrollPosition(
+				{ x: 120, y: 480 },
+				{ x: 37, y: 300 },
+				{ x: true, y: false },
+			),
+		).toEqual({ x: 120, y: 300 });
 	});
 });
 

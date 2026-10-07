@@ -225,6 +225,22 @@ pub(crate) fn richer_models_event(
     }
 }
 
+/// Store `event` only when it is at least as large as the current catalog.
+///
+/// opencode 2.x reports a partial model catalog on `session/new` and pushes the
+/// complete one moments later via `config_option_update`. A warm result (or
+/// pooled-slot snapshot) captured before that push still carries the partial
+/// list, so replacing unconditionally would shrink the picker and hide custom
+/// providers (#638). Richer wins; equal counts refresh to the newer event.
+pub(crate) fn store_richer_models(slot: &mut Option<AgentModelsEvent>, event: AgentModelsEvent) {
+    let replace = slot
+        .as_ref()
+        .is_none_or(|prev| event.models.len() >= prev.models.len());
+    if replace {
+        *slot = Some(event);
+    }
+}
+
 /// Fallback model selector extraction for agents that still expose the
 /// pre-stabilization top-level `models` field on `session/new` (e.g. hermes-agent
 /// before it migrated to `configOptions`, see NousResearch/hermes-agent#81067).
@@ -1013,6 +1029,7 @@ mod config_option_tests {
 mod session_models_fallback_tests {
     use super::{
         models_from_config_options, models_from_session_models_value, richer_models_event,
+        store_richer_models,
     };
     use agent_client_protocol::schema::v1::{
         SessionConfigOption, SessionConfigOptionCategory, SessionConfigSelectOption,
@@ -1157,5 +1174,40 @@ mod session_models_fallback_tests {
 
         let ev = models_from_session_models_value("sess-1", "hermes", &value).expect("models");
         assert_eq!(ev.current_id, "moa:default");
+    }
+
+    #[test]
+    fn store_richer_models_ignores_stale_partial_snapshot() {
+        use crate::features::agent::models::{AgentModelChoice, AgentModelsEvent};
+
+        let event = |ids: &[&str]| AgentModelsEvent {
+            session_id: "sess-1".into(),
+            agent_id: "opencode".into(),
+            config_id: "model".into(),
+            current_id: ids[0].to_string(),
+            models: ids
+                .iter()
+                .map(|id| AgentModelChoice {
+                    id: id.to_string(),
+                    name: id.to_string(),
+                    group: None,
+                })
+                .collect(),
+        };
+
+        let mut slot: Option<AgentModelsEvent> = None;
+        store_richer_models(&mut slot, event(&["deepseek/deepseek-flash"]));
+        assert_eq!(slot.as_ref().expect("stored").models.len(), 1);
+
+        // opencode 2.0.22 pushes the complete catalog after session/new.
+        store_richer_models(
+            &mut slot,
+            event(&["opencode/gpt-5", "deepseek/deepseek-flash"]),
+        );
+        assert_eq!(slot.as_ref().expect("stored").models.len(), 2);
+
+        // A stale partial snapshot must not shrink it again.
+        store_richer_models(&mut slot, event(&["deepseek/deepseek-flash"]));
+        assert_eq!(slot.as_ref().expect("stored").models.len(), 2);
     }
 }

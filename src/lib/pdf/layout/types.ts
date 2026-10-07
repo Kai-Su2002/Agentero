@@ -60,6 +60,9 @@ export type PdfLayoutRegion = {
 	 * For formulas: the model `formula_number` box geometry (no text parse).
 	 */
 	titleBbox?: PdfAskNormalizedRect;
+	/** Caption on another page; never union these coordinates into the figure. */
+	captionPageIndex?: number;
+	captionBbox?: PdfAskNormalizedRect;
 	/**
 	 * Semantic role of a caption box (from text / geometry).
 	 * Used so "Table 2: …" mislabeled as figure_title still binds to tables,
@@ -91,6 +94,19 @@ export type PdfLayoutDocumentResult = {
 	counts: Record<PdfLayoutKind, number>;
 };
 
+/**
+ * One English sentence and its translation inside a layout block.
+ * `quote` is the text-layer slice (hyphens kept). `source` is the normalized
+ * string sent to the engine. `translated` is the whole sentence. `display` is
+ * the slice painted in this block when the sentence continues in another box.
+ */
+export type LayoutTranslateSentence = {
+	quote: string;
+	source: string;
+	translated: string;
+	display?: string;
+};
+
 /** Reading-order region extracted as one translatable source unit. */
 export type LayoutTranslateRegion = {
 	id: string;
@@ -100,6 +116,11 @@ export type LayoutTranslateRegion = {
 	readingOrder: number;
 	/** Source PDF text (trimmed, possibly truncated for the API). */
 	source: string;
+	/**
+	 * Text-layer string before hyphen healing. Sentence quotes are cut from
+	 * this. Not written to the sidecar.
+	 */
+	raw?: string;
 };
 
 export type LayoutTranslateItemStatus =
@@ -114,6 +135,8 @@ export type LayoutTranslateItem = LayoutTranslateRegion & {
 	/** Translated text when status is done (or partial). */
 	translated?: string;
 	error?: string;
+	/** Sentence pairs for this block. Absent when the block was not paired. */
+	sentences?: LayoutTranslateSentence[];
 };
 
 export type LayoutAnalysisUiStatus =

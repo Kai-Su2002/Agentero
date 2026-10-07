@@ -1,6 +1,5 @@
 "use client";
 
-import { MarkdownPlugin } from "@platejs/markdown";
 import { ImagePlugin } from "@platejs/media/react";
 import { Plate, usePlateEditor } from "platejs/react";
 import { useEffect, useMemo, useRef } from "react";
@@ -14,7 +13,7 @@ import {
 } from "@/components/editor/markdown-export-mode-context";
 import { ImageElement } from "@/components/editor/nodes/block/image-node";
 import { MarkdownEditorKit } from "@/components/editor/plugins/markdown-editor-kit";
-import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
+import { deserializeMarkdownBody } from "@/lib/markdown/deserialize-md";
 import type { MarkdownExportSurfaceProps } from "@/lib/markdown/export/types";
 import { splitFrontmatter } from "@/lib/markdown/frontmatter";
 
@@ -42,9 +41,7 @@ export function MarkdownExportSurface({
 		plugins,
 		value: (currentEditor) => {
 			const { body } = splitFrontmatter(markdown);
-			return currentEditor
-				.getApi(MarkdownPlugin)
-				.markdown.deserialize(prepareMarkdownForDeserialize(body || " "));
+			return deserializeMarkdownBody(currentEditor, body);
 		},
 	});
 

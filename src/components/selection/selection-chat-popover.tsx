@@ -28,6 +28,7 @@ import {
 	captureTextAnchor,
 	resolveSelectionRange,
 } from "@/lib/agent/selection-source";
+import { resolveMarkdownSelectionLinesForPath } from "@/lib/markdown/markdown-selection-lines-registry";
 import { applyMarkdownTextareaShortcut } from "@/lib/markdown/textarea-shortcuts";
 import { openRightTab } from "@/lib/shell/ui-window-actions";
 import { AnnotationBadges } from "./selection-annotation-badges";
@@ -101,10 +102,15 @@ export function SelectionChatPopover() {
 				if (lines[index]?.kind !== "user" && question?.kind === "user")
 					context.question = question.text;
 			}
+			const sourcePath = source.dataset.selectionChatSource ?? "";
+			const markdownLines =
+				origin === "markdown"
+					? resolveMarkdownSelectionLinesForPath(sourcePath)
+					: null;
 			openSelectionChat(
 				{
 					text: selection.toString(),
-					sourcePath: source.dataset.selectionChatSource ?? "",
+					sourcePath,
 					origin,
 					messageId: source.dataset.selectionChatMessage,
 					chatSessionId:
@@ -120,6 +126,12 @@ export function SelectionChatPopover() {
 							: undefined,
 					context: normalizeQuoteContext(context),
 					textAnchor: captureTextAnchor(source, range),
+					...(markdownLines != null
+						? {
+								lineFrom: markdownLines.lineFrom,
+								lineTo: markdownLines.lineTo,
+							}
+						: {}),
 				},
 				{ x: rect.left + rect.width / 2, y: rect.top },
 				"menu",

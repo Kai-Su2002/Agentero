@@ -133,6 +133,7 @@ export function PdfCardStack({
 					kind={crossrefPreview.state.kind}
 					page={crossrefPreview.state.page}
 					image={crossrefPreview.state.image}
+					targetSize={crossrefPreview.state.targetSize}
 					onPointerEnter={crossrefPreview.onHoverEnter}
 					onPointerLeave={crossrefPreview.onHoverLeave}
 				/>

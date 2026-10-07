@@ -23,6 +23,7 @@ pub mod usage;
 
 pub use agentero_core::blocking;
 pub use agentero_core::cancel;
+pub use agentero_core::decision;
 pub use agentero_core::error;
 pub use agentero_core::frontmatter;
 pub use agentero_core::fs;

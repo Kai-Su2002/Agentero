@@ -75,6 +75,8 @@ pub async fn scan_remote_agents(
             install_hint: tmpl.install_hint,
             install_command: tmpl.install_command,
             login_command: tmpl.login_command,
+            // Remote rows do not expose the "open in terminal" action.
+            cli_command: None,
             offer_install,
             can_install,
             adapter_distinct,

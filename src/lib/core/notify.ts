@@ -15,6 +15,8 @@ export type NotifyOptions = {
 	id?: string | number;
 	/** Auto-dismiss ms; default 7s for errors. */
 	duration?: number;
+	/** Optional inline action (e.g. "Open settings" on a config error). */
+	action?: { label: string; onClick: () => void };
 };
 
 /** Show an error toast in the top-right stack. */
@@ -26,10 +28,14 @@ export function notifyError(
 	if (!text) return "";
 	// User-initiated cancel is not an error — do not toast.
 	if (text === BACKGROUND_TASK_CANCELLED_MESSAGE) return "";
+	reportNetworkFailureIfLikely(text, opts.description);
 	return toast.error(text, {
 		description: opts.description,
 		id: opts.id,
-		duration: opts.duration ?? 7000,
+		// Keep the action reachable much longer than a plain error toast, so the
+		// user has time to click through to the settings fix.
+		duration: opts.duration ?? (opts.action ? 20_000 : 7000),
+		action: opts.action,
 	});
 }
 
@@ -40,10 +46,12 @@ export function notifyWarning(
 ): string | number {
 	const text = message?.trim();
 	if (!text) return "";
+	reportNetworkFailureIfLikely(text, opts.description);
 	return toast.warning(text, {
 		description: opts.description,
 		id: opts.id,
-		duration: opts.duration ?? 6000,
+		duration: opts.duration ?? (opts.action ? 20_000 : 6000),
+		action: opts.action,
 	});
 }
 
@@ -99,6 +107,78 @@ export function notifyAction(
 		duration: duration ?? 12_000,
 		action: { label: actionLabel, onClick: onAction },
 	});
+}
+
+export type ReminderOptions = {
+	description?: string;
+	/** Stable id collapses duplicates (same id replaces the previous toast). */
+	id?: string | number;
+	/** Auto-dismiss ms; default 20s so both buttons stay reachable. */
+	duration?: number;
+	/** Primary action (e.g. "Open settings"). */
+	actionLabel: string;
+	onAction: () => void;
+	/** Secondary action (e.g. "Don't remind again"). */
+	dismissLabel: string;
+	onDismiss: () => void;
+};
+
+/**
+ * Periodic config reminder with two choices: jump to the fix, or stop showing
+ * it. Uses Sonner's secondary `cancel` button so "don't remind again" does not
+ * read as the primary call to action.
+ */
+export function notifyReminder(
+	message: string,
+	{
+		description,
+		id,
+		duration,
+		actionLabel,
+		onAction,
+		dismissLabel,
+		onDismiss,
+	}: ReminderOptions,
+): string | number {
+	const text = message?.trim();
+	if (!text) return "";
+	return toast(text, {
+		description,
+		id,
+		duration: duration ?? 20_000,
+		action: { label: actionLabel, onClick: onAction },
+		cancel: { label: dismissLabel, onClick: onDismiss },
+		// Stack the actions below the text instead of Sonner's default inline row
+		// (see `cn-reminder-toast` in index.css).
+		classNames: { toast: "cn-reminder-toast" },
+	});
+}
+
+/**
+ * Network-ish failure text (Host errors are English; UI messages pass through).
+ * Kept narrow so the proxy reminder only fires on real connectivity failures.
+ */
+const NETWORK_FAILURE_RE =
+	/timed?\s*out|timeout|dns|name resolution|resolve host|connection (refused|reset|closed|aborted)|connect(ion)? (error|failed)|network (is )?unreachable|failed to (connect|fetch|resolve)|unreachable|\btls\b|handshake|certificate|\bproxy\b/i;
+
+/**
+ * Registered by the main window (`useConfigReminders`) to surface the proxy
+ * reminder. Kept as a setter so this funnel stays a leaf: the reminder module
+ * imports this file, and importing it back would create a cycle.
+ */
+let networkFailureReporter: (() => void) | null = null;
+
+export function setNetworkFailureReporter(fn: (() => void) | null): void {
+	networkFailureReporter = fn;
+}
+
+function reportNetworkFailureIfLikely(
+	message: string,
+	description?: string,
+): void {
+	if (!NETWORK_FAILURE_RE.test(`${message} ${description ?? ""}`)) return;
+	// Registered by the main window (see `use-config-reminders`).
+	networkFailureReporter?.();
 }
 
 /** Coerce unknown catch values into a display string. */

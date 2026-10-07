@@ -21,7 +21,7 @@ Tauri 2 + Rust Host：文件系统、Catalog、索引、ACP Client、远程 Vaul
 
 ```text
 crates/agentero-core/src/   # tauri 无关基座 + 数据域（agentero-core crate）
-  error、fs、http、paths、log_util、sqlite、time、blocking、usage（存储层）…
+  error、fs、http、paths、log_util、sqlite、time、blocking、usage（存储层）、decision…
   app_handle    # AppHandle + HostHooks（宿主回调抽象：emit / job spawn）
   features/     # catalog、vault（tree/trash/rename/doctor）、wiki、import、
                 # zotero codec/io、scholar_api、pdf_parse、refs、feeds、
@@ -36,7 +36,8 @@ src-tauri/src/
     web/        # agentero-web 通用网页代理（allowlist + web_proxy_allow_host，网页论文 iframe 划词用）
     pdf/        # export
     markdown/   # wiki commands、search
-    system/     # settings、builtin（构建期内置 provider 凭证）
+    system/     # settings、builtin（构建期内置 provider 凭证）、desktop_apps（本地桌面应用检测）
+    decision/   # 决策层装配（DecisionEngine + providers + schemas）
     agent/ jobs/ lifecycle（job 事件）
   integration/  # connector、mcp、remote、bridge、sync（desktop-only）
   lib.rs
@@ -120,10 +121,12 @@ src-tauri/src/
 | 云同步（S3） | [sync.md](sync.md) |
 | 搜索 | [search.md](search.md) |
 | 设置 | [settings.md](settings.md) |
+| 本地桌面应用检测 | [desktop-apps.md](desktop-apps.md) |
 | 翻译 | [translate.md](translate.md) |
 | 内置 Provider（构建期凭证） | [builtin-provider.md](builtin-provider.md) |
 | 日志 | [logging.md](logging.md) |
 | 遥测 | [telemetry.md](telemetry.md) |
 | 使用记录 | [usage.md](usage.md) |
+| 决策层 | [decision.md](decision.md) |
 | CLI | [cli.md](cli.md) |
 | API 全表 | [api.md](api.md) |

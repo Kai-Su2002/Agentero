@@ -37,6 +37,8 @@
 		"description": "Recent ACP sessions in this chat.",
 		"empty": "No sessions yet.",
 		"restoring": "Restoring session…",
+		"rename": "Rename",
+		"renameAria": "Conversation title",
 		"status": {
 			"running": "Running",
 			"completed": "Completed",

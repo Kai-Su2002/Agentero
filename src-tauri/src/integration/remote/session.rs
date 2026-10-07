@@ -414,7 +414,6 @@ mod tests {
             "claude",
             "codex",
             "opencode",
-            "openclaw",
             "hermes",
             "claude-agent-acp",
             "grok",

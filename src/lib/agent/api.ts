@@ -20,7 +20,6 @@ export type {
 
 export type AgentTemplate =
 	| "opencode"
-	| "openclaw"
 	| "hermes"
 	| "claude-acp"
 	| "codex-acp"
@@ -32,6 +31,7 @@ export type AgentTemplate =
 	| "kimi-code"
 	| "zcode"
 	| "minimax-code"
+	| "mimo-code"
 	| "custom";
 
 export type AgentDescriptor = {
@@ -479,6 +479,14 @@ export async function openAgentLoginTerminal(
 ): Promise<void> {
 	await callApi(
 		() => commands.doctorOpenAgentLoginTerminal(templateId),
+		AGENT_CALL_OPTS,
+	);
+}
+
+/** Open the installed Agent's interactive host CLI in a confirm-to-run terminal. */
+export async function openAgentCliTerminal(templateId: string): Promise<void> {
+	await callApi(
+		() => commands.doctorOpenAgentCliTerminal(templateId),
 		AGENT_CALL_OPTS,
 	);
 }

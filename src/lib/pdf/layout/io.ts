@@ -32,6 +32,14 @@ export type PdfLayoutSidecar = {
 	source: {
 		mode: LayoutSidecarMode;
 		generatedAt: string;
+		/**
+		 * The PDF text layer was walked for this parse. Boxes that stayed
+		 * empty still count. Absent on sidecars written before that walk
+		 * was recorded, including ones that already stored text.
+		 */
+		textLayerExtracted?: boolean;
+		/** Numbered captions have been recovered directly from PDF text runs. */
+		figureCaptionsExtracted?: boolean;
 	};
 	/** Raw text-enriched model regions, before caption/formula merge. */
 	regions: PdfLayoutRegion[];
@@ -104,6 +112,14 @@ function parseRegion(value: unknown): PdfLayoutRegion | null {
 	const titleBbox = parseRect(value.titleBbox);
 	if (titleBbox) out.titleBbox = titleBbox;
 	if (
+		Number.isInteger(value.captionPageIndex) &&
+		(value.captionPageIndex as number) >= 0
+	) {
+		out.captionPageIndex = value.captionPageIndex as number;
+		const captionBbox = parseRect(value.captionBbox);
+		if (captionBbox) out.captionBbox = captionBbox;
+	}
+	if (
 		value.captionRole === "figure_main" ||
 		value.captionRole === "table_main" ||
 		value.captionRole === "algorithm_main" ||
@@ -142,14 +158,29 @@ export function parseLayoutSidecar(raw: unknown): PdfLayoutSidecar | null {
 	if (!Array.isArray(raw.regions)) return null;
 	const regions = raw.regions.map(parseRegion);
 	if (regions.some((r) => !r)) return null;
+	const source: PdfLayoutSidecar["source"] = {
+		mode: raw.source.mode as LayoutSidecarMode,
+		generatedAt: raw.source.generatedAt,
+	};
+	if (raw.source.textLayerExtracted === true) source.textLayerExtracted = true;
+	if (raw.source.figureCaptionsExtracted === true)
+		source.figureCaptionsExtracted = true;
 	return {
 		schemaVersion: LAYOUT_SIDECAR_SCHEMA_VERSION,
-		source: {
-			mode: raw.source.mode as LayoutSidecarMode,
-			generatedAt: raw.source.generatedAt,
-		},
+		source,
 		regions: regions as PdfLayoutRegion[],
 	};
+}
+
+/** Old sidecars, and reads that did not finish, still need the text layer. */
+export function layoutSidecarNeedsTextLayer(
+	sidecar: PdfLayoutSidecar,
+): boolean {
+	return (
+		sidecar.source.textLayerExtracted !== true ||
+		(sidecar.source.mode === "mineru-layout" &&
+			sidecar.source.figureCaptionsExtracted !== true)
+	);
 }
 
 export async function readLayoutSidecar(
@@ -168,20 +199,100 @@ export async function writeLayoutSidecar(
 	paperAbsPath: string | null | undefined,
 	regions: PdfLayoutRegion[],
 	mode: LayoutSidecarMode = "embedpdf-layout",
+	options: { textLayerExtracted?: boolean } = {},
 ): Promise<void> {
 	if (!paperAbsPath) return;
+	const source: PdfLayoutSidecar["source"] = {
+		mode,
+		generatedAt: new Date().toISOString(),
+	};
+	if (options.textLayerExtracted === true) {
+		source.textLayerExtracted = true;
+		source.figureCaptionsExtracted = true;
+	}
 	const sidecar: PdfLayoutSidecar = {
 		schemaVersion: LAYOUT_SIDECAR_SCHEMA_VERSION,
-		source: {
-			mode,
-			generatedAt: new Date().toISOString(),
-		},
+		source,
 		regions,
 	};
 	await writeVaultFile(
 		layoutSidecarPath(paperAbsPath),
 		`${JSON.stringify(sidecar, null, 2)}\n`,
 	);
+}
+
+function layoutRectEqual(
+	a: PdfLayoutRegion["rect"],
+	b: PdfLayoutRegion["rect"],
+): boolean {
+	return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+}
+
+function layoutRegionGeometryEqual(
+	a: PdfLayoutRegion,
+	b: PdfLayoutRegion,
+): boolean {
+	return (
+		a.id === b.id &&
+		a.pageIndex === b.pageIndex &&
+		a.kind === b.kind &&
+		a.label === b.label &&
+		a.score === b.score &&
+		a.readingOrder === b.readingOrder &&
+		layoutRectEqual(a.rect, b.rect) &&
+		layoutRectEqual(a.bbox, b.bbox)
+	);
+}
+
+/** Same model parse: mode, timestamp, and box geometry. Text may differ. */
+export function sameLayoutParse(
+	a: PdfLayoutSidecar,
+	b: PdfLayoutSidecar,
+): boolean {
+	if (a.source.mode !== b.source.mode) return false;
+	if (a.source.generatedAt !== b.source.generatedAt) return false;
+	if (a.regions.length !== b.regions.length) return false;
+	return a.regions.every((region, index) => {
+		const other = b.regions[index];
+		return other ? layoutRegionGeometryEqual(region, other) : false;
+	});
+}
+
+/** Text-layer backfill keeps the parse timestamp and records the walk. */
+export function layoutTextBackfillSidecar(
+	expected: PdfLayoutSidecar,
+	regions: PdfLayoutRegion[],
+): PdfLayoutSidecar {
+	return {
+		schemaVersion: LAYOUT_SIDECAR_SCHEMA_VERSION,
+		source: {
+			mode: expected.source.mode,
+			generatedAt: expected.source.generatedAt,
+			textLayerExtracted: true,
+			figureCaptionsExtracted: true,
+		},
+		regions,
+	};
+}
+
+/**
+ * Write extracted text only when `layout.json` is still the parse we read.
+ * A newer headless analysis wins; a partial walk must not call this.
+ */
+export async function writeLayoutTextBackfill(
+	paperAbsPath: string | null | undefined,
+	expected: PdfLayoutSidecar,
+	regions: PdfLayoutRegion[],
+): Promise<boolean> {
+	if (!paperAbsPath) return false;
+	const current = await readLayoutSidecar(paperAbsPath);
+	if (!current || !sameLayoutParse(current, expected)) return false;
+	const sidecar = layoutTextBackfillSidecar(expected, regions);
+	await writeVaultFile(
+		layoutSidecarPath(paperAbsPath),
+		`${JSON.stringify(sidecar, null, 2)}\n`,
+	);
+	return true;
 }
 
 export async function readLayoutIndex(

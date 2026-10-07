@@ -7,13 +7,17 @@ import {
 	runToolLifecycle as runAgentToolLifecycle,
 	type ToolLifecycleAction,
 } from "@/lib/agent";
-import { lifecycleErrorMessage } from "@/lib/agent/lifecycle-error";
+import {
+	isNpmMissingError,
+	lifecycleErrorMessage,
+} from "@/lib/agent/lifecycle-error";
 import { BACKGROUND_TASK_CANCELLED_MESSAGE } from "@/lib/core/background-tasks";
 import { commands, events } from "@/lib/core/bindings";
 import { errorText } from "@/lib/core/error";
 import { notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { listenEventSafe } from "@/lib/core/tauri-events";
+import { installNodeInBackground } from "@/lib/doctor/install-node";
 import { ensureVault } from "@/lib/vault";
 import { getVaultPath } from "@/lib/vault/store";
 
@@ -77,6 +81,22 @@ export function useAgentToolLifecycle(opts: {
 		},
 		[t],
 	);
+
+	/** Recovery for the "npm not found" install failure: install Node in the background. */
+	const installNodeFix = useCallback(() => {
+		void installNodeInBackground()
+			.then((result) => {
+				if (!result) return;
+				if (result.outcome === "no-package-manager") {
+					notifyError(t("doctor.host.install.noPackageManager"));
+				} else if (result.error) {
+					notifyError(result.error);
+				} else {
+					notifySuccess(t("doctor.host.install.success"));
+				}
+			})
+			.catch((error) => notifyError(errorText(error)));
+	}, [t]);
 
 	const runToolLifecycle = useCallback(
 		async (
@@ -151,7 +171,18 @@ export function useAgentToolLifecycle(opts: {
 				// User-initiated cancel is not an error: no toast, no red banner.
 				if (message !== BACKGROUND_TASK_CANCELLED_MESSAGE) {
 					onError?.(message);
-					notifyError(message);
+					if (isNpmMissingError(message)) {
+						// npm missing on PATH: offer a one-click Node.js install
+						// (npm ships with Node) as a background task.
+						notifyError(message, {
+							action: {
+								label: t("doctor.host.install.button"),
+								onClick: installNodeFix,
+							},
+						});
+					} else {
+						notifyError(message);
+					}
 				}
 				return false;
 			} finally {
@@ -167,6 +198,7 @@ export function useAgentToolLifecycle(opts: {
 		},
 		[
 			clearLifecycleProgress,
+			installNodeFix,
 			lifecyclePhaseLabel,
 			onError,
 			patchLifecycleProgress,

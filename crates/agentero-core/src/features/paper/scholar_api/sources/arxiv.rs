@@ -63,6 +63,26 @@ async fn search_by_title(title: &str, limit: usize) -> Result<Vec<ApiPaper>, Api
     Ok(parse_entries(&xml, limit))
 }
 
+/// Free-form arXiv Atom query, newest submissions first.
+///
+/// `search_query` is the raw arXiv query expression (already composed by the
+/// caller — e.g. `all:agent AND cat:cs.AI`); it is URL-encoded here. This is
+/// the primitive behind keyword/category/date discovery, as opposed to the
+/// single-record lookups used by the import resolver.
+pub async fn query_atom(
+    search_query: &str,
+    start: usize,
+    max_results: usize,
+) -> Result<Vec<ApiPaper>, ApiError> {
+    let url = format!(
+        "{API_BASE}?search_query={}&start={start}&max_results={max_results}\
+         &sortBy=submittedDate&sortOrder=descending",
+        urlencoding::encode(search_query)
+    );
+    let xml = client::get_text(&url).await?;
+    Ok(parse_entries(&xml, max_results))
+}
+
 fn parse_entries(xml: &str, limit: usize) -> Vec<ApiPaper> {
     let mut out = Vec::new();
     for entry in xml.split("<entry>").skip(1) {

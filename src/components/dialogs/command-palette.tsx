@@ -17,9 +17,12 @@ import {
 	CommandList,
 } from "@/components/ui/command";
 import type { PaperMetadata } from "@/lib/paper";
+import { paperDirFromPath } from "@/lib/paper/detect";
+import { visiblePaperTags } from "@/lib/paper/tags";
 import { filterByFuzzy } from "@/lib/shell/commands/match";
 import type { AppCommand, PaletteMode } from "@/lib/shell/commands/types";
 import { type SearchHit, searchVault } from "@/lib/vault/search";
+import { searchWikiLinks, type WikiSearchCandidate } from "@/lib/wiki/api";
 
 type CommandPaletteProps = {
 	open: boolean;
@@ -38,6 +41,12 @@ type CommandPaletteProps = {
 };
 
 const PAPER_LIMIT = 8;
+const ALIAS_LIMIT = 8;
+
+/** User-facing tag names for a catalog row (internal provenance tags hidden). */
+function tagNames(paper: PaperMetadata): string[] {
+	return visiblePaperTags(paper.tags).map((tag) => tag.name);
+}
 
 /**
  * Global palette: Go (⌘P) = papers + vault search;
@@ -58,6 +67,10 @@ export function CommandPalette({
 	const [hits, setHits] = useState<SearchHit[]>([]);
 	const [loading, setLoading] = useState(false);
 	const genRef = useRef(0);
+	// Alias matches come from the Wiki index (frontmatter `aliases`); separate
+	// generation counter so the two async searches never clobber each other.
+	const [aliasHits, setAliasHits] = useState<WikiSearchCandidate[]>([]);
+	const aliasGenRef = useRef(0);
 
 	// Reset query when opening or when mode changes while open.
 	useEffect(() => {
@@ -95,7 +108,7 @@ export function CommandPalette({
 		});
 	}, [commands, commandQuery, t]);
 
-	// Instant, in-memory paper matches (title / authors / id). Empty query → recents.
+	// Instant, in-memory paper matches (title / authors / id / tags). Empty query → recents.
 	const paperMatches = useMemo(() => {
 		if (effectiveMode !== "go") return [];
 		const withPath = papers.filter((p) => p.path);
@@ -104,7 +117,7 @@ export function CommandPalette({
 		return withPath
 			.filter((p) => {
 				const hay =
-					`${p.title} ${p.authors?.join(" ") ?? ""} ${p.id}`.toLowerCase();
+					`${p.title} ${p.authors?.join(" ") ?? ""} ${p.id} ${tagNames(p).join(" ")}`.toLowerCase();
 				return terms.every((term) => hay.includes(term));
 			})
 			.slice(0, PAPER_LIMIT);
@@ -140,6 +153,49 @@ export function CommandPalette({
 		return () => clearTimeout(timer);
 	}, [goQuery, open, vaultPath, effectiveMode]);
 
+	// Debounced frontmatter-alias search over Vault Markdown (Wiki index). Only
+	// alias rows are kept — path/heading/block matches would duplicate the other
+	// tiers, and alias rows are exactly what the paper/content tiers can't see.
+	useEffect(() => {
+		if (!open || !vaultPath || effectiveMode !== "go") {
+			setAliasHits([]);
+			return;
+		}
+		const q = goQuery.trim();
+		if (!q) {
+			setAliasHits([]);
+			return;
+		}
+		const gen = ++aliasGenRef.current;
+		const timer = setTimeout(() => {
+			searchWikiLinks(vaultPath, q, { kind: "file" })
+				.then((r) => {
+					if (gen !== aliasGenRef.current) return;
+					setAliasHits(r.filter((c) => c.alias).slice(0, ALIAS_LIMIT));
+				})
+				.catch(() => {
+					if (gen === aliasGenRef.current) setAliasHits([]);
+				});
+		}, 200);
+		return () => clearTimeout(timer);
+	}, [goQuery, open, vaultPath, effectiveMode]);
+
+	// Drop aliases already shown as a paper row (the paper tier wins), and drop
+	// content hits whose file is already shown as an alias row.
+	const aliasRows = useMemo(() => {
+		const paperPaths = new Set(paperMatches.map((p) => p.path as string));
+		return aliasHits.filter((c) => {
+			const paperRel = paperDirFromPath(c.path);
+			return !(paperRel && paperPaths.has(paperRel));
+		});
+	}, [aliasHits, paperMatches]);
+
+	const contentHits = useMemo(() => {
+		if (!aliasHits.length) return hits;
+		const aliasPaths = new Set(aliasHits.map((c) => c.path));
+		return hits.filter((hit) => !aliasPaths.has(hit.path));
+	}, [hits, aliasHits]);
+
 	const choosePaper = (rel: string) => {
 		onOpenPaper(rel);
 		onOpenChange(false);
@@ -149,12 +205,19 @@ export function CommandPalette({
 		else onOpenVaultRel(hit.path);
 		onOpenChange(false);
 	};
+	const chooseAlias = (candidate: WikiSearchCandidate) => {
+		const paperRel = paperDirFromPath(candidate.path);
+		if (paperRel) onOpenPaper(paperRel);
+		else onOpenVaultRel(candidate.path);
+		onOpenChange(false);
+	};
 	const runCommand = (cmd: AppCommand) => {
 		onOpenChange(false);
 		void Promise.resolve(cmd.run()).catch(() => undefined);
 	};
 
-	const hasGoResults = paperMatches.length > 0 || hits.length > 0;
+	const hasGoResults =
+		paperMatches.length > 0 || aliasRows.length > 0 || contentHits.length > 0;
 	const hasCmdResults = visibleCommands.length > 0;
 
 	const placeholder =
@@ -232,30 +295,59 @@ export function CommandPalette({
 											: t("commandPalette.recent")
 									}
 								>
-									{paperMatches.map((p) => (
+									{paperMatches.map((p) => {
+										const tags = tagNames(p);
+										const meta = [
+											p.authors?.join(", "),
+											p.year ? String(p.year) : null,
+											tags.length ? tags.join(", ") : null,
+										]
+											.filter(Boolean)
+											.join(" · ");
+										return (
+											<CommandItem
+												key={p.path}
+												value={`paper:${p.path}`}
+												onSelect={() => choosePaper(p.path as string)}
+											>
+												<FileText className="text-muted-foreground" />
+												<div className="flex min-w-0 flex-col">
+													<span className="truncate">{p.title || p.id}</span>
+													{meta ? (
+														<span className="truncate text-muted-foreground text-xs">
+															{meta}
+														</span>
+													) : null}
+												</div>
+											</CommandItem>
+										);
+									})}
+								</CommandGroup>
+							) : null}
+
+							{aliasRows.length ? (
+								<CommandGroup heading={t("commandPalette.aliases")}>
+									{aliasRows.map((candidate) => (
 										<CommandItem
-											key={p.path}
-											value={`paper:${p.path}`}
-											onSelect={() => choosePaper(p.path as string)}
+											key={`alias:${candidate.path}:${candidate.label}`}
+											value={`alias:${candidate.path}:${candidate.label}`}
+											onSelect={() => chooseAlias(candidate)}
 										>
 											<FileText className="text-muted-foreground" />
 											<div className="flex min-w-0 flex-col">
-												<span className="truncate">{p.title || p.id}</span>
-												{p.authors?.length ? (
-													<span className="truncate text-muted-foreground text-xs">
-														{p.authors.join(", ")}
-														{p.year ? ` · ${p.year}` : ""}
-													</span>
-												) : null}
+												<span className="truncate">{candidate.label}</span>
+												<span className="truncate text-muted-foreground text-xs">
+													{candidate.path}
+												</span>
 											</div>
 										</CommandItem>
 									))}
 								</CommandGroup>
 							) : null}
 
-							{hits.length ? (
+							{contentHits.length ? (
 								<CommandGroup heading={t("commandPalette.contents")}>
-									{hits.map((hit) => (
+									{contentHits.map((hit) => (
 										<CommandItem
 											key={hit.path}
 											value={`hit:${hit.path}`}

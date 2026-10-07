@@ -27,4 +27,10 @@ export type PdfHighlight = {
 	color?: string;
 	/** Zotero-style annotation note; non-empty means this highlight is an annotation */
 	comment?: string;
+	/**
+	 * Page-fraction boxes of the translated text that was selected. Present
+	 * only for highlights made on the translation overlay. English glyph boxes
+	 * stay in `rects`.
+	 */
+	translatedRects?: PdfHighlightRect[];
 };

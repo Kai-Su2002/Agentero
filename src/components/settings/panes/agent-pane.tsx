@@ -3,6 +3,7 @@ import { useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { AgentCommonRows } from "@/components/settings/agent-common-rows";
 import { AgentModelPicker } from "@/components/settings/agent-model-picker";
+import { DesktopAppsSection } from "@/components/settings/desktop-apps-rows";
 import {
 	AgentCatalogRows,
 	RemoteAgentCatalogRow,
@@ -28,6 +29,7 @@ import { useAgentToolLifecycle } from "@/hooks/use-agent-tool-lifecycle";
 import {
 	type AgentTemplate,
 	type CatalogEntry,
+	openAgentCliTerminal,
 	upsertAgent,
 } from "@/lib/agent";
 import { errorText } from "@/lib/core/error";
@@ -127,6 +129,19 @@ export function AgentPane({
 
 	const busy = loading;
 
+	const onOpenCli = useCallback(
+		(templateId: string) => {
+			if (!isTauri()) {
+				notifyError(t("agent.desktopOnly"));
+				return;
+			}
+			void openAgentCliTerminal(templateId).catch((e) =>
+				notifyError(errorText(e)),
+			);
+		},
+		[t],
+	);
+
 	return (
 		<>
 			<PageTitle title={t("agent.title")} />
@@ -177,6 +192,7 @@ export function AgentPane({
 					lifecycle={lifecycle}
 					openUninstallDialog={openUninstallDialog}
 					onLogin={openLoginTerminal}
+					onOpenCli={onOpenCli}
 					onEditCustom={handleAddCustom}
 				/>
 				<AgentCustomForm busy={loading} onSubmit={handleAddCustom} />
@@ -184,6 +200,8 @@ export function AgentPane({
 			<p className="mt-2 mb-3 px-0.5 text-muted-foreground text-xs leading-relaxed">
 				{t("agent.commonAgentsHint")}
 			</p>
+
+			<DesktopAppsSection />
 
 			<AgentPersonalPromptBlock settings={settings} patch={patch} />
 

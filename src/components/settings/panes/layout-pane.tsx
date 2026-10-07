@@ -119,6 +119,7 @@ export function LayoutPane({
 	const [dialogMode, setDialogMode] = useState<"clear" | "reparse">("clear");
 	const [scope, setScope] = useState<ParseResultScope>("all");
 	const [busy, setBusy] = useState(false);
+	const [otherProvidersOpen, setOtherProvidersOpen] = useState(false);
 	const isProviderConfigured = (id: LayoutProviderId) =>
 		(layout.providerConfigs[id]?.apiKey ?? "").trim().length > 0;
 	// All remote providers are listed for configuration, like the translate
@@ -147,6 +148,10 @@ export function LayoutPane({
 		}
 		return backend === layout.parserBackend || isProviderConfigured(backend);
 	});
+	// OpenAI-compatible is a catch-all: keep it collapsed under "Other" so the
+	// recommended Paddle / MinerU path stays uncluttered (issue #656).
+	const primaryCards = cards.filter((card) => card.id !== "openaiCompatible");
+	const otherCards = cards.filter((card) => card.id === "openaiCompatible");
 
 	const openDialog = useCallback((mode: "clear" | "reparse") => {
 		setDialogMode(mode);
@@ -274,8 +279,11 @@ export function LayoutPane({
 				<h3 className="mb-2 px-0.5 font-medium text-sm">
 					{t("layout.providerConfig.section")}
 				</h3>
+				<p className="mb-2 px-0.5 text-muted-foreground text-xs">
+					{t("layout.providerConfig.sectionHint")}
+				</p>
 				<div className="grid gap-2">
-					{cards.map((card) => (
+					{primaryCards.map((card) => (
 						<ProviderConfigCard
 							key={card.id}
 							provider={card}
@@ -284,6 +292,39 @@ export function LayoutPane({
 						/>
 					))}
 				</div>
+				{otherCards.length > 0 ? (
+					<Collapsible
+						className="mt-2"
+						open={otherProvidersOpen}
+						onOpenChange={setOtherProvidersOpen}
+					>
+						<CollapsibleTrigger asChild>
+							<button
+								type="button"
+								className="flex items-center gap-1 rounded px-0.5 py-0.5 text-muted-foreground text-xs outline-none transition-colors hover:text-foreground"
+								aria-expanded={otherProvidersOpen}
+							>
+								<ChevronRight
+									className={cn(
+										"size-3.5 transition-transform",
+										otherProvidersOpen && "rotate-90",
+									)}
+								/>
+								{t("layout.providerConfig.other")}
+							</button>
+						</CollapsibleTrigger>
+						<CollapsibleContent className="mt-2 grid gap-2">
+							{otherCards.map((card) => (
+								<ProviderConfigCard
+									key={card.id}
+									provider={card}
+									settings={settings}
+									patch={patch}
+								/>
+							))}
+						</CollapsibleContent>
+					</Collapsible>
+				) : null}
 			</div>
 
 			<div className="flex justify-end gap-2">

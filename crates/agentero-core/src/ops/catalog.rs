@@ -272,6 +272,49 @@ pub fn build() -> Vec<OpSpec> {
             ],
         ),
         op(
+            "discover.arxiv",
+            Some("agentero discover arxiv"),
+            Some("discover_arxiv"),
+            "Query-first arXiv discovery: fetch candidates for keywords / categories / a submission-date window and rank them with a deterministic lexical scorer (vault-free, no embedding key). MCP dedup drops library papers by default.",
+            OpSideEffect::Read,
+            both,
+            false,
+            json!({
+                "keyword?": ["string"],
+                "category?": ["string"],
+                "since?": "YYYY-MM-DD",
+                "until?": "YYYY-MM-DD",
+                "top?": "number (default 8)",
+                "max_candidates?": "number (default 100, max 200)",
+                "dedup?": "bool (MCP, default true)",
+                "embed_base?": "string (CLI; enables semantic ranking)",
+                "embed_model?": "string (CLI; with embed_base)",
+                "semantic_weight?": "number (CLI, default 1.0)"
+            }),
+            json!({
+                "source": "string",
+                "searchQuery": "string",
+                "candidatesScanned": "number",
+                "computedAt": "string",
+                "items": [{
+                    "arxivId": "string",
+                    "title": "string",
+                    "abstract": "string",
+                    "url": "string",
+                    "pdfUrl": "string?",
+                    "publishedAt": "string?",
+                    "score": "number",
+                    "matches": [{"term": "string", "field": "title|abstract", "count": "number", "weight": "number", "contribution": "number"}]
+                }]
+            }),
+            &["usage"],
+            &[
+                "agentero discover arxiv -k agent -k \"world model\" -c cs.AI --since 2026-08-01 --json",
+                "agentero discover arxiv -c cs.LG --top 20 --json",
+                "MCP discover_arxiv { \"keywords\": [\"agent\"], \"categories\": [\"cs.AI\"], \"top\": 5 }",
+            ],
+        ),
+        op(
             "export.bib",
             Some("agentero export bib"),
             None,

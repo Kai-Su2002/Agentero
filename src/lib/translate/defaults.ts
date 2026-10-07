@@ -11,6 +11,8 @@ export const DEFAULT_TRANSLATE_SETTINGS: TranslateSettings = {
 	providerConfigs: {},
 	autoTranslateSelection: false,
 	dualPaneTranslate: false,
+	displayMode: "overlay",
+	dualPaneSource: "pdf",
 	agentId: "",
 	modelId: "",
 	customPrompt: "",

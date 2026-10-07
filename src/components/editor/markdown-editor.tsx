@@ -1,6 +1,5 @@
 "use client";
 
-import { MarkdownPlugin } from "@platejs/markdown";
 import { ImagePlugin } from "@platejs/media/react";
 import { BlockSelectionPlugin } from "@platejs/selection/react";
 import { TocPlugin } from "@platejs/toc/react";
@@ -58,7 +57,7 @@ import { errorMessage, notifyError, notifySuccess } from "@/lib/core/notify";
 import { isTauri } from "@/lib/core/tauri";
 import { cn } from "@/lib/core/utils";
 import { insertBreakAfterSelectedVoidBlocks } from "@/lib/markdown/block-selection";
-import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
+import { deserializeMarkdownBody } from "@/lib/markdown/deserialize-md";
 import { editorContextMenuCapabilities } from "@/lib/markdown/editor-context-menu";
 import {
 	exportDefaultName,
@@ -69,9 +68,16 @@ import type {
 	MarkdownExportOptions,
 	MarkdownExportPaperHeader,
 } from "@/lib/markdown/export/types";
-import { splitFrontmatter } from "@/lib/markdown/frontmatter";
+import { splitFrontmatter, wrapFrontmatter } from "@/lib/markdown/frontmatter";
 import { saveImageToMarkdownAssets } from "@/lib/markdown/image";
-import { loadSettings, useUiScale } from "@/lib/settings";
+import { convertInlineMathAtCaret } from "@/lib/markdown/inline-math-auto-close";
+import { registerMarkdownSelectionLinesProvider } from "@/lib/markdown/markdown-selection-lines-registry";
+import {
+	getMarkdownScrollTop,
+	setMarkdownScrollTop,
+} from "@/lib/markdown/scroll-memory";
+import { resolveSelectionSourceLines } from "@/lib/markdown/selection-source-lines";
+import { useUiScale } from "@/lib/settings";
 import { formatModShortcut } from "@/lib/shell/shortcuts";
 import type { LinkFragment, WikiRenameHeadingRequest } from "@/lib/wiki";
 import { useWikiNav } from "@/lib/wiki/nav-context";
@@ -182,6 +188,9 @@ export function MarkdownEditor({
 	const onAssetsChangedRef = useRef(onAssetsChanged);
 	onAssetsChangedRef.current = onAssetsChanged;
 	const editorContainerRef = useRef<HTMLDivElement | null>(null);
+	// Reading position survives keep-alive eviction (see scroll-memory).
+	const scrollKey = filePath ?? null;
+	const scrollTopRef = useRef(0);
 	// Body text keeps its own px font size (editorFontSize setting) so it must
 	// follow the UI zoom (uiScale) explicitly — rem-based chrome scales for free.
 	const uiScale = useUiScale();
@@ -216,7 +225,6 @@ export function MarkdownEditor({
 	const [exportBusy, setExportBusy] = useState(false);
 	const [exportPaperHeader, setExportPaperHeader] =
 		useState<MarkdownExportPaperHeader | null>(null);
-	const [exportDefaultWatermark, setExportDefaultWatermark] = useState(false);
 	/** Bumped on unmount so in-flight export does not setState after leave. */
 	const exportGenerationRef = useRef(0);
 	const exportInFlightRef = useRef(false);
@@ -306,15 +314,13 @@ export function MarkdownEditor({
 		plugins,
 		value: (ed) => {
 			const { body } = splitFrontmatter(initialMarkdown);
-			return ed
-				.getApi(MarkdownPlugin)
-				.markdown.deserialize(prepareMarkdownForDeserialize(body || " "));
+			return deserializeMarkdownBody(ed, body);
 		},
 	});
 
 	const {
 		frontmatterYaml,
-		onFrontmatterChange: handleFrontmatterChange,
+		onFrontmatterChange: persistFrontmatterChange,
 		serialize,
 		noteDocumentChanged,
 		saveNow,
@@ -331,6 +337,17 @@ export function MarkdownEditor({
 		filePathRef,
 		onAssetsChangedRef,
 	});
+	const frontmatterYamlRef = useRef(frontmatterYaml);
+	frontmatterYamlRef.current = frontmatterYaml;
+	/** Bumps when body or frontmatter changes — keys Plate source-line cache. */
+	const docVersionRef = useRef(0);
+	const handleFrontmatterChange = useCallback(
+		(interior: string) => {
+			docVersionRef.current += 1;
+			persistFrontmatterChange(interior);
+		},
+		[persistFrontmatterChange],
+	);
 
 	/**
 	 * External disk change accepted by the tab layer (applyDiskChange / Agent
@@ -345,11 +362,30 @@ export function MarkdownEditor({
 		const container = editorContainerRef.current;
 		const scrollTop = container?.scrollTop ?? 0;
 		if (!applyExternalMarkdown(initialMarkdown)) return;
+		docVersionRef.current += 1;
+		scrollTopRef.current = scrollTop;
 		window.requestAnimationFrame(() => {
 			const el = editorContainerRef.current;
 			if (el) el.scrollTop = scrollTop;
 		});
 	}, [reloadKey, initialMarkdown, applyExternalMarkdown]);
+
+	// Restore the last reading position when a keep-alive-evicted note remounts,
+	// and persist it (bounded, no re-render) when this instance unmounts.
+	useEffect(() => {
+		if (!scrollKey) return;
+		const frame = window.requestAnimationFrame(() => {
+			const el = editorContainerRef.current;
+			if (!el) return;
+			const top = getMarkdownScrollTop(scrollKey);
+			if (top > 0) el.scrollTop = top;
+			scrollTopRef.current = el.scrollTop;
+		});
+		return () => {
+			window.cancelAnimationFrame(frame);
+			setMarkdownScrollTop(scrollKey, scrollTopRef.current);
+		};
+	}, [scrollKey]);
 
 	const {
 		wikiCompletionDraft,
@@ -445,6 +481,11 @@ export function MarkdownEditor({
 					event.stopPropagation();
 					return;
 				}
+				if (event.key === "Enter" && convertInlineMathAtCaret(editor)) {
+					event.preventDefault();
+					event.stopPropagation();
+					return;
+				}
 				if (event.key === "Enter" && convertBlockquoteMarkerToCallout(editor)) {
 					event.preventDefault();
 					event.stopPropagation();
@@ -524,9 +565,10 @@ export function MarkdownEditor({
 				return;
 			}
 			closeMenus();
+			convertInlineMathAtCaret(editor);
 			finalizeWikiLinkDrafts();
 		},
-		[closeMenus, finalizeWikiLinkDrafts],
+		[closeMenus, editor, finalizeWikiLinkDrafts],
 	);
 
 	const {
@@ -564,7 +606,22 @@ export function MarkdownEditor({
 	const scheduleSelectionContextPublish = useSelectionContextPublish({
 		editor,
 		filePathRef,
+		frontmatterYamlRef,
+		docVersionRef,
 	});
+
+	useEffect(() => {
+		const path = filePath?.trim();
+		if (!path) return;
+		return registerMarkdownSelectionLinesProvider(path, {
+			resolve: () =>
+				resolveSelectionSourceLines({
+					editor,
+					frontmatter: wrapFrontmatter(frontmatterYamlRef.current),
+					docVersion: docVersionRef.current,
+				}),
+		});
+	}, [editor, filePath]);
 
 	const handleEditorValueChange = useCallback(() => {
 		// Presentation-only projection batch (wikilink source/display swap):
@@ -575,6 +632,7 @@ export function MarkdownEditor({
 			scheduleWikiLinkPresentationSync();
 			return;
 		}
+		docVersionRef.current += 1;
 		handleChange();
 		scheduleWikiLinkPresentationSync();
 	}, [
@@ -594,7 +652,6 @@ export function MarkdownEditor({
 			paperMetaByRelPath,
 		});
 		setExportPaperHeader(header);
-		setExportDefaultWatermark(loadSettings().exportWatermarkEnabled);
 		setExportOpen(true);
 	}, [filePath, paperMetaByRelPath, wikiNav?.vaultPath]);
 
@@ -697,6 +754,8 @@ export function MarkdownEditor({
 											ref={editorContainerRef}
 											className="agentero-scroll h-full min-w-0 overflow-y-auto"
 											onScrollCapture={() => {
+												const el = editorContainerRef.current;
+												if (el) scrollTopRef.current = el.scrollTop;
 												// Reposition instead of hard-dismiss: arrow-key list
 												// updates can reflow and fire scroll without leaving [[.
 												scheduleCompletionProbe();
@@ -868,7 +927,6 @@ export function MarkdownEditor({
 							open={exportOpen}
 							busy={exportBusy}
 							paperHeader={exportPaperHeader}
-							defaultWatermark={exportDefaultWatermark}
 							onCancel={() => {
 								if (!exportBusy) setExportOpen(false);
 							}}

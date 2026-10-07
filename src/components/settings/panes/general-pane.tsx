@@ -3,12 +3,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import {
 	GitHubMirrorRow,
+	InstitutionProxyRow,
 	NetworkProxyRow,
 } from "@/components/settings/agent-common-rows";
 import {
 	PageTitle,
 	SettingsGroup,
 	SettingsRow,
+	SettingsSectionLabel,
 } from "@/components/settings/settings-layout";
 import { StatusDot } from "@/components/settings/status-dot";
 import type { SettingsHostContext } from "@/components/settings/types";
@@ -74,6 +76,10 @@ import {
 	type AutoUpdateInternalLinks,
 	PAPER_NOTE_MODES,
 	type PaperNoteMode,
+	PDF_SCROLL_STRATEGIES,
+	PDF_SPREAD_MODES,
+	type PdfScrollStrategy,
+	type PdfSpreadMode,
 	saveSettingsAsync,
 } from "@/lib/settings";
 import { DEFAULT_NETWORK_PROXY_URL } from "@/lib/settings/defaults";
@@ -98,6 +104,36 @@ export function GeneralPane({
 	// OS system proxy detected by the Host (Windows "Internet Settings"); used
 	// automatically while the app proxy is off — surface it for transparency.
 	const [systemProxy, setSystemProxy] = useState<string | null>(null);
+	const [institutionProxyPrefixDraft, setInstitutionProxyPrefixDraft] =
+		useState(settings.institutionProxyPrefix);
+	const [institutionProxyCookieDraft, setInstitutionProxyCookieDraft] =
+		useState(settings.institutionProxyCookie);
+	const [institutionProxyTesting, setInstitutionProxyTesting] = useState(false);
+	const [institutionProxyResult, setInstitutionProxyResult] = useState<
+		string | undefined
+	>(undefined);
+	const commitInstitutionProxy = useCallback(() => {
+		patch({
+			institutionProxyPrefix: institutionProxyPrefixDraft.trim(),
+			institutionProxyCookie: institutionProxyCookieDraft.trim(),
+		});
+	}, [institutionProxyPrefixDraft, institutionProxyCookieDraft, patch]);
+	const testInstitutionProxy = useCallback(async () => {
+		setInstitutionProxyTesting(true);
+		setInstitutionProxyResult(undefined);
+		try {
+			const result = await commands.institutionProxyProbe();
+			setInstitutionProxyResult(
+				result.ok ? (result.data ?? "") : (result.error?.message ?? "failed"),
+			);
+		} catch (error) {
+			setInstitutionProxyResult(
+				error instanceof Error ? error.message : "failed",
+			);
+		} finally {
+			setInstitutionProxyTesting(false);
+		}
+	}, []);
 	const [seedingTemplate, setSeedingTemplate] = useState(false);
 
 	// Custom note mode seeds `.agentero/templates/NOTES.md` in the active vault;
@@ -125,7 +161,13 @@ export function GeneralPane({
 
 	useEffect(() => {
 		setProxyUrlDraft(settings.networkProxyUrl);
-	}, [settings.networkProxyUrl]);
+		setInstitutionProxyPrefixDraft(settings.institutionProxyPrefix);
+		setInstitutionProxyCookieDraft(settings.institutionProxyCookie);
+	}, [
+		settings.networkProxyUrl,
+		settings.institutionProxyPrefix,
+		settings.institutionProxyCookie,
+	]);
 
 	useEffect(() => {
 		setEasyScholarKeyDraft(settings.easyScholarKey);
@@ -155,6 +197,9 @@ export function GeneralPane({
 					})}
 				</p>
 			) : null}
+			<SettingsSectionLabel>
+				{t("general.sections.papers")}
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow label={t("general.paperTreeLabelMode.label")}>
 					<Select
@@ -308,6 +353,56 @@ export function GeneralPane({
 						</SelectContent>
 					</Select>
 				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsSectionLabel className="mt-4">
+				{t("general.sections.pdf")}
+			</SettingsSectionLabel>
+			<SettingsGroup>
+				<SettingsRow label={t("general.pdfScrollStrategy.label")}>
+					<Select
+						value={settings.pdfScrollStrategy}
+						onValueChange={(value) =>
+							patch({ pdfScrollStrategy: value as PdfScrollStrategy })
+						}
+					>
+						<SelectTrigger size="sm" className="min-w-[180px] max-w-[240px]">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{PDF_SCROLL_STRATEGIES.map((strategy) => (
+								<SelectItem key={strategy} value={strategy}>
+									{t(`general.pdfScrollStrategy.${strategy}`)}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</SettingsRow>
+				<SettingsRow label={t("general.pdfSpreadMode.label")}>
+					<Select
+						value={settings.pdfSpreadMode}
+						onValueChange={(value) =>
+							patch({ pdfSpreadMode: value as PdfSpreadMode })
+						}
+					>
+						<SelectTrigger size="sm" className="min-w-[180px] max-w-[240px]">
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							{PDF_SPREAD_MODES.map((mode) => (
+								<SelectItem key={mode} value={mode}>
+									{t(`general.pdfSpreadMode.${mode}`)}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsSectionLabel className="mt-4">
+				{t("general.sections.plaza")}
+			</SettingsSectionLabel>
+			<SettingsGroup>
 				<SettingsRow label={t("general.plaza.label")} htmlFor="plaza-enabled">
 					<Switch
 						id="plaza-enabled"
@@ -315,6 +410,12 @@ export function GeneralPane({
 						onCheckedChange={(v) => patch({ plazaEnabled: v })}
 					/>
 				</SettingsRow>
+			</SettingsGroup>
+
+			<SettingsSectionLabel className="mt-4">
+				{t("general.sections.network")}
+			</SettingsSectionLabel>
+			<SettingsGroup>
 				<NetworkProxyRow
 					htmlFor="network-proxy-enabled"
 					label={t("general.networkProxy.label")}
@@ -349,6 +450,52 @@ export function GeneralPane({
 					}
 					onToggle={(githubMirrorEnabled) => patch({ githubMirrorEnabled })}
 				/>
+				<SettingsRow
+					label={t("general.institutionProxy.typeLabel")}
+					htmlFor="institution-proxy-type"
+				>
+					<Select
+						value={settings.institutionProxyType}
+						onValueChange={(institutionProxyType) =>
+							patch({ institutionProxyType })
+						}
+					>
+						<SelectTrigger
+							id="institution-proxy-type"
+							size="sm"
+							className="h-8 w-44 text-xs"
+							disabled={!isTauri()}
+						>
+							<SelectValue />
+						</SelectTrigger>
+						<SelectContent>
+							<SelectItem value="ezproxy" className="text-xs">
+								{t("general.institutionProxy.typeEzproxy")}
+							</SelectItem>
+							<SelectItem value="wengine" className="text-xs">
+								{t("general.institutionProxy.typeWengine")}
+							</SelectItem>
+						</SelectContent>
+					</Select>
+				</SettingsRow>
+				<InstitutionProxyRow
+					htmlFor="institution-proxy-prefix"
+					label={t("general.institutionProxy.label")}
+					description={t("general.institutionProxy.description")}
+					prefix={institutionProxyPrefixDraft}
+					cookie={institutionProxyCookieDraft}
+					prefixPlaceholder="https://webvpn.example.edu/login?url="
+					cookiePlaceholder={t("general.institutionProxy.cookiePlaceholder")}
+					cookieLabel={t("general.institutionProxy.cookieLabel")}
+					testLabel={t("general.institutionProxy.test")}
+					testingLabel={t("general.institutionProxy.testing")}
+					onPrefixChange={setInstitutionProxyPrefixDraft}
+					onCookieChange={setInstitutionProxyCookieDraft}
+					onCommit={commitInstitutionProxy}
+					onTest={() => void testInstitutionProxy()}
+					testing={institutionProxyTesting}
+					result={institutionProxyResult}
+				/>
 			</SettingsGroup>
 			<EasyScholarSettingsBlock
 				savedKey={settings.easyScholarKey}
@@ -363,18 +510,15 @@ export function GeneralPane({
 					setEasyScholarKeyDraft(next.easyScholarKey);
 				}}
 			/>
+			<SettingsSectionLabel className="mt-4">
+				{t("general.sections.integrations")}
+			</SettingsSectionLabel>
 			<ConnectorSettingsBlock settings={settings} patch={patch} />
-			<div className="mt-4">
-				<p className="mb-2 px-0.5 font-medium text-sm">
-					{t("general.mcp.label")}
-				</p>
-				<McpSettingsBlock
-					settings={settings}
-					patch={patch}
-					disabled={hostContext.kind === "remote"}
-				/>
-			</div>
-			<ExportSettingsBlock settings={settings} patch={patch} />
+			<McpSettingsBlock
+				settings={settings}
+				patch={patch}
+				disabled={hostContext.kind === "remote"}
+			/>
 			<PrivacySettingsBlock settings={settings} patch={patch} />
 		</>
 	);
@@ -439,10 +583,10 @@ function EasyScholarSettingsBlock({
 	);
 
 	return (
-		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-sm">
+		<>
+			<SettingsSectionLabel className="mt-4">
 				{t("general.easyScholar.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow
 					label={
@@ -495,7 +639,7 @@ function EasyScholarSettingsBlock({
 					</div>
 				</SettingsRow>
 			</SettingsGroup>
-		</div>
+		</>
 	);
 }
 
@@ -523,10 +667,10 @@ function PrivacySettingsBlock({
 }) {
 	const { t } = useTranslation("settings");
 	return (
-		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-sm">
+		<>
+			<SettingsSectionLabel className="mt-4">
 				{t("general.privacy.section")}
-			</p>
+			</SettingsSectionLabel>
 			<SettingsGroup>
 				<SettingsRow
 					label={t("general.privacy.telemetry.label")}
@@ -553,36 +697,7 @@ function PrivacySettingsBlock({
 					</Button>
 				</SettingsRow>
 			</SettingsGroup>
-		</div>
-	);
-}
-
-function ExportSettingsBlock({
-	settings,
-	patch,
-}: {
-	settings: AppSettings;
-	patch: (p: Partial<AppSettings>) => void;
-}) {
-	const { t } = useTranslation("settings");
-	return (
-		<div className="mt-4">
-			<p className="mb-2 px-0.5 font-medium text-sm">
-				{t("general.export.section")}
-			</p>
-			<SettingsGroup>
-				<SettingsRow
-					label={t("general.export.watermark.label")}
-					htmlFor="export-watermark-enabled"
-				>
-					<Switch
-						id="export-watermark-enabled"
-						checked={settings.exportWatermarkEnabled}
-						onCheckedChange={(v) => patch({ exportWatermarkEnabled: v })}
-					/>
-				</SettingsRow>
-			</SettingsGroup>
-		</div>
+		</>
 	);
 }
 
@@ -769,6 +884,20 @@ function McpSettingsBlock({
 					checked={settings.mcpEnabled}
 					disabled={busy || disabled}
 					onCheckedChange={(v) => void onToggle(v)}
+				/>
+			</SettingsRow>
+			<SettingsRow
+				label={t("general.mcp.exposeText.label")}
+				description={t("general.mcp.exposeText.description")}
+				htmlFor="mcp-expose-paper-text"
+			>
+				<Switch
+					id="mcp-expose-paper-text"
+					checked={settings.mcpExposePaperText}
+					disabled={disabled}
+					onCheckedChange={(mcpExposePaperText) =>
+						patch({ mcpExposePaperText })
+					}
 				/>
 			</SettingsRow>
 			<SettingsRow

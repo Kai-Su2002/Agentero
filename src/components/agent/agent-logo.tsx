@@ -1,22 +1,29 @@
 import { Terminal } from "lucide-react";
 import type { ComponentProps, ReactNode } from "react";
-import { SiClaude, SiDeepseek, SiHermes, SiOpencode } from "react-icons/si";
+import {
+	SiClaude,
+	SiDeepseek,
+	SiHermes,
+	SiOpencode,
+	SiXiaomi,
+} from "react-icons/si";
 import type { AgentTemplate } from "@/lib/agent";
 import { cn } from "@/lib/core/utils";
 
 export type AgentLogoKey =
 	| "opencode"
-	| "openclaw"
 	| "claude-acp"
 	| "codex-acp"
 	| "hermes"
 	| "qodercli"
+	| "antigravity-acp"
 	| "grok-build"
 	| "pi"
 	| "dsh"
 	| "kimi-code"
 	| "zcode"
 	| "minimax-code"
+	| "mimo-code"
 	| "custom";
 
 export function agentLogoKeyForTemplate(
@@ -24,17 +31,18 @@ export function agentLogoKeyForTemplate(
 ): AgentLogoKey {
 	switch (template) {
 		case "opencode":
-		case "openclaw":
 		case "claude-acp":
 		case "codex-acp":
 		case "hermes":
 		case "qodercli":
+		case "antigravity-acp":
 		case "grok-build":
 		case "pi":
 		case "dsh":
 		case "kimi-code":
 		case "zcode":
 		case "minimax-code":
+		case "mimo-code":
 			return template;
 		default:
 			return "custom";
@@ -66,13 +74,6 @@ export function AgentLogo({
 	switch (key) {
 		case "opencode":
 			icon = <SiOpencode className={neutralIconClass} />;
-			break;
-		case "openclaw":
-			icon = (
-				<OpenClawMark
-					className={cn(iconClass, "!text-red-600 dark:!text-red-400")}
-				/>
-			);
 			break;
 		case "claude-acp":
 			icon = <SiClaude className={cn(iconClass, "!text-[#D97757]")} />;
@@ -109,8 +110,14 @@ export function AgentLogo({
 		case "minimax-code":
 			icon = <MiniMaxMark className={iconClass} />;
 			break;
+		case "mimo-code":
+			icon = <SiXiaomi className={cn(iconClass, "!text-[#FF6900]")} />;
+			break;
 		case "qodercli":
 			icon = <QoderMark className={neutralIconClass} />;
+			break;
+		case "antigravity-acp":
+			icon = <AntigravityMark className={neutralIconClass} />;
 			break;
 		case "custom":
 			icon = <Terminal className={cn(iconClass, "!text-muted-foreground")} />;
@@ -164,30 +171,6 @@ function QoderMark(props: ComponentProps<"svg">) {
 	);
 }
 
-function OpenClawMark(props: ComponentProps<"svg">) {
-	return (
-		<svg viewBox="0 0 120 120" fill="none" aria-hidden {...props}>
-			<title>OpenClaw</title>
-			<path
-				d="M60 10C30 10 15 35 15 55c0 20 15 40 30 45v10h10v-10c0 0 5 2 10 0v10h10v-10c15-5 30-25 30-45 0-20-15-45-45-45Z"
-				fill="currentColor"
-			/>
-			<path
-				d="M20 45C5 40 0 50 5 60c5 10 15 5 20-5 3-7 0-10-5-10ZM100 45c15-5 20 5 15 15s-15 5-20-5c-3-7 0-10 5-10Z"
-				fill="currentColor"
-			/>
-			<path
-				d="M45 15Q35 5 30 8M75 15Q85 5 90 8"
-				stroke="currentColor"
-				strokeWidth="3"
-				strokeLinecap="round"
-			/>
-			<circle cx="45" cy="35" r="4.5" fill="var(--background)" />
-			<circle cx="75" cy="35" r="4.5" fill="var(--background)" />
-		</svg>
-	);
-}
-
 function OpenAiMark(props: ComponentProps<"svg">) {
 	return (
 		<svg
@@ -199,6 +182,22 @@ function OpenAiMark(props: ComponentProps<"svg">) {
 		>
 			<title>OpenAI</title>
 			<path d="M21.55 10.004a5.416 5.416 0 00-.478-4.501c-1.217-2.09-3.662-3.166-6.05-2.66A5.59 5.59 0 0010.831 1C8.39.995 6.224 2.546 5.473 4.838A5.553 5.553 0 001.76 7.496a5.487 5.487 0 00.691 6.5 5.416 5.416 0 00.477 4.502c1.217 2.09 3.662 3.165 6.05 2.66A5.586 5.586 0 0013.168 23c2.443.006 4.61-1.546 5.361-3.84a5.553 5.553 0 003.715-2.66 5.488 5.488 0 00-.693-6.497v.001zm-8.381 11.558a4.199 4.199 0 01-2.675-.954c.034-.018.093-.05.132-.074l4.44-2.53a.71.71 0 00.364-.623v-6.176l1.877 1.069c.02.01.033.029.036.05v5.115c-.003 2.274-1.87 4.118-4.174 4.123zM4.192 17.78a4.059 4.059 0 01-.498-2.763c.032.02.09.055.131.078l4.44 2.53c.225.13.504.13.73 0l5.42-3.088v2.138a.068.068 0 01-.027.057L9.9 19.288c-1.999 1.136-4.552.46-5.707-1.51h-.001zM3.023 8.216A4.15 4.15 0 015.198 6.41l-.002.151v5.06a.711.711 0 00.364.624l5.42 3.087-1.876 1.07a.067.067 0 01-.063.005l-4.489-2.559c-1.995-1.14-2.679-3.658-1.53-5.63h.001zm15.417 3.54l-5.42-3.088L14.896 7.6a.067.067 0 01.063-.006l4.489 2.557c1.998 1.14 2.683 3.662 1.529 5.633a4.163 4.163 0 01-2.174 1.807V12.38a.71.71 0 00-.363-.623zm1.867-2.773a6.04 6.04 0 00-.132-.078l-4.44-2.53a.731.731 0 00-.729 0l-5.42 3.088V7.325a.068.068 0 01.027-.057L14.1 4.713c2-1.137 4.555-.46 5.707 1.513.487.833.664 1.809.499 2.757h.001zm-11.741 3.81l-1.877-1.068a.065.065 0 01-.036-.051V6.559c.001-2.277 1.873-4.122 4.181-4.12.976 0 1.92.338 2.671.954-.034.018-.092.05-.131.073l-4.44 2.53a.71.71 0 00-.365.623l-.003 6.173v.002zm1.02-2.168L12 9.25l2.414 1.375v2.75L12 14.75l-2.415-1.375v-2.75z" />
+		</svg>
+	);
+}
+
+/** Google Antigravity brand mark. */
+function AntigravityMark(props: ComponentProps<"svg">) {
+	return (
+		<svg
+			viewBox="0 0 24 24"
+			fill="currentColor"
+			fillRule="evenodd"
+			aria-hidden
+			{...props}
+		>
+			<title>Antigravity</title>
+			<path d="M21.751 22.607c1.34 1.005 3.35.335 1.508-1.508C17.73 15.74 18.904 1 12.037 1 5.17 1 6.342 15.74.815 21.1c-2.01 2.009.167 2.511 1.507 1.506 5.192-3.517 4.857-9.714 9.715-9.714 4.857 0 4.522 6.197 9.714 9.715z" />
 		</svg>
 	);
 }

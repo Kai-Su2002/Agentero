@@ -1,3 +1,5 @@
+import { getPlatformOS, isMobileApp } from "@/lib/core/tauri";
+
 const SCROLLING_CLASS = "scrolling";
 const HIDE_DELAY_MS = 800;
 const TIMEOUT_KEY = Symbol("agentero-scrollbar-timeout");
@@ -30,6 +32,11 @@ function handleScroll(event: Event) {
 
 export function initAutoHideScrollbars() {
 	if (typeof document === "undefined") return;
+
+	document.documentElement.toggleAttribute(
+		"data-linux-scrollbars",
+		getPlatformOS() === "linux" && !isMobileApp(),
+	);
 
 	document.addEventListener("scroll", handleScroll, {
 		capture: true,

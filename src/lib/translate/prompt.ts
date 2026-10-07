@@ -57,9 +57,11 @@ export function buildTranslatePrompt(opts: {
 	}
 	if (hasNumberedMarkers(text)) {
 		parts.push(
-			"The text contains several paragraphs, each prefixed with a [[n]] marker. " +
-				"Translate every paragraph and keep the same [[n]] markers, in the same " +
-				"order, with the same number of paragraphs. Do not merge paragraphs.",
+			"The text contains numbered segments, each prefixed with a [[n]] marker. " +
+				"Each marker is one sentence. Keep every [[n]] marker, in the same order, " +
+				"with the same numbers. Do not move content across markers, do not merge " +
+				"markers, and do not drop markers. Within a single marker you may reorder " +
+				"clauses and split one source sentence into more than one target sentence.",
 		);
 	}
 	parts.push("Text:", text);

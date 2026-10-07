@@ -20,3 +20,18 @@ export function lifecycleErrorMessage(message: string, t: Translate): string {
 	}
 	return message;
 }
+
+/**
+ * True when the failure is npm not being resolvable on PATH (Windows cmd
+ * `'npm' is not recognized...`, Unix `npm: command not found`, or the Host's
+ * own uninstall pre-check). Lets the UI attach a "install Node.js" recovery.
+ */
+export function isNpmMissingError(message: string): boolean {
+	const normalized = message.toLowerCase();
+	if (normalized.includes("npm is not available on path")) return true;
+	if (!normalized.includes("npm")) return false;
+	return (
+		normalized.includes("not recognized as an internal or external command") ||
+		normalized.includes("command not found")
+	);
+}

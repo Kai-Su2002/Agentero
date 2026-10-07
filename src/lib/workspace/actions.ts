@@ -20,6 +20,7 @@ import { notifyError, notifyUndo, notifyWarning } from "@/lib/core/notify";
 import { openExternalUrl } from "@/lib/core/open-external";
 import { closeTopOverlay } from "@/lib/core/overlay-stack";
 import { isTauri } from "@/lib/core/tauri";
+import { decideSync, registerDecision } from "@/lib/decision/registry";
 import { lifecycle } from "@/lib/lifecycle";
 import {
 	detectPaperDirectory,
@@ -79,6 +80,7 @@ import {
 	vaultRelativePath,
 	writeVaultFile,
 } from "@/lib/vault";
+import { primeSeedCache } from "@/lib/vault/seed-cache";
 import {
 	getVaultPath,
 	refreshTree,
@@ -1015,10 +1017,13 @@ export function openPaperNotes(paperDir: string): void {
 }
 
 /** Open a paper folder in a tab: center PDF, right Notes (resolved on load).
- *  Also selects/reveals the paper in the left file tree. */
-export function openPaper(paperDir: string): void {
+ *  By default also selects/reveals the paper in the physical file tree. */
+export function openPaper(
+	paperDir: string,
+	options?: { revealTree?: boolean },
+): void {
 	const abs = paperDir.replace(/\\/g, "/").replace(/\/+$/, "");
-	setTreeSelectedPath(abs);
+	if (options?.revealTree !== false) setTreeSelectedPath(abs);
 	if (loadSettings().replaceCurrentTabOnOpenPaper) {
 		const activeId = getActiveTabId();
 		const activeTab = activeId
@@ -1541,6 +1546,8 @@ export async function applyDiskChange(
 	} catch {
 		return;
 	}
+	// Keep the open-path seed cache in step with what the reload just read.
+	primeSeedCache(absPath, content);
 	const guard = () => {
 		reseedGuard.add(norm);
 		window.setTimeout(() => reseedGuard.delete(norm), 500);
@@ -1629,6 +1636,7 @@ export function persistFile(
 				// The watcher echo of this write must not re-trigger a full Wiki
 				// rebuild on every autosave (#270).
 				trackSelfWrittenPath(path);
+				primeSeedCache(path, md);
 				// Advance the owning tab's seed only after the write is confirmed.
 				setTabs((prev) => syncTabSeedsForPath(prev, path, md));
 				return true;
@@ -1908,43 +1916,67 @@ export function openFolderLibrary(folderAbs: string): void {
 	openTab(LIBRARY_VIRTUAL_PATH);
 }
 
+/**
+ * Pure-rule decision for a file-tree click. Registered locally (see
+ * `@/lib/decision/registry`) because the whole judgement depends on frontend
+ * state and needs no AI round-trip.
+ */
+registerDecision<{ node: FileNode }>({
+	id: "file-tree.click",
+	description: "Decide what to do when a file-tree node is clicked",
+	defaultAction: "noop",
+	rules: [
+		({ node }) => (isLibraryVirtualPath(node.path) ? "select-library" : null),
+		({ node }) => (isTrashVirtualPath(node.path) ? "select-trash" : null),
+		({ node }) => (isPlazaVirtualPath(node.path) ? "select-plaza" : null),
+		({ node }) =>
+			node.kind === "directory" && isPaperDirectory(node.path, node.children)
+				? "open-paper"
+				: null,
+		({ node }) => (node.kind === "directory" ? "scope-library" : null),
+		({ node }) => (node.kind === "file" ? "open-path" : null),
+	],
+});
+
 /** File-tree click dispatch: Library / Trash / Plaza / paper dir / org dir / file. */
 export function selectFileNode(node: FileNode): void {
-	if (isLibraryVirtualPath(node.path)) {
-		selectLibrary();
-		return;
-	}
-	if (isTrashVirtualPath(node.path)) {
-		selectTrash();
-		return;
-	}
-	if (isPlazaVirtualPath(node.path)) {
-		if (!loadSettings().plazaEnabled) return;
-		// The Plaza root is a plain folder; only source children open a tab.
-		const source = plazaSourceForPath(node.path);
-		if (source) openPlazaSource(source);
-		return;
-	}
-	if (node.kind === "directory" && isPaperDirectory(node.path, node.children)) {
-		openPaper(node.path);
-		return;
-	}
-	if (node.kind === "directory") {
-		const paperAbs = paperDirFromPath(
-			node.path,
-			vaultStore.getState().paperFolders,
-		);
-		// Folders inside `{paper}/attachments/` are files, not Library scopes.
-		if (paperAbs && isUnderPaperAttachments(node.path, paperAbs)) {
-			setTreeSelectedPath(node.path);
+	switch (decideSync<{ node: FileNode }>("file-tree.click", { node })) {
+		case "select-library":
+			selectLibrary();
+			return;
+		case "select-trash":
+			selectTrash();
+			return;
+		case "select-plaza": {
+			if (!loadSettings().plazaEnabled) return;
+			// The Plaza root is a plain folder; only source children open a tab.
+			const source = plazaSourceForPath(node.path);
+			if (source) openPlazaSource(source);
 			return;
 		}
-		// Org / plain folders → in-place scope on the Library tab (no new tab).
-		openFolderLibrary(node.path);
-		return;
+		case "open-paper":
+			openPaper(node.path);
+			return;
+		case "scope-library": {
+			const paperAbs = paperDirFromPath(
+				node.path,
+				vaultStore.getState().paperFolders,
+			);
+			// Folders inside `{paper}/attachments/` are files, not Library scopes.
+			if (paperAbs && isUnderPaperAttachments(node.path, paperAbs)) {
+				setTreeSelectedPath(node.path);
+				return;
+			}
+			// Org / plain folders → in-place scope on the Library tab (no new tab).
+			openFolderLibrary(node.path);
+			return;
+		}
+		case "open-path":
+			openPath(node.path);
+			return;
+		default:
+			return;
 	}
-	if (node.kind !== "file") return;
-	openPath(node.path);
 }
 
 /**

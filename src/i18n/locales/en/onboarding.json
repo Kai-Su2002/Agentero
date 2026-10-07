@@ -46,7 +46,14 @@
 		"missing": "Not installed",
 		"failed": "Probe failed",
 		"notProbed": "Not probed",
-		"scanFailed": "Failed to scan agents"
+		"scanFailed": "Failed to scan agents",
+		"desktopApps": {
+			"title": "Local desktop apps",
+			"unsupported": "Not supported yet",
+			"chatgpt": "ChatGPT",
+			"qwenwork": "QwenWork",
+			"workbuddy": "WorkBuddy"
+		}
 	},
 	"translate": {
 		"title": "Set up translation",

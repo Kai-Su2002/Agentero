@@ -14,12 +14,14 @@ import {
 } from "platejs/react";
 import * as React from "react";
 import { memo, useEffect } from "react";
+import { useMarkdownExportMode } from "@/components/editor/markdown-export-mode-context";
 import { Button } from "@/components/ui/button";
 import {
 	Popover,
 	PopoverContent,
 	PopoverTrigger,
 } from "@/components/ui/popover";
+import { useInView } from "@/hooks/use-in-view";
 import { cn } from "@/lib/core/utils";
 import { renderKatexToElement } from "@/lib/math/katex-cache";
 
@@ -53,16 +55,19 @@ function useCachedEquationElement({
 	texExpression,
 	katexRef,
 	options,
+	enabled,
 }: {
 	texExpression: string;
 	katexRef: React.RefObject<HTMLElement | null>;
 	options: katex.KatexOptions;
+	enabled: boolean;
 }) {
 	// biome-ignore lint/correctness/useExhaustiveDependencies: katexRef is a stable DOM container; only the TeX source should trigger re-render.
 	useEffect(() => {
+		if (!enabled) return;
 		if (!katexRef.current) return;
 		renderKatexToElement(texExpression, options, katexRef.current);
-	}, [texExpression, options]);
+	}, [enabled, texExpression, options]);
 }
 
 function EquationPopoverContent({
@@ -122,11 +127,14 @@ export const EquationElement = memo(function EquationElement(
 	const selected = useSelected();
 	const [open, setOpen] = React.useState(false);
 	const katexRef = React.useRef<HTMLDivElement | null>(null);
+	const exportMode = useMarkdownExportMode();
+	const inView = useInView(katexRef, { enabled: !exportMode });
 
 	useCachedEquationElement({
 		texExpression: props.element.texExpression,
 		katexRef,
 		options: displayKatexOptions,
+		enabled: inView,
 	});
 
 	return (
@@ -179,22 +187,26 @@ export const InlineEquationElement = memo(function InlineEquationElement(
 	const [open, setOpen] = React.useState(false);
 	const katexRef = React.useRef<HTMLDivElement | null>(null);
 
+	// Inline formulas are small and numerous, and a freshly inserted one has an
+	// empty (zero-size) KaTeX span that IntersectionObserver cannot observe.
+	// Render them eagerly; only block equations are deferred.
 	useCachedEquationElement({
 		texExpression: props.element.texExpression,
 		katexRef,
 		options: inlineKatexOptions,
+		enabled: true,
 	});
 
 	return (
 		<PlateElement
 			{...props}
-			className="mx-0.5 inline-flex max-w-full select-none rounded-sm align-middle"
+			className="mx-0.5 inline-flex max-w-full select-none items-baseline rounded-sm align-baseline"
 		>
 			<Popover open={open} onOpenChange={setOpen} modal={false}>
 				<PopoverTrigger asChild>
 					<span
 						className={cn(
-							"inline-flex max-w-full cursor-pointer items-center rounded-sm px-1 py-0.5 align-middle hover:bg-primary/10",
+							"inline-flex max-w-full cursor-pointer items-baseline rounded-sm px-1 py-0.5 align-baseline hover:bg-primary/10",
 							selected && "bg-primary/10",
 							props.element.texExpression.length === 0 &&
 								"text-muted-foreground",

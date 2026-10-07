@@ -10,7 +10,8 @@ import {
 	useState,
 } from "react";
 import { useDebouncedCallback } from "@/hooks/use-debounce";
-import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
+import { scheduleIdle } from "@/lib/core/idle";
+import { deserializeMarkdownBody } from "@/lib/markdown/deserialize-md";
 import {
 	frontmatterInterior,
 	joinFrontmatter,
@@ -222,9 +223,15 @@ export function useMarkdownPersistence({
 	// On unmount, flush pending edit + deferred asset GC for this file.
 	useEffect(() => {
 		readyRef.current = true;
-		imageCountsRef.current = collectImageUrlCounts(editor.children);
+		// Seeding the count walks the whole tree; defer it so it never competes
+		// with the first paint. Until it lands, `reconcileAssets` skips the GC
+		// diff (prev counts null), so nothing can be deleted by mistake.
+		const cancelSeed = scheduleIdle(() => {
+			imageCountsRef.current = collectImageUrlCounts(editor.children);
+		});
 		const assetGc = assetGcRef.current;
 		return () => {
+			cancelSeed();
 			debouncedPersist.flush();
 			void assetGc.flush();
 		};
@@ -255,9 +262,7 @@ export function useMarkdownPersistence({
 			setFrontmatterYaml(frontmatterInterior(frontmatter));
 			externalReloadRef.current = true;
 			try {
-				const value = editor
-					.getApi(MarkdownPlugin)
-					.markdown.deserialize(prepareMarkdownForDeserialize(body || " "));
+				const value = deserializeMarkdownBody(editor, body);
 				editor.tf.deselect();
 				editor.tf.setValue(value);
 			} finally {

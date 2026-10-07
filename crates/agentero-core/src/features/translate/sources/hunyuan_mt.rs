@@ -88,7 +88,7 @@ fn parse_marker(bytes: &[u8], start: usize) -> Option<(usize, usize)> {
     Some((n, i + 2))
 }
 
-/// Split a batched payload into per-paragraph segments.
+/// Split a batched payload into per-sentence segments.
 ///
 /// The MT model is never shown a `[[n]]` marker: batch alignment depends on
 /// instruction-following, which this model does not do. Markers must start at 1

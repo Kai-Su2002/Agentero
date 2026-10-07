@@ -109,7 +109,7 @@ Host 通过 Tauri event 向前端推送事件。文件系统、任务和菜单�
   AGENTERO_UPDATE_BINDINGS=1 cargo test -p agentero export_typescript_bindings
   ```
 
-  另有 `event_names_match_emit_literals` 测试断言事件名与 emit 常量一致。改任何命令签名 / 事件 payload 后必须重新生成并提交 bindings.ts。
+  另有 `event_names_match_emit_literals` 测试断言事件名与 emit 常量一致。改任何命令签名 / 事件 payload 后必须重新生成并提交 bindings.ts。Rust 类型的文档注释也会导出并参与一致性校验，因此只修改这些注释时同样需要重新生成。
 - **`_Serialize` / `_Deserialize` 拆分**：specta 对 serde 不对称表示的忠实拆分——`X_Deserialize` 是 **TS→Rust 入参**形态（`#[serde(default)]` 字段可省略），`X_Serialize` 是 **Rust→TS 出参**形态（`skip_serializing_if` 字段可缺省）。二者一致时只生成单一 `X`。命令函数与 `events.*` 的签名已内嵌正确方向的类型，**调用点无需手写这些类型名**。
 - **论文域的派生范式**：`src/lib/paper/types.ts` 不再手写 `PaperRecord` 的孪生类型，而是 `PaperMetadata = Omit<PaperRecord_Serialize, …>`、`PaperLibraryRow = PaperMetadata & { has_pdf }`（源自 `PaperListRow_Serialize`）。只窄化四处：`status` / `body_source` / `body_quality`（Rust 侧仍是 `String` 列）与 `tags`（`PaperTag` 的序列化在无色时是裸字符串）。IPC → 域模型的唯一 unchecked 折叠点是 `src/lib/paper/wire.ts::paperFromWire`。给那三列加 Rust enum（照 `PaperKind` 先例：enum + `From<&str>` + `FromSql` + 未知值兜底）即可去掉窄化，列都是 TEXT，**不需要 schema migration**；代价清单见 [../development/import-api-abstraction.md](../development/import-api-abstraction.md) §11。
 - **前端调用形态（迁移说明）**：bindings 导出 `commands`（camelCase 命令函数）与 `events`（`events.jobChanged.listen(cb)` 等，payload 已按事件名类型化）。返回值有两种信封：
@@ -814,7 +814,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
     text: string;
     sourceLang?: string;     // default "auto"
     targetLang: string;      // e.g. "zh-CN" | "en"
-    provider?: string;       // agentero (内置；注入 key 的构建里的默认) | tencenttransmart | huoshanweb | deeplx | googleapi | google | deepl | azure | googleCloud | openaiCompatible
+    provider?: string;       // agentero (内置；注入 key 的构建里的默认) | tencenttransmart | huoshanweb | deeplx | cnki | googleapi | google | deepl | azure | googleCloud | openaiCompatible
     apiKey?: string | null;  // 商用 BYOK；可省略或传同长度 "*" 掩码，Host 从 settings 注入真实密钥。provider 为 agentero 时被 Host 用构建期凭证**覆写**，调用方传什么都无效
     baseUrl?: string | null; // 商用 provider endpoint override（可选）；agentero 同样被覆写
     region?: string | null;  // azure 必填
@@ -824,7 +824,7 @@ Agent：`agent_run_once` / `agent_warm` 在 vault 为 `remote:…` 时经 SSH `b
   ```
 
 - **返回**：`{ ok: true; data: { text: string; provider: string } }`
-- **约束**：单次约 ≤ 5000 字符（CNKI ≤800）；默认超时约 30s。免费引擎为非官方网页接口，会挂会限流；商用 BYOK 与内置 provider 需要各自的 key（前者用户填，后者构建期注入）。设置页打开默认服务下拉时，对全部免费引擎并行 probe（`timeoutMs=5000`，不含 Agent，也不含内置 provider）。
+- **约束**：单次约 ≤ 5000 字符（CNKI 超 800 字符由 Host 自动按句切分、串行翻译，块间隔约 2s 防风控；仅中英互译）；默认超时约 30s（逐请求计）。免费引擎为非官方网页接口，会挂会限流；商用 BYOK 与内置 provider 需要各自的 key（前者用户填，后者构建期注入）。设置页打开默认服务下拉时，对全部免费引擎并行 probe（`timeoutMs=5000`，不含 Agent；内置 provider 可用时一并探测，不可用即跳过）。
 - **结构化错误**：`translate.no_builtin_key` —— provider 为 `agentero` 但本次构建没有编译进 key（`AppError::domain`，在任何 `.await` 之前返回）。前端按标记转 i18n 文案，不裸露标记串。
 - 内置 provider 的模板、`[[n]]` Host 侧拆分与语言映射见 [builtin-provider.md](builtin-provider.md) §翻译：Hunyuan-MT。
 
@@ -1612,7 +1612,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
 {
   id?: string; // 省略则新建
   name: string;
-  template?: 'opencode' | 'openclaw' | 'hermes' | 'claude-acp' | 'codex-acp' | 'qodercli' | 'grok-build' | 'pi' | 'dsh' | 'kimi-code' | 'zcode' | 'minimax-code' | 'custom';
+  template?: 'opencode' | 'hermes' | 'claude-acp' | 'codex-acp' | 'qodercli' | 'grok-build' | 'pi' | 'dsh' | 'kimi-code' | 'zcode' | 'minimax-code' | 'custom';
   command: string;
   args?: string[];
   env?: Record<string, string>;
@@ -1661,12 +1661,12 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
 > 已取代旧的 `agent_open_install_terminal`（打开系统终端、Enter 确认后再装）。远端仍用 `remote_agent_open_install_terminal`（SSH 确认安装）。
 
 - **参数**：`{ templateId: string, action: "install" | "update" | "uninstall", taskId?: string }`
-  - 支持的 `templateId`：`opencode` · `openclaw` · `claude-acp` · `codex-acp` · `antigravity-acp` · `hermes` · `grok-build` · `pi` · `dsh` · `kimi-code` · `zcode` · `minimax-code`（不含 `qodercli` / `custom`）
+  - 支持的 `templateId`：`opencode` · `claude-acp` · `codex-acp` · `antigravity-acp` · `hermes` · `grok-build` · `pi` · `dsh` · `kimi-code` · `zcode` · `minimax-code` · `mimo-code`（不含 `qodercli` / `custom`）
   - `taskId` 来自设置页 Agent 行内安装进度条；用于匹配 Host progress tick 与接收协作取消信号。
 - **返回**：`{ ok: true; data: null }` 或错误（stderr/stdout 末尾若干行）
 - **行为**
-  - `install`：未装 host 时走官方 installer（POSIX curl→临时文件再 bash，非 `curl|bash`）或 npm；Claude/Codex/Pi 在 host 已存在但 ACP 缺失时只装适配器；两者都缺则 host && adapter；Antigravity 从 ACP Registry 读取当前版本和平台压缩包，校验 HTTPS ZIP 后解压到 Agentero 管理目录，不使用旧版本回退；Registry 不可用、manifest 无效或平台没有构建时直接报错。Hermes 走官方 installer；OpenClaw 走 npm。Pi 无原生 ACP，ACP 入口是社区适配器 `pi-acp`（detect 用 host `pi`）；host 与 adapter 两层都走 npm，因为 `pi.dev/install.sh` 是交互式 TUI installer，不能静默执行。Dsh 是 umbrella CLI 的内置 ACP profile（`dsh --profile acp`，需 `@deepseek-ai/dsh` 0.1.2+，npm latest 0.1.5-rc.2；旧的独立包 `dsh-acp-demo` 停更于 0.1.1-rc.2 已弃用）：host 与 ACP 同二进制，`npm i -g @deepseek-ai/dsh@latest`（Unix `--prefix "$HOME/.local"`）安装/更新。Kimi Code 优先官方 installer（`code.kimi.com`，单二进制装入 `~/.kimi-code`），失败回退 `npm i -g @moonshot-ai/kimi-code`。ZCode 是单包 npm 适配器（`zcode-acp-server`，桥接 ZCode 桌面应用的 `zcode app-server`），host 与 ACP 入口同二进制。MiniMax Code 是原生 ACP 单包 CLI（`mcode acp`），安装/更新使用带 `--ignore-scripts=false`、`--include=optional`、`--allow-scripts=@minimax-ai/code,better-sqlite3` 和 `--foreground-scripts` 的 npm 命令，确保 native SQLite 依赖完成安装。
-  - `update`：Antigravity 重新读取 ACP Registry 并安装当前平台版本；Registry 失败时直接报错，不回退到旧版本。其他模板优先 `tool update` / 官方链，失败再 npm；Codex 固定 npm（避免假成功）；OpenClaw 使用 `openclaw update --yes` 后 fallback npm；Pi 使用 `pi update --self` 后 fallback npm；Windows 上 OpenCode 不用交互式 `upgrade`。Kimi 的 `kimi upgrade` 是交互式，静默 update 直接重跑官方 installer（幂等）。
+  - `install`：未装 host 时走官方 installer（POSIX curl→临时文件再 bash，非 `curl|bash`）或 npm；Claude/Codex/Pi 在 host 已存在但 ACP 缺失时只装适配器；两者都缺则 host && adapter；Antigravity 从 ACP Registry 读取当前版本和平台压缩包，校验 HTTPS ZIP 后解压到 Agentero 管理目录，不使用旧版本回退；Registry 不可用、manifest 无效或平台没有构建时直接报错。Hermes 走官方 installer；Pi 无原生 ACP，ACP 入口是社区适配器 `pi-acp`（detect 用 host `pi`）；host 与 adapter 两层都走 npm，因为 `pi.dev/install.sh` 是交互式 TUI installer，不能静默执行。Dsh 是 umbrella CLI 的内置 ACP profile（`dsh --profile acp`，需 `@deepseek-ai/dsh` 0.1.2+，npm latest 0.1.5-rc.2；旧的独立包 `dsh-acp-demo` 停更于 0.1.1-rc.2 已弃用）：host 与 ACP 同二进制，`npm i -g @deepseek-ai/dsh@latest`（Unix `--prefix "$HOME/.local"`）安装/更新。Kimi Code 优先官方 installer（`code.kimi.com`，单二进制装入 `~/.kimi-code`），失败回退 `npm i -g @moonshot-ai/kimi-code`。ZCode 是单包 npm 适配器（`zcode-acp-server`，桥接 ZCode 桌面应用的 `zcode app-server`），host 与 ACP 入口同二进制。MiniMax Code 是原生 ACP 单包 CLI（`mcode acp`），安装/更新使用带 `--ignore-scripts=false`、`--include=optional`、`--allow-scripts=@minimax-ai/code,better-sqlite3` 和 `--foreground-scripts` 的 npm 命令，确保 native SQLite 依赖完成安装。
+  - `update`：Antigravity 重新读取 ACP Registry 并安装当前平台版本；Registry 失败时直接报错，不回退到旧版本。其他模板优先 `tool update` / 官方链，失败再 npm；Codex 固定 npm（避免假成功）；Pi 使用 `pi update --self` 后 fallback npm；Windows 上 OpenCode 不用交互式 `upgrade`。Kimi 的 `kimi upgrade` 是交互式，静默 update 直接重跑官方 installer（幂等）。
   - `uninstall`：Antigravity 只删除 Agentero 管理目录和对应 catalog 注册项，不处理用户自己放在 PATH 中的版本；其他模板镜像安装矩阵做 best-effort 清理（先 `resolve_command("npm")` 预检，缺失即报错而非假成功）——npm 全局包逐个 `npm uninstall -g`（unix 上适配器带 `--prefix "$HOME/.local"`，与安装一致）；dsh 在 npm 卸载后删除废弃方案的遗留目录 `~/.agentero/dsh-acp`（旧 dsh-acp-demo 受管安装），kimi-code 在 npm 卸载后删除 `~/.kimi-code`（Windows 为 `%USERPROFILE%\.kimi-code`）；**不改 shell rc**（官方 installer 写入的 PATH 行保留）、不处理官方脚本/brew 安装的 CLI（无法可靠定位）。Hermes 无 npm 包/受管目录 → 仅移除注册项（不跑命令）。成功后同命令联动删除该模板的 catalog 注册项（`catalog-{templateId}`，或 command+args 匹配），避免二进制已删而注册项残留；phase 用 `agent-lifecycle-uninstall` 推送进度。
   - 本机 lifecycle 全局串行执行，避免多个 npm 全局安装/升级任务并发抢锁或互相覆盖临时脚本；设置页在对应 Agent 卡片内展示安装 / 扫描 / 探测阶段进度（#250）。
   - 安装子进程运行期间，Host 以 `agent-lifecycle:progress` 推送 `agent-lifecycle-*` phase tick，供设置页行内进度条消费，避免快捷下载脚本长时间停在无进度状态。
@@ -1676,7 +1676,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
   - 在 `spawn_blocking` 中执行，避免卡住 async runtime。
 - **实现**：`src-tauri/src/features/agent/registry/lifecycle.rs`
 - **Catalog 两层检测**（`agent_scan_catalog` / 远端 scan）：
-  - **Agent**：`binaryAvailable`（`detect_command`，如 `claude` / `codex` / `opencode` / `openclaw` / `hermes` / `kimi`）
+  - **Agent**：`binaryAvailable`（`detect_command`，如 `claude` / `codex` / `opencode` / `hermes` / `kimi`）
   - **ACP**：`acpCommandAvailable`（`command`，如 `claude-agent-acp`；原生 ACP 时与 Agent 同二进制）
   - `adapterDistinct`：host 与 ACP 入口不同
   - `canInstall`：本机支持静默安装
@@ -1696,7 +1696,7 @@ Host 作为 ACP Client：按注册表 spawn 用户本机 Agent（`cwd` = 当前 
   - `updateAvailable`：仅当目标版本**严格新于**本地时为 `true`；无法判定时省略/`null`（UI 不显示升级）
 - **行为**
   - 同步 PATH scan 后，在 `spawn_blocking` 中跑 `--version` / `npm view`（尊重代理设置）。
-  - npm 包映射：`@opencode/cli` / `openclaw` / `@anthropic-ai/claude-code` / `@openai/codex` / `@earendil-works/pi-coding-agent` / `@xai-official/grok` / `@deepseek-ai/dsh` / `@moonshot-ai/kimi-code` / `zcode-acp-server` / `@minimax-ai/code`；Antigravity 从 ACP Registry 读取最新版本；**hermes 本轮不探测**（无稳定 npm 源）。OpenCode 卸载额外清理旧版 `opencode-ai`。
+  - npm 包映射：`@opencode/cli` / `@anthropic-ai/claude-code` / `@openai/codex` / `@earendil-works/pi-coding-agent` / `@xai-official/grok` / `@deepseek-ai/dsh` / `@moonshot-ai/kimi-code` / `zcode-acp-server` / `@minimax-ai/code` / `mimocode`；Antigravity 从 ACP Registry 读取最新版本；**hermes 本轮不探测**（无稳定 npm 源）。OpenCode 卸载额外清理旧版 `opencode-ai`。
   - 不写入 registry；设置页打开/刷新与 lifecycle 成功后调用。
 - **实现**：`registry/version_check.rs` · `commands::agent_check_catalog_updates`
 
@@ -2374,7 +2374,7 @@ CLI 不再暴露 usage 命令；查询与清理通过桌面端设置 / Host API 
 | `feeds_mark_imported` | 标记本机已入库 |
 | `feeds_resolve_body` | 打开详情时抓全文 → Markdown |
 
-### 3.10.5 广场 arXiv 推荐（catalog `embed_cache` / `arxiv_rec_state`）
+### 3.10.5 广场 arXiv 推荐（catalog `embed_cache` / `discovery_runs`）
 
 用 Vault 论文库摘要当语料，对当天 arXiv 新论文做 embedding 相似度 + 时间衰减排序。规格见 [../development/plaza.md](../development/plaza.md) §3.4。
 
@@ -2383,8 +2383,8 @@ CLI 不再暴露 usage 命令；查询与清理通过桌面端设置 / Host API 
 | `recommend_arxiv` | `{ vaultPath, categories?, topN?, force? }` → 排序结果。`categories` 缺省取上次运行、再缺省取 `cs.AI/cs.CL/cs.LG/cs.CV/stat.ML`；`topN` 默认 20（clamp 1–100） |
 | `recommend_arxiv_last` | `{ vaultPath }` → 上次结果或 `null`，只读不算 |
 
-- **陈旧短路**：非 `force` 且 `computed_at` 为当天、分类集合一致时，直接返回存量，不发任何网络请求。所以 `vault:opened` 的预热调用通常是零成本的。
-- **缓存**：`embed_cache(text_hash, model, dim, vector)` 按 sha256(title+abstract)+model 存小端 f32 向量，语料只 embed 一次；主键含 model，所以换 embedding 模型不会读到旧向量。`arxiv_rec_state` 单行存上次运行，**不按 model 建键**：切换 embedding 来源后的当天首次运行仍会复用存量结果，除非 `force`（既存行为）。均在 catalog schema v6。
+- **陈旧短路**：非 `force` 且命中缓存键、`computed_at` 为当天、结果非空时，直接返回存量，不发任何网络请求。所以 `vault:opened` 的预热调用通常是零成本的。
+- **缓存**：`embed_cache(text_hash, model, dim, vector)` 按 sha256(title+abstract)+model 存小端 f32 向量，语料只 embed 一次；主键含 model，所以换 embedding 模型不会读到旧向量。运行结果落在多行表 `discovery_runs`（schema v8），`key = sha256(source|model|topN|分类)`：换 model / `topN` / 分类都是独立槽位，`recommend_arxiv_last` 取最新一行。旧的单行 `arxiv_rec_state`（v6）保留给旧库、不再写入。
 - **凭据**：读设置 `embedding`。`source`（`"builtin"` | `"custom"`）决定用哪一套：非 `custom` 且本次构建注入了内置 provider key 时用构建期网关三元组，否则用已存的 Base URL / API Key / Model；空配置会返回 `recommend.no_embedding`。请求都是 `POST {baseUrl}/embeddings`（OpenAI 兼容）。见 [builtin-provider.md](builtin-provider.md) §Embedding。
 - **结构化错误**（前端转空态）：`recommend.no_embedding` 端点未配置（自定义来源缺字段，或构建无内置 key 且未填 BYOK）、`recommend.empty_corpus` 库里没摘要、`recommend.no_candidates` 分类下无新论文。
 

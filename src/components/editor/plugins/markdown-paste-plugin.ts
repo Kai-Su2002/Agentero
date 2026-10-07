@@ -1,6 +1,5 @@
-import { MarkdownPlugin } from "@platejs/markdown";
 import { createSlatePlugin, KEYS, type SlateEditor } from "platejs";
-import { prepareMarkdownForDeserialize } from "@/lib/markdown/deserialize";
+import { deserializeMarkdownBody } from "@/lib/markdown/deserialize-md";
 import { isUnfinishedMarkdownLinkContext } from "@/lib/markdown/link-input-rule";
 
 function isMarkdownPasteBlocked(editor: SlateEditor) {
@@ -128,9 +127,7 @@ export const MarkdownPastePlugin = createSlatePlugin({
 				return;
 			}
 
-			const fragment = editor
-				.getApi(MarkdownPlugin)
-				.markdown.deserialize(prepareMarkdownForDeserialize(markdown));
+			const fragment = deserializeMarkdownBody(editor, markdown);
 			if (fragment.length === 0) return insertData(dataTransfer);
 
 			insertFragmentPreservingBlock(editor, fragment);

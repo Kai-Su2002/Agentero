@@ -1,4 +1,5 @@
 pub mod describe;
+pub mod discover;
 pub mod doctor;
 pub mod export;
 pub mod import;

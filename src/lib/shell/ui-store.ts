@@ -103,6 +103,12 @@ type UiStore = {
 	commandOpen: boolean;
 	commandMode: PaletteMode;
 	settingsOpen: boolean;
+	/**
+	 * Vault-relative path of the Library row under the pointer (null = none).
+	 * The left Paper Info panel previews this paper so users can inspect it
+	 * without opening the row.
+	 */
+	hoveredPaperPath: string | null;
 	skillImportDraft: SkillDiscovery[] | null;
 	/** Title-search candidates queued for the picker; the head is shown first. */
 	paperSearchDraft: PaperSearchDraftGroup[] | null;
@@ -124,6 +130,7 @@ export const uiStore = createStore<UiStore>(() => ({
 	commandOpen: false,
 	commandMode: "go",
 	settingsOpen: false,
+	hoveredPaperPath: null,
 	skillImportDraft: null,
 	paperSearchDraft: null,
 	agentSessionOpenRequest: null,
@@ -234,6 +241,12 @@ export function openPalette(mode: PaletteMode): void {
 
 export function setSettingsOpenState(open: boolean): void {
 	uiStore.setState({ settingsOpen: open });
+}
+
+/** Track which Library row the pointer is over (see Paper Info preview). */
+export function setHoveredPaperPath(path: string | null): void {
+	if (uiStore.getState().hoveredPaperPath === path) return;
+	uiStore.setState({ hoveredPaperPath: path });
 }
 
 export function setSkillImportDraft(draft: SkillDiscovery[] | null): void {
@@ -354,6 +367,7 @@ export function clearUiVaultState(): void {
 	uiStore.setState({
 		skillImportDraft: null,
 		paperSearchDraft: null,
+		hoveredPaperPath: null,
 		zoteroOpen: false,
 		zoteroSyncOpen: false,
 		commandOpen: false,

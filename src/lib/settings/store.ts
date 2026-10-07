@@ -22,6 +22,8 @@ import {
 } from "@/lib/pdf/layout/settings";
 import {
 	clampEditorLineHeight,
+	DECISION_PROVIDER_PRESETS,
+	DEFAULT_DECISION_SETTINGS,
 	DEFAULT_EMBEDDING_SETTINGS,
 	DEFAULT_PDF_ASK_SETTINGS,
 	DEFAULT_SETTINGS,
@@ -33,9 +35,14 @@ import { normalizeFontFamilyValue } from "@/lib/settings/fonts";
 import {
 	type AppSettings,
 	DEFAULT_LIBRARY_COLUMNS,
+	type DecisionSettings,
 	type EmbeddingSettings,
 	type EmbeddingSource,
+	isConfigReminderId,
+	isDecisionProviderId,
 	isPaperNoteMode,
+	isPdfScrollStrategy,
+	isPdfSpreadMode,
 	LIBRARY_COLUMN_KEYS,
 	type LibraryColumnKey,
 	type LibraryColumnPref,
@@ -46,9 +53,13 @@ import {
 	isCommercialTranslateProvider,
 	isTranslateProviderId,
 } from "@/lib/translate/services";
-import type {
-	TranslateSettings,
-	TranslateTargetLang,
+import {
+	DUAL_PANE_SOURCES,
+	type DualPaneSource,
+	TRANSLATION_DISPLAY_MODES,
+	type TranslateSettings,
+	type TranslateTargetLang,
+	type TranslationDisplayMode,
 } from "@/lib/translate/types";
 import { isKnownUiTheme } from "@/lib/ui/theme";
 
@@ -78,6 +89,8 @@ let cache: AppSettings = {
 	layout: { ...DEFAULT_SETTINGS.layout, providerConfigs: {} },
 	pdfAsk: { ...DEFAULT_PDF_ASK_SETTINGS },
 	embedding: { ...DEFAULT_EMBEDDING_SETTINGS },
+	dismissedReminders: [],
+	decision: { ...DEFAULT_DECISION_SETTINGS },
 };
 let loaded = false;
 let loadPromise: Promise<AppSettings> | null = null;
@@ -90,6 +103,8 @@ function cloneSettings(s: AppSettings): AppSettings {
 		embedding: { ...s.embedding },
 		translate: { ...s.translate },
 		layout: { ...s.layout, providerConfigs: { ...s.layout.providerConfigs } },
+		dismissedReminders: [...s.dismissedReminders],
+		decision: { ...s.decision },
 	};
 }
 
@@ -358,6 +373,12 @@ function normalizePartial(
 	) {
 		merged.autoUpdateInternalLinks = DEFAULT_SETTINGS.autoUpdateInternalLinks;
 	}
+	if (!isPdfScrollStrategy(merged.pdfScrollStrategy)) {
+		merged.pdfScrollStrategy = DEFAULT_SETTINGS.pdfScrollStrategy;
+	}
+	if (!isPdfSpreadMode(merged.pdfSpreadMode)) {
+		merged.pdfSpreadMode = DEFAULT_SETTINGS.pdfSpreadMode;
+	}
 	merged.libraryColumns = normalizeLibraryColumns(merged.libraryColumns);
 	if (typeof parsed.autoPaperReader !== "boolean") {
 		merged.autoPaperReader = DEFAULT_SETTINGS.autoPaperReader;
@@ -387,9 +408,6 @@ function normalizePartial(
 	if (typeof merged.mcpTunnelApiKey !== "string") {
 		merged.mcpTunnelApiKey = DEFAULT_SETTINGS.mcpTunnelApiKey;
 	}
-	if (typeof parsed.exportWatermarkEnabled !== "boolean") {
-		merged.exportWatermarkEnabled = DEFAULT_SETTINGS.exportWatermarkEnabled;
-	}
 	if (typeof parsed.telemetryEnabled !== "boolean") {
 		merged.telemetryEnabled = DEFAULT_SETTINGS.telemetryEnabled;
 	}
@@ -412,6 +430,13 @@ function normalizePartial(
 	}
 	if (typeof parsed.featureTourDone !== "boolean") {
 		merged.featureTourDone = DEFAULT_SETTINGS.featureTourDone;
+	}
+	if (!Array.isArray(parsed.dismissedReminders)) {
+		merged.dismissedReminders = DEFAULT_SETTINGS.dismissedReminders;
+	} else {
+		merged.dismissedReminders = [
+			...new Set(parsed.dismissedReminders.filter(isConfigReminderId)),
+		];
 	}
 	if (
 		!Number.isInteger(merged.batchImportConcurrency) ||
@@ -488,7 +513,36 @@ function normalizePartial(
 	);
 	merged.translate = normalizeTranslateSettings(parsed.translate);
 	merged.layout = normalizeLayoutSettings(parsed.layout);
+	// Legacy key `jev` → `decision` (pre-provider-selection storage).
+	merged.decision = normalizeDecisionSettings(
+		(parsed as { decision?: Partial<DecisionSettings> }).decision ??
+			(parsed as { jev?: Partial<DecisionSettings> }).jev,
+	);
 	return merged;
+}
+
+function normalizeDecisionSettings(raw: unknown): DecisionSettings {
+	const base = { ...DEFAULT_DECISION_SETTINGS };
+	if (!raw || typeof raw !== "object") return base;
+	const partial = raw as Partial<DecisionSettings>;
+	if (isDecisionProviderId(partial.provider)) {
+		base.provider = partial.provider;
+	}
+	if (typeof partial.apiKey === "string") {
+		base.apiKey = partial.apiKey.trim();
+	}
+	if (typeof partial.smartHighlight === "boolean") {
+		base.smartHighlight = partial.smartHighlight;
+	}
+	const preset = DECISION_PROVIDER_PRESETS[base.provider];
+	const baseUrl =
+		typeof partial.baseUrl === "string"
+			? partial.baseUrl.trim().replace(/\/+$/, "")
+			: "";
+	base.baseUrl = baseUrl || preset.baseUrl;
+	const model = typeof partial.model === "string" ? partial.model.trim() : "";
+	base.model = model || preset.model;
+	return base;
 }
 
 function isTranslateTargetLang(v: unknown): v is TranslateTargetLang {
@@ -630,8 +684,26 @@ function normalizeTranslateSettings(
 	if (typeof raw.autoTranslateSelection === "boolean") {
 		base.autoTranslateSelection = raw.autoTranslateSelection;
 	}
-	if (typeof raw.dualPaneTranslate === "boolean") {
-		base.dualPaneTranslate = raw.dualPaneTranslate;
+	// Migrate legacy dualPaneTranslate boolean to the new displayMode pair.
+	const legacyDualPane = (raw as { dualPaneTranslate?: boolean })
+		.dualPaneTranslate;
+	if (typeof legacyDualPane === "boolean") {
+		base.displayMode = legacyDualPane ? "dualPane" : "overlay";
+		base.dualPaneSource = "pdf";
+	}
+	if (
+		raw.displayMode &&
+		TRANSLATION_DISPLAY_MODES.includes(
+			raw.displayMode as TranslationDisplayMode,
+		)
+	) {
+		base.displayMode = raw.displayMode as TranslationDisplayMode;
+	}
+	if (
+		raw.dualPaneSource &&
+		DUAL_PANE_SOURCES.includes(raw.dualPaneSource as DualPaneSource)
+	) {
+		base.dualPaneSource = raw.dualPaneSource as DualPaneSource;
 	}
 	if (typeof raw.agentId === "string") {
 		base.agentId = raw.agentId.trim();

@@ -2,7 +2,7 @@
 name = "agentero-core"
 # Keep in lockstep with the `agentero` / `agentero-cli` versions: `core::http`
 # bakes `CARGO_PKG_VERSION` into the product User-Agent string.
-version = "0.11.4"
+version = "0.11.6"
 edition = "2021"
 description = "Tauri-independent foundations of Agentero (errors, fs, http, paths, sqlite, usage log)"
 authors = ["you"]
@@ -42,6 +42,8 @@ sha2 = "0.11.0"
 hex = "0.4.3"
 walkdir = "2.5.0"
 base64 = "0.22"
+# CNKI translate: AES-128-ECB `words` encryption (block-by-block, no ecb crate).
+aes = "0.8"
 urlencoding = "2"
 url = "2"
 uuid = { version = "1", features = ["v4", "serde"] }

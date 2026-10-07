@@ -193,6 +193,8 @@ pub fn run() {
             crate::features::paper::import::job_runners::register_job_runners(&center);
             crate::features::paper::analyze::layout::model_assets::register_job_runners(&center);
             crate::features::compile::register_job_runners(&center);
+            #[cfg(not(any(target_os = "ios", target_os = "android")))]
+            crate::features::jev::register_job_runners(&center);
             let handle = app.handle().clone();
             center.set_layout_backend_source(move || {
                 handle.state::<AppSettingsStore>().layout_backend()
@@ -200,6 +202,13 @@ pub fn run() {
             // Deep agentero-core pollers (pdf parse, asset downloads, citing
             // scans) check cancellation through the JobCenter task-id registry.
             crate::core::cancel::install_cancel_probe(crate::features::jobs::is_task_cancelled);
+        }
+        // Decision layer: one engine shared by every semantic decision point,
+        // plus the jEV provider reused by the smart-highlight stream.
+        {
+            let (engine, jev_provider) = crate::features::decision::build(app.handle().clone());
+            app.manage(engine);
+            app.manage(jev_provider);
         }
         let settings_store = app.state::<AppSettingsStore>();
         let agents = app.state::<AgentRegistry>();

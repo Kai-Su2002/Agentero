@@ -22,6 +22,10 @@ import {
 	swatchColorClass,
 } from "@/lib/pdf/highlight/palette";
 import {
+	annotationTranslateSidecarPath,
+	readAnnotationTranslation,
+} from "@/lib/pdf/layout/annotation-translate-display";
+import {
 	getPaperOutline,
 	outlineLocationLabelForPaper,
 	subscribePaperOutline,
@@ -98,6 +102,7 @@ export function annotationEmbedWatchPaths(
 			joinVaultPath(paperAbs, MARKS_FOLDER),
 			visualTraceImageAssetRelPath(annotationId, "image/png"),
 		),
+		annotationTranslateSidecarPath(paperAbs),
 	];
 }
 
@@ -213,6 +218,32 @@ export const WikiAnnotationEmbed = memo(function WikiAnnotationEmbed({
 		};
 	}, [requestKey, vaultPath, targetPath, annotationId]);
 
+	const highlightQuote =
+		state.kind === "ready" && state.ref.kind === "highlight"
+			? (state.ref.quote?.trim() ?? "")
+			: "";
+	const [translation, setTranslation] = useState<{
+		key: string;
+		text: string | null;
+	}>({ key: "", text: null });
+	useEffect(() => {
+		// Sidecar writes bump marksRevision without changing the stored quote.
+		void marksRevision;
+		if (!paperAbs || !highlightQuote) return;
+		const key = `${paperAbs}\n${highlightQuote}`;
+		let cancelled = false;
+		void readAnnotationTranslation(paperAbs, highlightQuote).then((text) => {
+			if (!cancelled) setTranslation({ key, text });
+		});
+		return () => {
+			cancelled = true;
+		};
+	}, [paperAbs, highlightQuote, marksRevision]);
+	const pairedTranslation =
+		paperAbs && translation.key === `${paperAbs}\n${highlightQuote}`
+			? translation.text
+			: null;
+
 	const resolvedKind = state.kind === "ready" ? state.ref.kind : null;
 	useEffect(() => {
 		if (resolvedKind) onResolvedKind?.(resolvedKind);
@@ -289,6 +320,11 @@ export const WikiAnnotationEmbed = memo(function WikiAnnotationEmbed({
 					)}
 				>
 					{ref.quote}
+					{pairedTranslation && !isVisual ? (
+						<span className="mt-1 block text-[11px] leading-relaxed text-muted-foreground/60 whitespace-pre-wrap break-words">
+							{pairedTranslation}
+						</span>
+					) : null}
 				</blockquote>
 			) : null}
 

@@ -651,8 +651,14 @@ export function useAgentSessionRuntime({
 						const matches =
 							s.id === ev.sessionId ||
 							(providerId !== "" && s.providerSessionId === providerId);
-						// Visual-trace titles are user-meaningful; never override them.
-						if (!matches || s.visualTraceId || s.title === title) return s;
+						// Visual-trace and user-renamed titles are meaningful; never override.
+						if (
+							!matches ||
+							s.visualTraceId ||
+							s.titleLocked ||
+							s.title === title
+						)
+							return s;
 						changed = true;
 						return { ...s, title };
 					});

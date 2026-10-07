@@ -18,6 +18,8 @@ import {
 	type CrossrefDestLabel,
 	type CrossrefKind,
 	type CrossrefLinkLabel,
+	type LinkRectLike,
+	type PageOrigin,
 } from "@/lib/pdf/citation-dest-keys";
 
 export type CitationDestKeysRequest = {
@@ -36,6 +38,8 @@ export type CitationDestKeysResponse =
 			crossrefLabels: [string, CrossrefDestLabel[]][];
 			crossrefLinks: CrossrefLinkLabel[];
 			citationLinks: CitationLinkKey[];
+			pageOrigins: PageOrigin[];
+			otherNamedLinks: LinkRectLike[];
 	  }
 	| { id: number; ok: false; error: string };
 
@@ -58,6 +62,8 @@ scope.onmessage = (event) => {
 				crossrefLabels: [...maps.crossrefLabels.entries()],
 				crossrefLinks: [...maps.crossrefLinks],
 				citationLinks: [...maps.citationLinks],
+				pageOrigins: [...maps.pageOrigins],
+				otherNamedLinks: [...maps.otherNamedLinks],
 			});
 		})
 		.catch((error: unknown) => {

@@ -4,7 +4,7 @@ mod acp_live {
     use crate::features::agent::list_acp_sessions;
     use crate::features::agent::models::{AgentDescriptor, AgentTemplate, CatalogAcpStatus};
     use crate::features::agent::registry::discovery::resolve_command;
-    use crate::features::agent::registry::templates::catalog_templates;
+    use crate::features::agent::registry::templates::{catalog_templates, interactive_cli};
     use crate::features::agent::AgentRegistry;
     use agent_client_protocol::schema::v1::{
         PermissionOption, PermissionOptionId, PermissionOptionKind, RequestPermissionOutcome,
@@ -36,11 +36,30 @@ mod acp_live {
     }
 
     #[test]
+    fn interactive_cli_tracks_the_host_cli() {
+        let cats = catalog_templates();
+        let find = |id: &str| cats.iter().find(|entry| entry.id == id).expect("template");
+        // Most agents expose the same binary as the "installed" badge.
+        assert_eq!(interactive_cli(find("codex-acp")).as_deref(), Some("codex"));
+        assert_eq!(interactive_cli(find("pi")).as_deref(), Some("pi"));
+        // Dsh needs an explicit profile; `tui` is the shipped interactive one.
+        assert_eq!(
+            interactive_cli(find("dsh")).as_deref(),
+            Some("dsh --profile tui")
+        );
+        // Antigravity's CLI is `agy`; the managed `.par` is ACP-only.
+        if let Some(antigravity) = cats.iter().find(|entry| entry.id == "antigravity-acp") {
+            assert_eq!(interactive_cli(antigravity).as_deref(), Some("agy"));
+        }
+        // ZCode ships no user-facing CLI, so the terminal action is hidden.
+        assert_eq!(interactive_cli(find("zcode")), None);
+    }
+
+    #[test]
     fn catalog_has_common_agents() {
         let cats = catalog_templates();
         let ids: Vec<_> = cats.iter().map(|c| c.id.as_str()).collect();
         assert!(ids.contains(&"opencode"));
-        assert!(ids.contains(&"openclaw"));
         assert!(ids.contains(&"claude-acp"));
         assert!(ids.contains(&"codex-acp"));
         assert!(ids.contains(&"hermes"));
@@ -140,16 +159,8 @@ mod acp_live {
     }
 
     #[test]
-    fn openclaw_and_hermes_templates_use_native_acp() {
+    fn hermes_template_uses_native_acp() {
         let cats = catalog_templates();
-        let openclaw = cats
-            .iter()
-            .find(|entry| entry.id == "openclaw")
-            .expect("OpenClaw template");
-        assert_eq!(openclaw.command, "openclaw");
-        assert_eq!(openclaw.args, vec!["acp".to_string()]);
-        assert_eq!(openclaw.detect_command.as_deref(), Some("openclaw"));
-
         let hermes = cats
             .iter()
             .find(|entry| entry.id == "hermes")
@@ -263,10 +274,6 @@ mod acp_live {
         if resolve_command("opencode").is_some() {
             assert!(by_id("opencode").binary_available);
             assert_ne!(by_id("opencode").acp_status, CatalogAcpStatus::Missing);
-        }
-        if resolve_command("openclaw").is_some() {
-            assert!(by_id("openclaw").binary_available);
-            assert_ne!(by_id("openclaw").acp_status, CatalogAcpStatus::Missing);
         }
         if resolve_command("claude").is_some() {
             assert!(by_id("claude-acp").binary_available);

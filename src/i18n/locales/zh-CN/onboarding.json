@@ -46,7 +46,14 @@
 		"missing": "未安装",
 		"failed": "探测失败",
 		"notProbed": "未探测",
-		"scanFailed": "扫描 Agent 失败"
+		"scanFailed": "扫描 Agent 失败",
+		"desktopApps": {
+			"title": "本地桌面应用",
+			"unsupported": "暂不支持",
+			"chatgpt": "ChatGPT",
+			"qwenwork": "千问办公",
+			"workbuddy": "WorkBuddy"
+		}
 	},
 	"translate": {
 		"title": "设置翻译",

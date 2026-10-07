@@ -28,6 +28,7 @@ fn export_typescript_bindings() {
             crate::features::system::settings::commands::network_system_proxy,
             crate::features::system::settings::commands::list_system_fonts,
             crate::features::system::settings::commands::easy_scholar_probe,
+            crate::features::system::settings::commands::institution_proxy_probe,
             crate::features::system::settings::commands::easy_scholar_get_rank,
             crate::features::system::builtin::builtin_provider_status,
             crate::features::paper::analyze::layout::model_assets::commands::layout_model_status,
@@ -49,7 +50,10 @@ fn export_typescript_bindings() {
             crate::features::agent::commands::doctor_install_node,
             crate::features::agent::commands::doctor_check_agents,
             crate::features::agent::commands::doctor_open_agent_login_terminal,
+            crate::features::agent::commands::doctor_open_agent_cli_terminal,
             crate::features::system::network::commands::doctor_check_network,
+            crate::features::system::desktop_apps::commands::desktop_apps_probe,
+            crate::features::system::desktop_apps::commands::desktop_app_open,
             crate::features::agent::commands::agent_cancel_run,
             crate::features::jobs::commands::job_parse_refs_enqueue,
             crate::features::jobs::commands::job_parse_body_enqueue,
@@ -234,6 +238,10 @@ fn export_typescript_bindings() {
             crate::features::compile::chktex_lint,
             crate::features::compile::root::resolve_latex_root,
             crate::features::jobs::commands::job_latex_compile_enqueue,
+            crate::features::jobs::commands::job_jev_smart_highlights_enqueue,
+            crate::features::jev::commands::jev_suggest_highlights,
+            crate::features::jev::commands::jev_probe_health,
+            crate::features::decision::commands::decide,
         ])
         // Desktop event surface (see `app::events_contract`): emit sites keep
         // using `app.emit("<literal>", payload)`; the wrappers/mirrors there

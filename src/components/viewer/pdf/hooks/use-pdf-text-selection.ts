@@ -34,6 +34,7 @@ import {
 	rectTopCenterScreen,
 } from "@/components/viewer/pdf/coords";
 import {
+	clearDomSelectionInside,
 	hasNativeSelectionOutsideHost,
 	isEditableClipboardTarget,
 } from "@/components/viewer/pdf/host-dom";
@@ -45,6 +46,12 @@ import {
 	clearActiveSelection,
 	publishSelection,
 } from "@/lib/agent/selection-store";
+import { copyTextToClipboard } from "@/lib/core/clipboard";
+import { translationHitsFromRange } from "@/lib/pdf/layout/layout-sentence-selection";
+import {
+	type PageFrame,
+	visibleMenuPoint,
+} from "@/lib/pdf/layout/visible-selection-rects";
 
 type SelectionCapabilityProvides = ReturnType<
 	typeof useSelectionCapability
@@ -78,6 +85,42 @@ function menuScreenPoint(
 	return rectTopCenterScreen(pageEl, anchorPage.rect, zoom);
 }
 
+function pageFrame(host: HTMLElement, pageIndex: number): PageFrame | null {
+	const el = pageElByIndex(host, pageIndex);
+	if (!el) return null;
+	const box = el.getBoundingClientRect();
+	if (box.width <= 0 || box.height <= 0) return null;
+	return {
+		pageIndex,
+		left: box.left,
+		top: box.top,
+		width: box.width,
+		height: box.height,
+	};
+}
+
+/**
+ * Toolbar anchor. A translation selection tracks the translated boxes; an
+ * English text-layer selection tracks the glyph rect.
+ */
+function menuScreenFromState(
+	host: HTMLElement | null,
+	menu: SelectionMenuState,
+	zoom: number,
+): ScreenPoint | null {
+	if (host && menu.visiblePages?.length) {
+		const screen = visibleMenuPoint(
+			menu.visiblePages,
+			menu.anchor.page - 1,
+			(pageIndex) => pageFrame(host, pageIndex),
+		);
+		if (screen) return screen;
+	}
+	const anchorPage = menuAnchorPage(menu.pages, menu.anchor.page - 1);
+	if (!anchorPage) return null;
+	return menuScreenPoint(host, anchorPage, zoom);
+}
+
 export type UsePdfTextSelectionOptions = {
 	/** EmbedPDF capabilities; owned by `PdfViewerInner` (plugin context). */
 	selectionCap: SelectionCapabilityProvides;
@@ -91,6 +134,8 @@ export type UsePdfTextSelectionOptions = {
 	/** Provenance for the published selection (Agent chips / conversation pins). */
 	paperRelPath: string | null;
 	paperAbsPath: string | null;
+	/** Keep toolbar placed while editing a selection note chip. */
+	isCommentDraftActive?: () => boolean;
 };
 
 export type PdfTextSelection = {
@@ -120,6 +165,7 @@ export function usePdfTextSelection({
 	isActive,
 	paperRelPath,
 	paperAbsPath,
+	isCommentDraftActive,
 }: UsePdfTextSelectionOptions): PdfTextSelection {
 	const [selectionMenu, setSelectionMenu] = useState<SelectionMenuState | null>(
 		null,
@@ -127,18 +173,18 @@ export function usePdfTextSelection({
 	const [isSelecting, setIsSelecting] = useState(false);
 
 	const closeSelectionMenu = useCallback(() => {
+		clearDomSelectionInside(hostRef.current);
 		setSelectionMenu(null);
 		selectionCap?.clear(docId);
-	}, [selectionCap, docId]);
+		clearActiveSelection("pdf");
+	}, [selectionCap, docId, hostRef]);
 
 	const rePlaceSelectionMenu = useCallback(() => {
 		setSelectionMenu((prev) => {
 			if (!prev) return prev;
-			const anchorPage = menuAnchorPage(prev.pages, prev.anchor.page - 1);
-			if (!anchorPage) return prev;
-			const screen = menuScreenPoint(
+			const screen = menuScreenFromState(
 				hostRef.current,
-				anchorPage,
+				prev,
 				zoomRef.current,
 			);
 			if (!screen) return prev;
@@ -154,10 +200,33 @@ export function usePdfTextSelection({
 		if (!selectionCap || !docCap) return;
 
 		const scope = selectionCap.forDocument(docId);
+		// A translation drag is a DOM range on top of the English glyphs. Ending
+		// or clearing the PDFium selection must not dismiss the menu that range owns.
+		const selectionInsideTranslation = (): boolean => {
+			const host = hostRef.current;
+			const selection = window.getSelection();
+			if (
+				!host ||
+				!selection ||
+				selection.isCollapsed ||
+				selection.rangeCount === 0
+			) {
+				return false;
+			}
+			return translationHitsFromRange(selection.getRangeAt(0), host).length > 0;
+		};
 		const offBegin = scope.onBeginSelection(() => {
 			setIsSelecting(true);
 		});
 		const offEnd = scope.onEndSelection(() => {
+			// Glyphs under the overlay share the pointer, so a drag on the
+			// translation also ends an English selection. Drop those rects and
+			// leave the DOM range's menu in place.
+			if (selectionInsideTranslation()) {
+				setIsSelecting(false);
+				selectionCap.clear(docId);
+				return;
+			}
 			const rawPages = selectionCap.getFormattedSelection(docId);
 			if (!rawPages.length) {
 				setIsSelecting(false);
@@ -230,6 +299,13 @@ export function usePdfTextSelection({
 		const offChange = scope.onSelectionChange((sel) => {
 			if (!sel) {
 				setIsSelecting(false);
+				if (selectionInsideTranslation()) return;
+				if (
+					isCommentDraftActive?.() ||
+					document.activeElement?.closest("[data-selection-comment]")
+				) {
+					return;
+				}
 				setSelectionMenu(null);
 				clearActiveSelection("pdf");
 			}
@@ -249,14 +325,19 @@ export function usePdfTextSelection({
 		paperAbsPath,
 		hostRef,
 		zoomRef,
+		isCommentDraftActive,
 	]);
 
 	// PDFium selections are invisible to the browser: intercept copy so ⌘/Ctrl+C
 	// yields the selected PDF text instead of nothing.
 	useEffect(() => {
 		if (!isActive || !selectionMenu || !selectionCap) return;
-		const selectedText = selectionMenu.anchor.quote ?? "";
-		if (!selectedText.trim()) return;
+		const selectedText = (
+			selectionMenu.copyText ??
+			selectionMenu.anchor.quote ??
+			""
+		).trim();
+		if (!selectedText) return;
 		const host = hostRef.current;
 
 		const shouldHandlePdfCopy = (target: EventTarget | null): boolean => {
@@ -277,6 +358,12 @@ export function usePdfTextSelection({
 				return;
 			if (!shouldHandlePdfCopy(event.target)) return;
 			event.preventDefault();
+			// PDFium's clipboard is the English text layer. A translation
+			// selection has no PDFium range; copy the visible translation.
+			if (selectionMenu.fromTranslation) {
+				void copyTextToClipboard(selectedText);
+				return;
+			}
 			selectionCap.copyToClipboard(docId);
 		};
 

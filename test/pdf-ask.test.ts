@@ -13,7 +13,10 @@ import {
 	threadPreview,
 	threadTitle,
 } from "@/lib/pdf/ask";
-import { buildPdfAskPrompt } from "@/lib/pdf/ask/prompt";
+import {
+	buildPdfAskPrompt,
+	rememberPairedAskTranslation,
+} from "@/lib/pdf/ask/prompt";
 
 describe("pdf-ask schema", () => {
 	it("parses a valid thread", () => {
@@ -175,6 +178,29 @@ describe("pdf-ask prompt", () => {
 		expect(p).toContain("Page: 3");
 		expect(p).toContain("Transformer");
 		expect(p).toContain("Explain");
+	});
+
+	it("adds a session translation without writing it onto the thread", () => {
+		const thread = createEmptyThread({
+			paperPath: "papers/x",
+			anchor: {
+				page: 3,
+				rects: [{ x: 0, y: 0, w: 0.1, h: 0.1 }],
+				quote: "First sentence.",
+				trigger: "selection",
+			},
+		});
+		rememberPairedAskTranslation(thread.id, "第一句。");
+		thread.messages.push({
+			id: "u1",
+			role: "user",
+			content: "Explain",
+			createdAt: new Date().toISOString(),
+		});
+		const prompt = buildPdfAskPrompt(thread, "Explain");
+		expect(prompt).toContain("Translation of the quoted sentences:");
+		expect(prompt).toContain("第一句。");
+		expect(JSON.stringify(thread)).not.toContain("第一句");
 	});
 
 	it("adds bounded visual instructions for a figure crop", () => {

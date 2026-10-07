@@ -28,6 +28,16 @@ export const HIGHLIGHT_HEX: Record<HighlightColor, string> = {
 /** Default fill opacity for highlight annotations. */
 export const HIGHLIGHT_OPACITY = 0.4;
 
+/** Same fill the annotation layer paints, as an rgba string. */
+export function highlightFill(color: HighlightColor): string {
+	const hex = HIGHLIGHT_HEX[color].slice(1);
+	const value = Number.parseInt(hex, 16);
+	const red = (value >> 16) & 255;
+	const green = (value >> 8) & 255;
+	const blue = value & 255;
+	return `rgba(${red}, ${green}, ${blue}, ${HIGHLIGHT_OPACITY})`;
+}
+
 /** Ordered hex list for the annotation plugin's color presets. */
 export const HIGHLIGHT_HEX_LIST: string[] = HIGHLIGHT_COLORS.map(
 	(c) => HIGHLIGHT_HEX[c],

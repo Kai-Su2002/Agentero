@@ -46,6 +46,8 @@ export function matchesCrossrefKind(
 			return isFormulaLayoutKind(layoutKind);
 		case "algorithm":
 			return isAlgorithmLayoutKind(layoutKind);
+		case "reference":
+			return false;
 	}
 }
 
@@ -134,6 +136,8 @@ function labelTitlePrefixes(label: CrossrefLabel): string[] {
 			return [`Equation ${number}`, `Eq. ${number}`, `Eq ${number}`];
 		case "algorithm":
 			return [`Algorithm ${number}`, `Alg. ${number}`, `Alg ${number}`];
+		case "reference":
+			return [];
 	}
 }
 

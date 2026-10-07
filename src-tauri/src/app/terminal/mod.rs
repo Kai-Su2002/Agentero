@@ -35,8 +35,8 @@ pub fn open_in_terminal(path: &Path) -> Result<PathBuf, AppError> {
     Ok(cwd)
 }
 
-/// Copy shown inside a confirm-to-run terminal (banner title, post-run hint and
-/// temp script name prefix), so install and login flows read correctly.
+/// Copy and temp-script identity shared by terminal launches (banner title for
+/// confirm-to-run flows, post-run hint and temp script name prefix).
 struct ConfirmCopy {
     /// Temp script file prefix ("install" / "login").
     stem: &'static str,
@@ -74,21 +74,52 @@ const CONFIRM_LOGIN: ConfirmCopy = ConfirmCopy {
     done_hint: "Done. Agentero will re-check the login status automatically.",
 };
 
+#[cfg(windows)]
+const CONFIRM_AGENT_CLI: ConfirmCopy = ConfirmCopy {
+    stem: "agent-cli",
+    title: "Agentero - agent CLI",
+    done_hint: "Agent CLI session ended. You can close this window.",
+};
+
+#[cfg(not(windows))]
+const CONFIRM_AGENT_CLI: ConfirmCopy = ConfirmCopy {
+    stem: "agent-cli",
+    title: "Agentero — agent CLI",
+    done_hint: "Agent CLI session ended. You can close this window.",
+};
+
+/// How the terminal should run the command: `Confirm` prints it and waits for
+/// Enter, `Direct` runs it immediately.
+#[derive(Clone, Copy)]
+enum RunMode {
+    Confirm,
+    Direct,
+}
+
 /// Open a system terminal that prints `command`, waits for Enter (or Ctrl+C), then runs it.
 ///
 /// Used for guided installs (e.g. Claude ACP adapter). The shell never auto-runs without
 /// confirmation. Only trusted Host-side callers should pass commands.
 pub fn open_terminal_confirm_command(command: &str) -> Result<(), AppError> {
-    confirm_script(command, &CONFIRM_INSTALL)
+    run_terminal_script(command, &CONFIRM_INSTALL, RunMode::Confirm)
 }
 
 /// Same confirm-to-run terminal as [`open_terminal_confirm_command`], worded for
 /// agent CLI OAuth login flows (e.g. `codex login`, `claude auth login`).
 pub fn open_terminal_confirm_login(command: &str) -> Result<(), AppError> {
-    confirm_script(command, &CONFIRM_LOGIN)
+    run_terminal_script(command, &CONFIRM_LOGIN, RunMode::Confirm)
 }
 
-fn confirm_script(command: &str, copy: &ConfirmCopy) -> Result<(), AppError> {
+/// Open a system terminal that immediately launches an installed Agent's
+/// interactive CLI (e.g. `claude`, `codex`).
+///
+/// No Enter gate: the click is an explicit launch of the user's own installed
+/// CLI, not an unattended installer.
+pub fn open_terminal_agent_cli(command: &str) -> Result<(), AppError> {
+    run_terminal_script(command, &CONFIRM_AGENT_CLI, RunMode::Direct)
+}
+
+fn run_terminal_script(command: &str, copy: &ConfirmCopy, mode: RunMode) -> Result<(), AppError> {
     let command = command.trim();
     if command.is_empty() {
         return Err(AppError::message("command is required"));
@@ -100,11 +131,11 @@ fn confirm_script(command: &str, copy: &ConfirmCopy) -> Result<(), AppError> {
 
     #[cfg(windows)]
     {
-        open_terminal_confirm_command_windows(command, copy)
+        open_terminal_command_windows(command, copy, mode)
     }
     #[cfg(not(windows))]
     {
-        open_terminal_confirm_command_unix(command, copy)
+        open_terminal_command_unix(command, copy, mode)
     }
 }
 
@@ -147,7 +178,7 @@ pub fn open_terminal_confirm_remote_install(
     {
         // Single remote command string so the whole npm line is the -c payload.
         let command = format!("ssh -t {destination} -- \"bash -lc {install_command:?}\"");
-        open_terminal_confirm_command_windows(&command, &CONFIRM_INSTALL)
+        open_terminal_command_windows(&command, &CONFIRM_INSTALL, RunMode::Confirm)
     }
     #[cfg(not(windows))]
     {
@@ -192,7 +223,7 @@ status=$?
 echo ""
 if [ "$status" -eq 0 ]; then
   echo "Done. Verifying on remote…"
-  ssh -T "$DEST" "bash -lc $(printf '%q' 'command -v claude-agent-acp || command -v opencode || command -v openclaw || command -v hermes || true; ls -la \"$HOME/.local/bin\" 2>/dev/null | head -20')" || true
+  ssh -T "$DEST" "bash -lc $(printf '%q' 'command -v claude-agent-acp || command -v opencode || command -v hermes || true; ls -la \"$HOME/.local/bin\" 2>/dev/null | head -20')" || true
   echo ""
   echo "Return to Agentero → Settings → Agent and click Refresh."
 else
@@ -266,13 +297,17 @@ echo "You can close this window."
 }
 
 #[cfg(not(windows))]
-fn open_terminal_confirm_command_unix(command: &str, copy: &ConfirmCopy) -> Result<(), AppError> {
-    let script_path = write_confirm_script_unix(command, copy)?;
+fn open_terminal_command_unix(
+    command: &str,
+    copy: &ConfirmCopy,
+    mode: RunMode,
+) -> Result<(), AppError> {
+    let script_path = write_terminal_script_unix(command, copy, mode)?;
     let script = script_path.to_string_lossy().replace('\'', "'\\''");
 
     #[cfg(target_os = "macos")]
     {
-        // Terminal.app: run the script in a new window (user must press Enter to install).
+        // Terminal.app: run the script in a new window.
         let apple = format!("tell application \"Terminal\" to do script \"bash '{script}'\"");
         let status = Command::new("osascript")
             .arg("-e")
@@ -359,7 +394,11 @@ fn open_terminal_confirm_command_unix(command: &str, copy: &ConfirmCopy) -> Resu
 }
 
 #[cfg(not(windows))]
-fn write_confirm_script_unix(command: &str, copy: &ConfirmCopy) -> Result<PathBuf, AppError> {
+fn write_terminal_script_unix(
+    command: &str,
+    copy: &ConfirmCopy,
+    mode: RunMode,
+) -> Result<PathBuf, AppError> {
     let dir = std::env::temp_dir().join("agentero-install");
     fs::create_dir_all(&dir)
         .map_err(|e| AppError::message(format!("failed to create temp dir: {e}")))?;
@@ -368,8 +407,9 @@ fn write_confirm_script_unix(command: &str, copy: &ConfirmCopy) -> Result<PathBu
     let quoted = command.replace('\'', "'\\''");
     let title = copy.title;
     let done_hint = copy.done_hint;
-    let body = format!(
-        r#"#!/usr/bin/env bash
+    let body = match mode {
+        RunMode::Confirm => format!(
+            r#"#!/usr/bin/env bash
 set +e
 echo ""
 echo "{title}"
@@ -390,9 +430,16 @@ else
 fi
 echo "You can close this window."
 "#
-    );
+        ),
+        RunMode::Direct => format!(
+            r#"#!/usr/bin/env bash
+set +e
+bash -lc '{quoted}'
+"#
+        ),
+    };
     fs::write(&path, body)
-        .map_err(|e| AppError::message(format!("failed to write install script: {e}")))?;
+        .map_err(|e| AppError::message(format!("failed to write script: {e}")))?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
@@ -407,9 +454,10 @@ echo "You can close this window."
 }
 
 #[cfg(windows)]
-fn open_terminal_confirm_command_windows(
+fn open_terminal_command_windows(
     command: &str,
     copy: &ConfirmCopy,
+    mode: RunMode,
 ) -> Result<(), AppError> {
     let dir = std::env::temp_dir().join("agentero-install");
     fs::create_dir_all(&dir)
@@ -417,9 +465,10 @@ fn open_terminal_confirm_command_windows(
     let path = dir.join(format!("{}-{}.cmd", copy.stem, std::process::id()));
     let title = copy.title;
     let done_hint = copy.done_hint;
-    // Escape ^ and & for cmd.exe display; the install command itself is simple npm.
-    let body = format!(
-        "@echo off\r\n\
+    // Escape ^ and & for cmd.exe display; the command itself is a simple npm line.
+    let body = match mode {
+        RunMode::Confirm => format!(
+            "@echo off\r\n\
 echo.\r\n\
 echo {title}\r\n\
 echo Command:\r\n\
@@ -439,9 +488,11 @@ if %STATUS%==0 (\r\n\
 )\r\n\
 echo You can close this window.\r\n\
 pause\r\n"
-    );
+        ),
+        RunMode::Direct => format!("@echo off\r\n{command}\r\n"),
+    };
     fs::write(&path, body)
-        .map_err(|e| AppError::message(format!("failed to write install script: {e}")))?;
+        .map_err(|e| AppError::message(format!("failed to write script: {e}")))?;
 
     // Rust's `Command` spawns wt directly (no shell), so a literal
     // `%USERPROFILE%` is never expanded and wt fails with "cannot access startup

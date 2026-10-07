@@ -34,7 +34,6 @@ pub fn skill_mention_style(template: &AgentTemplate) -> SkillMentionStyle {
         AgentTemplate::ClaudeAcp
         | AgentTemplate::AntigravityAcp
         | AgentTemplate::Opencode
-        | AgentTemplate::OpenClaw
         | AgentTemplate::Hermes
         | AgentTemplate::QoderCli
         | AgentTemplate::GrokBuild
@@ -42,6 +41,7 @@ pub fn skill_mention_style(template: &AgentTemplate) -> SkillMentionStyle {
         | AgentTemplate::KimiCode
         | AgentTemplate::Zcode
         | AgentTemplate::MinimaxCode
+        | AgentTemplate::MimoCode
         | AgentTemplate::Custom => SkillMentionStyle::Slash,
     }
 }

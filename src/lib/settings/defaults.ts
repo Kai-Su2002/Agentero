@@ -1,6 +1,8 @@
 import { DEFAULT_LAYOUT_SETTINGS } from "@/lib/pdf/layout/settings";
 import type {
 	AppSettings,
+	DecisionProviderId,
+	DecisionSettings,
 	EmbeddingSettings,
 	PdfAskSettings,
 } from "@/lib/settings/types";
@@ -18,6 +20,53 @@ export const DEFAULT_EMBEDDING_SETTINGS: EmbeddingSettings = {
 	baseUrl: "",
 	apiKey: "",
 	model: "",
+};
+
+/** Default System One endpoint (TypeSafe jEV). */
+export const DEFAULT_DECISION_BASE_URL = "https://api.typesafe.ai/v1/systemone";
+export const DEFAULT_DECISION_MODEL = "jev-latest";
+
+export const DEFAULT_DECISION_SETTINGS: DecisionSettings = {
+	provider: "jev",
+	apiKey: "",
+	baseUrl: DEFAULT_DECISION_BASE_URL,
+	model: DEFAULT_DECISION_MODEL,
+	smartHighlight: false,
+};
+
+/**
+ * Per-provider defaults applied when the user switches the decision provider.
+ * Clef / OpenAI need a user-supplied endpoint (Cloudflare includes the account
+ * id; OpenAI is not public yet), so their base URL stays empty.
+ */
+export const DECISION_PROVIDER_PRESETS: Record<
+	DecisionProviderId,
+	{ baseUrl: string; model: string; keyUrl: string; consoleUrl: string }
+> = {
+	jev: {
+		baseUrl: DEFAULT_DECISION_BASE_URL,
+		model: DEFAULT_DECISION_MODEL,
+		keyUrl: "https://console.typesafe.ai/keys",
+		consoleUrl: "",
+	},
+	clef: {
+		baseUrl: "",
+		model: "clef",
+		keyUrl: "https://dash.cloudflare.com/profile/api-tokens",
+		consoleUrl: "",
+	},
+	openai: {
+		baseUrl: "",
+		model: "",
+		keyUrl: "https://platform.openai.com/api-keys",
+		consoleUrl: "",
+	},
+	custom: {
+		baseUrl: "",
+		model: "",
+		keyUrl: "",
+		consoleUrl: "",
+	},
 };
 
 /** Default Translator Runtime endpoint (overridable in Settings). */
@@ -62,6 +111,9 @@ export function clampEditorLineHeight(value: number): number {
 export const DEFAULT_SETTINGS: AppSettings = {
 	translatorBaseUrl: DEFAULT_TRANSLATOR_BASE_URL,
 	easyScholarKey: "",
+	institutionProxyPrefix: "",
+	institutionProxyCookie: "",
+	institutionProxyType: "ezproxy",
 	networkProxyEnabled: false,
 	networkProxyUrl: DEFAULT_NETWORK_PROXY_URL,
 	githubMirrorEnabled: false,
@@ -69,6 +121,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	paperTreeLabelMode: "title-author",
 	paperTreeSortMode: "folder",
 	autoUpdateInternalLinks: "ask",
+	pdfScrollStrategy: "vertical",
+	pdfSpreadMode: "none",
 	paperNoteMode: "standard",
 	autoOpenPaperNotes: true,
 	autoIngest: true,
@@ -78,11 +132,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	connectorPort: 23119,
 	mcpEnabled: false,
 	mcpPort: 8765,
+	mcpExposePaperText: false,
 	mcpTunnelId: "",
 	mcpTunnelApiKey: "",
 	zoteroSyncDir: "",
 	batchImportConcurrency: 5,
-	exportWatermarkEnabled: false,
 	telemetryEnabled: true,
 	plazaEnabled: true,
 	plazaHiddenSources: [],
@@ -106,6 +160,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
 	embedding: { ...DEFAULT_EMBEDDING_SETTINGS },
 	translate: { ...DEFAULT_TRANSLATE_SETTINGS },
 	layout: { ...DEFAULT_LAYOUT_SETTINGS, providerConfigs: {} },
+	dismissedReminders: [],
+	decision: { ...DEFAULT_DECISION_SETTINGS },
 };
 
 /** Snap an arbitrary scale value to the closest supported preset. */

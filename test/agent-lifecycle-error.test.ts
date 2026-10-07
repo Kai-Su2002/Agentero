@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { lifecycleErrorMessage } from "@/lib/agent/lifecycle-error";
+import {
+	isNpmMissingError,
+	lifecycleErrorMessage,
+} from "@/lib/agent/lifecycle-error";
 
 const t = (key: string, options?: Record<string, string>) =>
 	`${key}:${options?.cacheCommand ?? ""}`;
@@ -22,6 +25,34 @@ describe("lifecycleErrorMessage", () => {
 	it("keeps unrelated installer output", () => {
 		expect(lifecycleErrorMessage("npm error network timeout", t)).toBe(
 			"npm error network timeout",
+		);
+	});
+});
+
+describe("isNpmMissingError", () => {
+	it("matches the Windows cmd not-recognized error", () => {
+		expect(
+			isNpmMissingError(
+				"'npm' is not recognized as an internal or external command,\r\noperable program or batch file.",
+			),
+		).toBe(true);
+	});
+	it("matches the Unix command-not-found error", () => {
+		expect(isNpmMissingError("bash: line 3: npm: command not found")).toBe(
+			true,
+		);
+	});
+	it("matches the Host uninstall pre-check", () => {
+		expect(
+			isNpmMissingError(
+				"npm is not available on PATH; cannot uninstall npm packages",
+			),
+		).toBe(true);
+	});
+	it("ignores unrelated npm errors without a resolver hint", () => {
+		expect(isNpmMissingError("npm error network timeout")).toBe(false);
+		expect(isNpmMissingError("npm error EPERM: operation not permitted")).toBe(
+			false,
 		);
 	});
 });

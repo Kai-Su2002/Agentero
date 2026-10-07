@@ -7,6 +7,7 @@ import {
 	stopVaultWatch,
 	type VaultFileChangedPayload,
 } from "@/lib/vault/fs-watch";
+import { invalidateSeedCache } from "@/lib/vault/seed-cache";
 
 type VaultFileEventsParams = {
 	vaultPath: string | null;
@@ -73,6 +74,7 @@ export function useVaultFileEvents({
 				onUnverifiedRename?.(payload);
 			}
 			for (const p of payload.paths) {
+				invalidateSeedCache(p);
 				onDiskChange(p);
 				onWikiChange?.(p);
 			}

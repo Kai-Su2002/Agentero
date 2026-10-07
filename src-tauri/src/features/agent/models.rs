@@ -5,9 +5,6 @@ use std::collections::HashMap;
 #[serde(rename_all = "kebab-case")]
 pub enum AgentTemplate {
     Opencode,
-    /// OpenClaw native ACP (`openclaw acp`).
-    /// Docs: https://docs.openclaw.ai/cli/acp
-    OpenClaw,
     /// Hermes Agent native ACP (`hermes acp`).
     /// Docs: https://github.com/NousResearch/hermes-agent
     Hermes,
@@ -38,6 +35,9 @@ pub enum AgentTemplate {
     /// MiniMax Code CLI with native ACP (`mcode acp`).
     /// Docs: https://agent.minimax.io/docs/cli/quick-start
     MinimaxCode,
+    /// Xiaomi MiMo Code CLI (an OpenCode fork) with native ACP (`mimo acp`).
+    /// Docs: https://mimo.xiaomi.com · npm package `mimocode`
+    MimoCode,
     Custom,
 }
 
@@ -49,7 +49,9 @@ impl<'de> serde::Deserialize<'de> for AgentTemplate {
         let s = String::deserialize(deserializer)?;
         Ok(match s.as_str() {
             "opencode" => Self::Opencode,
-            "openclaw" => Self::OpenClaw,
+            // Legacy OpenClaw preset (removed): keep old registries loading as
+            // a custom agent instead of failing the whole registry parse.
+            "openclaw" => Self::Custom,
             "hermes" => Self::Hermes,
             "claude-acp" => Self::ClaudeAcp,
             "codex-acp" => Self::CodexAcp,
@@ -61,6 +63,7 @@ impl<'de> serde::Deserialize<'de> for AgentTemplate {
             "kimi-code" => Self::KimiCode,
             "zcode" => Self::Zcode,
             "minimax-code" => Self::MinimaxCode,
+            "mimo-code" => Self::MimoCode,
             "custom" => Self::Custom,
             other => {
                 return Err(serde::de::Error::custom(format!(
@@ -75,7 +78,6 @@ impl AgentTemplate {
     pub fn as_str(&self) -> &'static str {
         match self {
             Self::Opencode => "opencode",
-            Self::OpenClaw => "openclaw",
             Self::Hermes => "hermes",
             Self::ClaudeAcp => "claude-acp",
             Self::CodexAcp => "codex-acp",
@@ -87,6 +89,7 @@ impl AgentTemplate {
             Self::KimiCode => "kimi-code",
             Self::Zcode => "zcode",
             Self::MinimaxCode => "minimax-code",
+            Self::MimoCode => "mimo-code",
             Self::Custom => "custom",
         }
     }
@@ -231,6 +234,12 @@ pub struct CatalogEntry {
     /// Host CLI OAuth/login command from the template.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub login_command: Option<String>,
+    /// Interactive host CLI for the Settings "open in terminal" action.
+    /// Locally this is the resolved absolute path when the binary is available
+    /// (may differ from `resolved_path`, e.g. Antigravity `agy`); `None` hides
+    /// the action. Remote scans leave it `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_command: Option<String>,
     /// Host CLI present but ACP entrypoint missing — Settings may offer ACP install.
     #[serde(default)]
     pub offer_install: bool,
