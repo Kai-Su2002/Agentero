@@ -170,8 +170,10 @@ export function AgentComposer(props: AgentComposerProps) {
 				)}
 				style={!compact && heightPx != null ? { height: heightPx } : undefined}
 			>
-				{/* Block chips: current file / visual only. Selections use the annotation summary. */}
-				{props.currentFilePath || visualDrafts.length > 0 ? (
+				{/* Block chips: current file / pinned selection chips / visual drafts. */}
+				{props.currentFilePath ||
+				visualDrafts.length > 0 ||
+				props.selectionChips.length > 0 ? (
 					<div
 						className={cn(
 							"flex shrink-0 items-center gap-1.5",
@@ -183,7 +185,7 @@ export function AgentComposer(props: AgentComposerProps) {
 							currentFilePath={props.currentFilePath}
 							currentFileLabel={props.currentFileLabel}
 							mentionChipPaths={[]}
-							selectionChips={[]}
+							selectionChips={props.selectionChips}
 							onRemoveSelection={props.onRemoveSelection}
 							visualDrafts={visualDrafts}
 							onRemoveVisualDraft={props.onRemoveVisualDraft}
